@@ -5,11 +5,13 @@ TagManager:
   serializedVersion: 3
   tags:
   - Anchor
+  - projectile
+  - Npc
   layers:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - Npc
   - Water
   - UI
   - 
