@@ -1,5 +1,4 @@
 using UnityEngine;
-using System.Collections;
 
 public class StopNpcOnEnter : MonoBehaviour
 {
@@ -8,35 +7,29 @@ public class StopNpcOnEnter : MonoBehaviour
     public AudioSource npcAudioSource;
     public AudioClip stopLine;
 
-    private bool hasTriggered = false;
-    private Coroutine routine;
+    private bool hasSpoken = false;
 
     private void OnTriggerEnter(Collider other)
     {
         if (!other.CompareTag("Player")) return;
-        if (hasTriggered) return;
 
-        hasTriggered = true;
+        // Stop immediately + look at player
+        npcPatrol.StopAndLook(playerCamera);
 
-        // Speak while still walking
-        if (npcAudioSource != null && stopLine != null)
+        // Speak only once while you are inside
+        if (!hasSpoken && npcAudioSource != null && stopLine != null)
         {
             npcAudioSource.Stop();
             npcAudioSource.PlayOneShot(stopLine);
-            routine = StartCoroutine(StopWhenAudioEnds());
-        }
-        else
-        {
-            // If no audio assigned, stop immediately
-            npcPatrol.StopAndLook(playerCamera);
+            hasSpoken = true;
         }
     }
 
-    IEnumerator StopWhenAudioEnds()
+    private void OnTriggerStay(Collider other)
     {
-        while (npcAudioSource != null && npcAudioSource.isPlaying)
-            yield return null;
+        if (!other.CompareTag("Player")) return;
 
+        // Keep forcing stop + look (prevents any movement)
         npcPatrol.StopAndLook(playerCamera);
     }
 
@@ -44,13 +37,10 @@ public class StopNpcOnEnter : MonoBehaviour
     {
         if (!other.CompareTag("Player")) return;
 
-        // Cancel waiting if needed
-        if (routine != null) StopCoroutine(routine);
-
-        // Resume patrol
+        // Resume patrol when player leaves
         npcPatrol.ResumePatrol();
 
-        // Allow it to happen again next time
-        hasTriggered = false;
+        // Reset so it can speak again next time you enter
+        hasSpoken = false;
     }
 }
