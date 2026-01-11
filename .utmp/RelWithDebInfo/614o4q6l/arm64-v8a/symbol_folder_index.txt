@@ -1,0 +1,1 @@
+C:\Users\Navindu\Documents\GitHub\Military-Training-System\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\build\intermediates\cxx\RelWithDebInfo\614o4q6l\obj\arm64-v8a
