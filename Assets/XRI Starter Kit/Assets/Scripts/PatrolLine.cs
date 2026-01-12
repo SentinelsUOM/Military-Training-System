@@ -1,10 +1,12 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 public class PatrolLine : MonoBehaviour
 {
+    [Header("Patrol Points")]
     public Transform pointA;
     public Transform pointB;
 
+    [Header("Movement")]
     public float moveSpeed = 1.2f;
     public float rotateSpeed = 6f;
     public float stopDistance = 0.2f;
@@ -13,45 +15,51 @@ public class PatrolLine : MonoBehaviour
     public bool isStopped = false;
     public Transform lookTarget; // XR Main Camera
 
+    [Header("Animation")]
+    public Animator anim;
+    public string alertBoolName = "Alert";
+
     private Transform target;
 
     void Start()
     {
         target = pointB;
+
+        // IMPORTANT: avoid animation moving character root
+        if (anim != null)
+            anim.applyRootMotion = false;
     }
 
     void Update()
     {
-        // If stopped: only look at player
+        // STOP MODE
         if (isStopped && lookTarget != null)
         {
-            LookAt(lookTarget.position);
+            LookAtPlayer();
             return;
         }
 
+        // PATROL MODE
         if (pointA == null || pointB == null) return;
 
         Vector3 targetPos = target.position;
-        targetPos.y = transform.position.y; // keep same height
+        targetPos.y = transform.position.y;
 
         float dist = Vector3.Distance(transform.position, targetPos);
 
-        // Reached target? swap
         if (dist <= stopDistance)
         {
             target = (target == pointA) ? pointB : pointA;
             return;
         }
 
-        // Rotate toward target
-        Vector3 dir = (targetPos - transform.position).normalized;
-        if (dir.sqrMagnitude > 0.001f)
+        Vector3 moveDir = (targetPos - transform.position).normalized;
+        if (moveDir.sqrMagnitude > 0.001f)
         {
-            Quaternion rot = Quaternion.LookRotation(dir);
+            Quaternion rot = Quaternion.LookRotation(moveDir);
             transform.rotation = Quaternion.Slerp(transform.rotation, rot, Time.deltaTime * rotateSpeed);
         }
 
-        // Move directly toward target (NO orbiting)
         transform.position = Vector3.MoveTowards(
             transform.position,
             targetPos,
@@ -59,10 +67,11 @@ public class PatrolLine : MonoBehaviour
         );
     }
 
-    void LookAt(Vector3 worldPos)
+    void LookAtPlayer()
     {
-        Vector3 dir = worldPos - transform.position;
-        dir.y = 0f;
+        Vector3 dir = lookTarget.position - transform.position;
+        dir.y = 0f; // rotate only on Y axis
+
         if (dir.sqrMagnitude < 0.001f) return;
 
         Quaternion rot = Quaternion.LookRotation(dir);
@@ -73,11 +82,17 @@ public class PatrolLine : MonoBehaviour
     {
         isStopped = true;
         lookTarget = playerCam;
+
+        if (anim != null)
+            anim.SetBool(alertBoolName, true); // AIM animation
     }
 
     public void ResumePatrol()
     {
         isStopped = false;
         lookTarget = null;
+
+        if (anim != null)
+            anim.SetBool(alertBoolName, false); // WALK animation
     }
 }
