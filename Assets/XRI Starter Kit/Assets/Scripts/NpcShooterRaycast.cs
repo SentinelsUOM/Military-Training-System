@@ -16,8 +16,12 @@ public class NpcShooterRaycast : MonoBehaviour
 
     [Header("FX / Audio")]
     public ParticleSystem muzzleFlash;
-    public AudioSource fireAudioSource;     // <-- drag an AudioSource
-    public AudioClip fireClip;              // <-- drag a gunshot sound
+    public AudioSource fireAudioSource;
+    public AudioClip fireClip;
+
+    [Header("Hostage")]
+    public HostageScareController hostage;   // drag hostage1 here
+    public bool controlHostageScare = true;  // tick this
 
     private Coroutine loop;
 
@@ -25,6 +29,10 @@ public class NpcShooterRaycast : MonoBehaviour
     {
         Debug.Log("StartFiring() called");
         if (loop != null) return;
+
+        if (controlHostageScare && hostage != null)
+            hostage.SetScared(true);
+
         loop = StartCoroutine(FireLoop());
     }
 
@@ -32,8 +40,12 @@ public class NpcShooterRaycast : MonoBehaviour
     {
         Debug.Log("StopFiring() called");
         if (loop == null) return;
+
         StopCoroutine(loop);
         loop = null;
+
+        if (controlHostageScare && hostage != null)
+            hostage.SetScared(false);
     }
 
     IEnumerator FireLoop()
@@ -52,14 +64,11 @@ public class NpcShooterRaycast : MonoBehaviour
         if (firePoint == null) { Debug.LogWarning("No firePoint"); return; }
         if (target == null) { Debug.LogWarning("No target"); return; }
 
-        // FX + audio
         if (muzzleFlash != null) muzzleFlash.Play();
         if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
 
-        // Direction
         Vector3 dir = (target.position - firePoint.position).normalized;
 
-        // Spread (simple)
         float angle = spreadDegrees * Mathf.Deg2Rad;
         dir += new Vector3(
             Random.Range(-angle, angle),
@@ -68,13 +77,9 @@ public class NpcShooterRaycast : MonoBehaviour
         );
         dir.Normalize();
 
-        // Start slightly forward so it doesn't hit self
         Vector3 start = firePoint.position + firePoint.forward * 0.05f;
-
-        // ✅ GUARANTEE: visible debug ray in Scene view
         Debug.DrawRay(start, dir * 10f, Color.red, 0.2f);
 
-        // Raycast hit
         if (Physics.Raycast(start, dir, out RaycastHit hit, range, hitMask, QueryTriggerInteraction.Ignore))
         {
             Debug.Log("NPC shot hit: " + hit.collider.name);

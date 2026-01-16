@@ -8266,6 +8266,105 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   note: Temporary Solution for different headsets
+--- !u!1001 &238816294
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 461092400}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -8.454
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.0000012665987
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -24.15366
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_Name
+      value: hostage1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5866666021909216657, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_Controller
+      value: 
+      objectReference: {fileID: 9100000, guid: dd8302cb03ae2dd4889604213fa3dfe6, type: 2}
+    - target: {fileID: 5866666021909216657, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      propertyPath: m_ApplyRootMotion
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 238816297}
+  m_SourcePrefab: {fileID: 100100000, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+--- !u!4 &238816295 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+  m_PrefabInstance: {fileID: 238816294}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &238816296 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+  m_PrefabInstance: {fileID: 238816294}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &238816297
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 238816296}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8a733c9fd69a76498a0c1ffceb94777, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: MikeNspiredXRIStarterKit.Runtime::HostageScareController
+  animator: {fileID: 238816298}
+  scareTriggerName: Scare
+  audioSource: {fileID: 0}
+  gaspClip: {fileID: 0}
+--- !u!95 &238816298 stripped
+Animator:
+  m_CorrespondingSourceObject: {fileID: 5866666021909216657, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+  m_PrefabInstance: {fileID: 238816294}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &238907896
 GameObject:
   m_ObjectHideFlags: 0
@@ -15718,6 +15817,7 @@ Transform:
   - {fileID: 1975473698}
   - {fileID: 535901576}
   - {fileID: 179364208}
+  - {fileID: 238816295}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &462103901
@@ -78017,7 +78117,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: MikeNspiredXRIStarterKit.Runtime::NpcShooterRaycast
   firePoint: {fileID: 1945410829}
-  target: {fileID: 0}
+  target: {fileID: 1312843278}
   hitMask:
     serializedVersion: 2
     m_Bits: 4294967295
@@ -78028,6 +78128,9 @@ MonoBehaviour:
   muzzleFlash: {fileID: 0}
   fireAudioSource: {fileID: 1385634373}
   fireClip: {fileID: 8300000, guid: cabbd3fd5ecd9f34189a90e120a55259, type: 3}
+  hostage: {fileID: 238816297}
+  scareHostageOnStartFiring: 1
+  scareHostageIfShotHitsHostage: 0
 --- !u!1 &1975584357
 GameObject:
   m_ObjectHideFlags: 0
