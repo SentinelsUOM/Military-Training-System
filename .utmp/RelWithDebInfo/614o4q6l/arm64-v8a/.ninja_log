@@ -1,10 +1,19 @@
 # ninja log v5
 51	3232	7898230484834007	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	88caecc99643825b
 40	3249	7898230484930356	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	fd1c84c511962969
-0	3253	7898230485099027	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	28b3e5c17098b139
-77	3313	7898230485920366	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	425bd0153c954dab
-11	3386	7898230486664120	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	2501a7ebf445fb64
 61	3717	7898230490029801	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	15eee6b56c98ab11
+0	3253	7898230485099027	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	28b3e5c17098b139
+11	3386	7898230486664120	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	2501a7ebf445fb64
+77	3313	7898230485920366	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	425bd0153c954dab
 30	3770	7898230490564486	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	ce14905a64901b69
 20	3923	7898230492106686	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	ff66fd227af1c6b0
 3924	4139	7898230494319845	C:/Users/Navindu/Documents/GitHub/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/614o4q6l/obj/arm64-v8a/libgame.so	e786a9dfb8c4eafc
+67	4262	7900165160336329	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	88caecc99643825b
+34	4267	7900165160336329	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	fd1c84c511962969
+24	4310	7900165160713466	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	28b3e5c17098b139
+81	4314	7900165160744059	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	425bd0153c954dab
+13	4421	7900165161986616	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	2501a7ebf445fb64
+46	4735	7900165165188599	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	ce14905a64901b69
+2	4883	7900165166670013	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	ff66fd227af1c6b0
+96	4968	7900165167546690	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	15eee6b56c98ab11
+4969	5249	7900165170398316	C:/Users/Navindu/Documents/GitHub/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/614o4q6l/obj/arm64-v8a/libgame.so	e786a9dfb8c4eafc
