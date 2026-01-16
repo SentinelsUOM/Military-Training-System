@@ -1,46 +1,65 @@
-using UnityEngine;
+﻿using UnityEngine;
+using Unity.XR.CoreUtils;
 
 public class StopNpcOnEnter : MonoBehaviour
 {
+    [Header("Refs")]
     public PatrolLine npcPatrol;
-    public Transform playerCamera;
-    public AudioSource npcAudioSource;
-    public AudioClip stopLine;
+    public Transform playerCamera;          // XR Origin > Main Camera
+    public NpcShooterRaycast npcShooter;
 
-    private bool hasSpoken = false;
+    [Header("Audio (Stop Line)")]
+    public AudioSource npcAudioSource;      // NPC AudioSource
+    public AudioClip stopLine;              // "Hey! Stop there!"
+    public bool playOnce = true;
+
+    private bool hasPlayed = false;
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!other.CompareTag("Player")) return;
+        // XR-safe: detect player rig
+        if (other.GetComponentInParent<XROrigin>() == null) return;
 
-        // Stop immediately + look at player
-        npcPatrol.StopAndLook(playerCamera);
+        // If you didn't drag camera, auto-find it
+        if (playerCamera == null && Camera.main != null)
+            playerCamera = Camera.main.transform;
 
-        // Speak only once while you are inside
-        if (!hasSpoken && npcAudioSource != null && stopLine != null)
+        // Stop and look
+        if (npcPatrol != null && playerCamera != null)
+            npcPatrol.StopAndLook(playerCamera);
+
+        // Play stop voice line
+        if (npcAudioSource != null && stopLine != null)
         {
-            npcAudioSource.Stop();
-            npcAudioSource.PlayOneShot(stopLine);
-            hasSpoken = true;
+            if (!playOnce || !hasPlayed)
+            {
+                npcAudioSource.Stop();
+                npcAudioSource.PlayOneShot(stopLine);
+                hasPlayed = true;
+            }
         }
-    }
 
-    private void OnTriggerStay(Collider other)
-    {
-        if (!other.CompareTag("Player")) return;
-
-        // Keep forcing stop + look (prevents any movement)
-        npcPatrol.StopAndLook(playerCamera);
+        // Start shooting
+        if (npcShooter != null && playerCamera != null)
+        {
+            npcShooter.target = playerCamera;
+            npcShooter.StartFiring();
+        }
     }
 
     private void OnTriggerExit(Collider other)
     {
-        if (!other.CompareTag("Player")) return;
+        if (other.GetComponentInParent<XROrigin>() == null) return;
 
-        // Resume patrol when player leaves
-        npcPatrol.ResumePatrol();
+        // Resume patrol
+        if (npcPatrol != null)
+            npcPatrol.ResumePatrol();
 
-        // Reset so it can speak again next time you enter
-        hasSpoken = false;
+        // Stop firing
+        if (npcShooter != null)
+            npcShooter.StopFiring();
+
+        // Reset so it can play again next time (optional)
+        hasPlayed = false;
     }
 }

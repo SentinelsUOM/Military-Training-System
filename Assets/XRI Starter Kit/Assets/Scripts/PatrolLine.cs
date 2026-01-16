@@ -32,12 +32,9 @@ public class PatrolLine : MonoBehaviour
 
     void Update()
     {
-        // STOP MODE
-        if (isStopped && lookTarget != null)
-        {
-            LookAtPlayer();
+        // STOP MODE: do not move (rotation handled in LateUpdate)
+        if (isStopped)
             return;
-        }
 
         // PATROL MODE
         if (pointA == null || pointB == null) return;
@@ -53,13 +50,17 @@ public class PatrolLine : MonoBehaviour
             return;
         }
 
+        // Rotate toward patrol target
         Vector3 moveDir = (targetPos - transform.position).normalized;
+        moveDir.y = 0f;
+
         if (moveDir.sqrMagnitude > 0.001f)
         {
             Quaternion rot = Quaternion.LookRotation(moveDir);
             transform.rotation = Quaternion.Slerp(transform.rotation, rot, Time.deltaTime * rotateSpeed);
         }
 
+        // Move directly toward target
         transform.position = Vector3.MoveTowards(
             transform.position,
             targetPos,
@@ -67,10 +68,14 @@ public class PatrolLine : MonoBehaviour
         );
     }
 
-    void LookAtPlayer()
+    // ✅ This runs AFTER animation updates bones, so it won’t get overridden
+    void LateUpdate()
     {
+        if (!isStopped) return;
+        if (lookTarget == null) return;
+
         Vector3 dir = lookTarget.position - transform.position;
-        dir.y = 0f; // rotate only on Y axis
+        dir.y = 0f; // rotate only on Y axis (no looking up/down)
 
         if (dir.sqrMagnitude < 0.001f) return;
 
