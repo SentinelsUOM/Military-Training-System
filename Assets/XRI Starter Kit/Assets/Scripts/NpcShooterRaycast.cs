@@ -22,6 +22,8 @@ public class NpcShooterRaycast : MonoBehaviour
     [Header("Hostage")]
     public HostageScareController hostage;   // drag hostage1 here
     public bool controlHostageScare = true;  // tick this
+    public HostageRunawayController runawayHostage;
+
 
     private Coroutine loop;
 
@@ -30,8 +32,13 @@ public class NpcShooterRaycast : MonoBehaviour
         Debug.Log("StartFiring() called");
         if (loop != null) return;
 
+        // Hostage 1: scared in place
         if (controlHostageScare && hostage != null)
             hostage.SetScared(true);
+
+        // Hostage 2: run away + get down scared
+        if (runawayHostage != null)
+            runawayHostage.OnGunfire(true);
 
         loop = StartCoroutine(FireLoop());
     }
@@ -46,7 +53,11 @@ public class NpcShooterRaycast : MonoBehaviour
 
         if (controlHostageScare && hostage != null)
             hostage.SetScared(false);
+
+        if (runawayHostage != null)
+            runawayHostage.OnGunfire(false);
     }
+
 
     IEnumerator FireLoop()
     {
