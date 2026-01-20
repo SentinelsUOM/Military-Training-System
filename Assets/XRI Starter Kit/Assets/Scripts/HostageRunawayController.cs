@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.AI;
 
 public class HostageRunawayController : MonoBehaviour
@@ -6,104 +6,214 @@ public class HostageRunawayController : MonoBehaviour
     [Header("Refs")]
     public NavMeshAgent agent;
     public Animator animator;
+
+    [Header("Targets (IMPORTANT: these must NOT be children of the hostage)")]
+    public Transform doorPoint;
+    public Transform doorThroughPoint;
     public Transform hideSpot;
+
+    [Header("Door (optional)")]
+    public MonoBehaviour door;                 // drag your SimpleDoorOpener here
+    public float openDoorDistance = 1.2f;
 
     [Header("Animator Params")]
     public string runningBool = "Running";
     public string scaredBool = "Scared";
     public string getDownTrigger = "GetDown";
 
-    [Header("Behavior")]
+    [Header("Arrive Settings")]
     public float arriveDistance = 0.6f;
+    public float maxSnapDistance = 0.5f;
+
+    [Header("Behavior")]
     public bool keepScaredUntilGunfireStops = true;
 
-    private bool isRunning = false;
-    private bool gunfireOn = false;
-    private bool reachedHide = false;
+    private enum State
+    {
+        Idle,
+        ToDoorPoint,
+        ToDoorThroughPoint,
+        ToHideSpot,
+        Hiding
+    }
+
+    private State state = State.Idle;
+    private bool isGunfireActive;
 
     void Awake()
     {
         if (agent == null) agent = GetComponent<NavMeshAgent>();
         if (animator == null) animator = GetComponentInChildren<Animator>();
+
+        if (animator != null) animator.applyRootMotion = false;
+        if (agent != null)
+        {
+            agent.updateRotation = true;
+            agent.updatePosition = true;
+            agent.autoBraking = false;
+        }
     }
 
     void Update()
     {
-        if (!isRunning || agent == null || hideSpot == null) return;
+        if (agent == null || animator == null) return;
 
-        // Check arrival
-        if (!agent.pathPending && agent.remainingDistance <= Mathf.Max(arriveDistance, agent.stoppingDistance))
+        // Always drive running animation from REAL velocity
+        animator.SetBool(runningBool, agent.velocity.magnitude > 0.1f);
+
+        switch (state)
         {
-            // Arrived at hide spot
-            isRunning = false;
-            reachedHide = true;
+            case State.ToDoorPoint:
+                // open door when close enough
+                if (door != null && doorPoint != null)
+                {
+                    float d = Vector3.Distance(transform.position, doorPoint.position);
+                    if (d <= openDoorDistance) TryOpenDoor();
+                }
 
-            agent.isStopped = true;
+                if (ArrivedStrict())
+                {
+                    Log("Reached DoorPoint");
+                    GoToDoorThroughPoint();
+                }
+                break;
 
-            if (animator != null)
-            {
-                animator.SetBool(runningBool, false);
+            case State.ToDoorThroughPoint:
+                if (ArrivedStrict())
+                {
+                    Log("Reached DoorThroughPoint");
+                    GoToHideSpot();
+                }
+                break;
 
-                // play get-down once (optional)
-                if (!string.IsNullOrEmpty(getDownTrigger))
-                    animator.SetTrigger(getDownTrigger);
+            case State.ToHideSpot:
+                if (ArrivedStrict())
+                {
+                    Log("Reached HideSpot -> GetDown + Scared");
+                    ReachedHideSpot();
+                }
+                break;
 
-                animator.SetBool(scaredBool, true);
-            }
+            case State.Hiding:
+                // If you want him to calm down when gunfire stops
+                if (!isGunfireActive && !keepScaredUntilGunfireStops)
+                {
+                    animator.SetBool(scaredBool, false);
+                }
+                break;
         }
     }
 
-    // Call this when shooting starts/stops (from your shooter script)
-    public void OnGunfire(bool isOn)
+    // Called from your shooter script: runawayHostage.OnGunfire(true/false)
+    public void OnGunfire(bool active)
     {
-        gunfireOn = isOn;
+        isGunfireActive = active;
 
-        if (gunfireOn)
+        if (active)
         {
-            StartRunToHide();
+            StartRunSequence();
         }
         else
         {
-            // Gunfire stopped
-            if (keepScaredUntilGunfireStops)
-            {
-                // Calm down ONLY if you want
-                if (reachedHide && animator != null)
-                    animator.SetBool(scaredBool, false);
-            }
+            // if your design = calm down when gunfire stops
+            if (!keepScaredUntilGunfireStops && state == State.Hiding)
+                animator.SetBool(scaredBool, false);
         }
     }
 
-    void StartRunToHide()
+    private void StartRunSequence()
     {
-        if (hideSpot == null)
+        if (doorPoint == null || doorThroughPoint == null || hideSpot == null)
         {
-            Debug.LogWarning("HostageRunawayController: hideSpot not assigned!");
+            Debug.LogWarning("[HostageRunaway] Missing targets. Assign DoorPoint, DoorThroughPoint, HideSpot.");
             return;
         }
 
-        if (agent == null)
+        // IMPORTANT: Do NOT set scared at start, or Animator will crouch while moving
+        animator.ResetTrigger(getDownTrigger);
+        animator.SetBool(scaredBool, false);
+
+        state = State.ToDoorPoint;
+        TrySetDestination(doorPoint.position, "DoorPoint");
+        Log("StartRunSequence -> DoorPoint");
+    }
+
+    private void GoToDoorThroughPoint()
+    {
+        state = State.ToDoorThroughPoint;
+        TrySetDestination(doorThroughPoint.position, "DoorThroughPoint");
+    }
+
+    private void GoToHideSpot()
+    {
+        state = State.ToHideSpot;
+        TrySetDestination(hideSpot.position, "HideSpot");
+    }
+
+    private void ReachedHideSpot()
+    {
+        state = State.Hiding;
+
+        // stop movement cleanly
+        agent.ResetPath();
+        agent.velocity = Vector3.zero;
+
+        // now crouch + scared
+        animator.SetBool(runningBool, false);
+        animator.SetBool(scaredBool, true);
+        animator.SetTrigger(getDownTrigger);
+    }
+
+    // -------- Arrival logic (prevents fake crouch / wrong room crouch) ----------
+    private bool ArrivedStrict()
+    {
+        if (agent.pathPending) return false;
+
+        if (agent.pathStatus != NavMeshPathStatus.PathComplete)
+            return false;
+
+        if (agent.remainingDistance > Mathf.Max(agent.stoppingDistance, arriveDistance) + 0.05f)
+            return false;
+
+        if (agent.velocity.sqrMagnitude > 0.05f)
+            return false;
+
+        return true;
+    }
+
+    // -------- Destination safety (snap to navmesh) ----------
+    private void TrySetDestination(Vector3 rawPos, string label)
+    {
+        Vector3 pos = rawPos;
+
+        if (NavMesh.SamplePosition(rawPos, out NavMeshHit hit, maxSnapDistance, NavMesh.AllAreas))
         {
-            Debug.LogWarning("HostageRunawayController: NavMeshAgent missing!");
+            pos = hit.position;
+        }
+        else
+        {
+            Debug.LogWarning($"[HostageRunaway] {label} is NOT on NavMesh. Move it onto the floor/NavMesh.");
             return;
         }
 
-        // If already reached hide and still scared, just stay scared
-        if (reachedHide)
-        {
-            if (animator != null) animator.SetBool(scaredBool, true);
-            return;
-        }
+        agent.SetDestination(pos);
+        Log($"SetDestination -> {label} (snapped: {pos})");
+    }
 
-        agent.isStopped = false;
-        agent.SetDestination(hideSpot.position);
+    // -------- Door open without compile error ----------
+    private void TryOpenDoor()
+    {
+        // We don't call door.Open() directly (your SimpleDoorOpener doesn't have that method)
+        // so we use SendMessage safely.
+        door.SendMessage("Open", SendMessageOptions.DontRequireReceiver);
+        door.SendMessage("OpenDoor", SendMessageOptions.DontRequireReceiver);
+        door.SendMessage("TriggerOpen", SendMessageOptions.DontRequireReceiver);
 
-        isRunning = true;
+        Log($"Door open attempted (component: {door.GetType().Name})");
+    }
 
-        if (animator != null)
-        {
-            animator.SetBool(scaredBool, false);
-            animator.SetBool(runningBool, true);
-        }
+    private void Log(string msg)
+    {
+        Debug.Log($"[HostageRunaway] {msg}");
     }
 }

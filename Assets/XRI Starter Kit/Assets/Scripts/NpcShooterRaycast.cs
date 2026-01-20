@@ -19,33 +19,48 @@ public class NpcShooterRaycast : MonoBehaviour
     public AudioSource fireAudioSource;
     public AudioClip fireClip;
 
-    [Header("Hostage")]
-    public HostageScareController hostage;   // drag hostage1 here
-    public bool controlHostageScare = true;  // tick this
-    public HostageRunawayController runawayHostage;
+    [Header("Hostage 1 (scared in place)")]
+    public HostageScareController hostage;
+    public bool controlHostageScare = true;
 
+    [Header("Hostage 2 (runaway)")]
+    public HostageRunawayController runawayHostage;
 
     private Coroutine loop;
 
+    // ✅ TEST buttons in inspector (right click component header)
+    [ContextMenu("TEST -> StartFiring")]
+    void TestStartFiring() => StartFiring();
+
+    [ContextMenu("TEST -> StopFiring")]
+    void TestStopFiring() => StopFiring();
+
     public void StartFiring()
     {
-        Debug.Log("StartFiring() called");
+        Debug.Log("[NpcShooterRaycast] StartFiring() called on: " + gameObject.name);
+
         if (loop != null) return;
 
-        // Hostage 1: scared in place
         if (controlHostageScare && hostage != null)
             hostage.SetScared(true);
 
-        // Hostage 2: run away + get down scared
         if (runawayHostage != null)
+        {
+            Debug.Log("[NpcShooterRaycast] Calling runawayHostage.OnGunfire(true)");
             runawayHostage.OnGunfire(true);
+        }
+        else
+        {
+            Debug.LogWarning("[NpcShooterRaycast] Runaway Hostage is NULL (not assigned).");
+        }
 
         loop = StartCoroutine(FireLoop());
     }
 
     public void StopFiring()
     {
-        Debug.Log("StopFiring() called");
+        Debug.Log("[NpcShooterRaycast] StopFiring() called on: " + gameObject.name);
+
         if (loop == null) return;
 
         StopCoroutine(loop);
@@ -55,14 +70,15 @@ public class NpcShooterRaycast : MonoBehaviour
             hostage.SetScared(false);
 
         if (runawayHostage != null)
+        {
+            Debug.Log("[NpcShooterRaycast] Calling runawayHostage.OnGunfire(false)");
             runawayHostage.OnGunfire(false);
+        }
     }
-
 
     IEnumerator FireLoop()
     {
         float delay = 1f / Mathf.Max(0.1f, fireRate);
-
         while (true)
         {
             FireOnce();
@@ -93,14 +109,8 @@ public class NpcShooterRaycast : MonoBehaviour
 
         if (Physics.Raycast(start, dir, out RaycastHit hit, range, hitMask, QueryTriggerInteraction.Ignore))
         {
-            Debug.Log("NPC shot hit: " + hit.collider.name);
-
             var health = hit.collider.GetComponentInParent<PlayerHealth>();
             if (health != null) health.TakeDamage(damage);
-        }
-        else
-        {
-            Debug.Log("NPC shot missed (no hit)");
         }
     }
 }
