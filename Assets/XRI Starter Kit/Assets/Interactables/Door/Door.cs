@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.XR.Interaction.Toolkit;
 
 namespace MikeNspired.XRIStarterKit
@@ -7,6 +8,8 @@ namespace MikeNspired.XRIStarterKit
     [RequireComponent(typeof(HingeJoint))]
     public class Door : MonoBehaviour
     {
+        /// <summary>Raised once the first time this door is unlocked (handle turned).</summary>
+        public UnityEvent OnDoorOpened = new UnityEvent();
         [Header("Door Joint & Puller")]
         [Tooltip("Reference to the HingeJoint controlling the door.")]
         [SerializeField] private HingeJoint m_DoorJoint;
@@ -57,6 +60,7 @@ namespace MikeNspired.XRIStarterKit
         private bool m_Closed;                 // Tracks whether the door is currently locked
         private Rigidbody m_DoorRigidBody;
         private Vector3 m_StartingLocalPos = Vector3.one;
+        private bool m_OpenedEventFired;       // Ensures OnDoorOpened fires only once
 
         void Start()
         {
@@ -228,6 +232,12 @@ namespace MikeNspired.XRIStarterKit
             // turn off the hinge spring if any
             m_DoorJoint.useSpring = false;
             unlockDoorSound.Play();
+
+            if (!m_OpenedEventFired)
+            {
+                m_OpenedEventFired = true;
+                OnDoorOpened.Invoke();
+            }
         }
 
         private void LockDoor()

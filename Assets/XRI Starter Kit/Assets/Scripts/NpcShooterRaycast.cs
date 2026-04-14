@@ -28,6 +28,9 @@ public class NpcShooterRaycast : MonoBehaviour
 
     private Coroutine loop;
 
+    /// True while the NPC is actively firing. Read by TerroristController to sync Engage state.
+    public bool IsFiring => loop != null;
+
     // ✅ TEST buttons in inspector (right click component header)
     [ContextMenu("TEST -> StartFiring")]
     void TestStartFiring() => StartFiring();
