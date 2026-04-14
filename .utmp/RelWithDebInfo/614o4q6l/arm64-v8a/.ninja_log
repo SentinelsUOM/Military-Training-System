@@ -1,10 +1,19 @@
 # ninja log v5
 67	4262	7900165160336329	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	88caecc99643825b
 34	4267	7900165160336329	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	fd1c84c511962969
-24	4310	7900165160713466	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	28b3e5c17098b139
 96	4968	7900165167546690	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	15eee6b56c98ab11
-81	4314	7900165160744059	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	425bd0153c954dab
+24	4310	7900165160713466	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	28b3e5c17098b139
 13	4421	7900165161986616	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	2501a7ebf445fb64
+81	4314	7900165160744059	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	425bd0153c954dab
 46	4735	7900165165188599	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	ce14905a64901b69
 2	4883	7900165166670013	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	ff66fd227af1c6b0
 4969	5249	7900165170398316	C:/Users/Navindu/Documents/GitHub/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/614o4q6l/obj/arm64-v8a/libgame.so	e786a9dfb8c4eafc
+90	5721	7972802786029879	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	fd1c84c511962969
+125	5789	7972802786462365	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	88caecc99643825b
+147	5929	7972802788061402	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	425bd0153c954dab
+107	6008	7972802788086637	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	28b3e5c17098b139
+63	6071	7972802789587410	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	2501a7ebf445fb64
+181	6690	7972802795735323	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	ce14905a64901b69
+204	6800	7972802796871789	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	15eee6b56c98ab11
+46	6966	7972802798502005	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	ff66fd227af1c6b0
+6966	7392	7972802802898458	C:/Users/Navindu/Documents/GitHub/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/614o4q6l/obj/arm64-v8a/libgame.so	e786a9dfb8c4eafc

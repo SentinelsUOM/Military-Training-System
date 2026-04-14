@@ -40,6 +40,12 @@ public class HostageRunawayController : MonoBehaviour
     private State state = State.Idle;
     private bool isGunfireActive;
 
+    /// True once the flee sequence has fully completed (hostage is crouching at the hide spot).
+    public bool IsHiding  => state == State.Hiding;
+
+    /// True while the hostage is actively navigating between waypoints.
+    public bool IsFleeing => state != State.Idle && state != State.Hiding;
+
     void Awake()
     {
         if (agent == null) agent = GetComponent<NavMeshAgent>();

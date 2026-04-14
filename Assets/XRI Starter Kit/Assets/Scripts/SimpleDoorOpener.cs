@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Events;
 
 public class SimpleDoorOpener : MonoBehaviour
 {
@@ -9,6 +10,9 @@ public class SimpleDoorOpener : MonoBehaviour
     public Collider doorCollider; // assign in inspector
 
     public NavMeshObstacle obstacleToDisable; // drag door's NavMeshObstacle here
+
+    // Raised once when the door opens. DoorOpenDetector subscribes to this.
+    public UnityEvent OnDoorOpened = new UnityEvent();
 
     private bool open = false;
     private Quaternion closedRot;
@@ -33,5 +37,6 @@ public class SimpleDoorOpener : MonoBehaviour
         open = true;
         if (doorCollider != null) doorCollider.enabled = false;
         if (obstacleToDisable != null) obstacleToDisable.enabled = false;
+        OnDoorOpened.Invoke();
     }
 }
