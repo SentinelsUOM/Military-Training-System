@@ -93,10 +93,12 @@ public class EventManager : MonoBehaviour
             if (logEvents && responders.Count == 0)
                 Debug.Log($"[EventManager] Broadcast {e.Type} → 0 / {registry.Count} responded");
 
-            // GunshotHeard: the best-scored responder also walks to investigate
+            // GunshotHeard: best-scored TERRORIST walks to investigate (never a hostage)
             if (e.Type == ScenarioEventType.GunshotHeard && responders.Count > 0)
             {
-                var investigator = NPCSelector.SelectBest(responders, e, false);
+                var terrorists = responders.FindAll(r => r is TerroristController);
+                if (terrorists.Count == 0) return;
+                var investigator = NPCSelector.SelectBest(terrorists, e, false);
                 if (investigator is TerroristController tc)
                 {
                     tc.InvestigatePosition(e.Origin);

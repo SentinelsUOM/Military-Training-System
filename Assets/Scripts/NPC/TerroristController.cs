@@ -235,7 +235,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (currentState == TerroristState.Down) return;
 
         currentHealth = Mathf.Max(0f, currentHealth - damage);
-        if (currentHealth <= 0f)
+        if (currentHealth <= 20f)
         {
             TransitionTo(TerroristState.Down, null);
         }
@@ -360,7 +360,28 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     void Update()
     {
-        if (shooter == null || currentState == TerroristState.Down) return;
+        if (currentState == TerroristState.Down) return;
+
+        // Keep look anchor tracking the player's live position every frame.
+        if (_lastSeenPlayer != null && currentState != TerroristState.Idle && _lookAnchor != null)
+            _lookAnchor.position = new Vector3(
+                _lastSeenPlayer.position.x, transform.position.y, _lastSeenPlayer.position.z);
+
+        // Wander/Static NPCs have PatrolLine disabled so we rotate them ourselves.
+        // Patrol NPCs use PatrolLine.StopAndLook which reads _lookAnchor, but we also
+        // handle rotation here so all three idle modes track the player smoothly.
+        if (currentState != TerroristState.Idle && _lookAnchor != null)
+        {
+            Vector3 dir = _lookAnchor.position - transform.position;
+            dir.y = 0f;
+            if (dir.sqrMagnitude > 0.001f)
+            {
+                Quaternion tgt = Quaternion.LookRotation(dir);
+                transform.rotation = Quaternion.Slerp(transform.rotation, tgt, Time.deltaTime * 6f);
+            }
+        }
+
+        if (shooter == null) return;
 
         bool isFiring = shooter.IsFiring;
 
@@ -504,8 +525,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
         foreach (var col in GetComponentsInChildren<Collider>())
             col.enabled = false;
 
-        // Trigger death animation
-        animator?.SetTrigger("Death");
+        // Trigger death animation then freeze in final pose
+        if (animator != null)
+        {
+            animator.SetTrigger("Death");
+            StartCoroutine(FreezeAfterDeath());
+        }
 
         // Raise TerroristDown event for squad propagation
         var downEvent = new ScenarioEvent(
@@ -519,6 +544,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Notify squad — AlertPropagator handles Ring 1 Engage
         if (!string.IsNullOrEmpty(squadId))
             Squad.Get(squadId)?.NotifyMemberDown(this, downEvent);
+    }
+
+    IEnumerator FreezeAfterDeath()
+    {
+        // Wait one frame for the Death trigger to register, then wait until
+        // the animator enters the Death state before measuring its length.
+        yield return null;
+        float waited = 0f;
+        while (waited < 0.3f && !animator.GetCurrentAnimatorStateInfo(0).IsTag("Death"))
+        {
+            waited += Time.deltaTime;
+            yield return null;
+        }
+        float clipLength = animator.GetCurrentAnimatorStateInfo(0).length;
+        // Clamp: some death clips are set to loop — treat anything > 5 s as 3 s
+        yield return new WaitForSeconds(Mathf.Clamp(clipLength, 0.5f, 5f));
+        animator.enabled = false;
     }
 
     // ── Cover movement ────────────────────────────────────────────────────────
