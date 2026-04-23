@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScenarioConfig",
+  "description": "Evaluator-defined input parameters consumed by Module 1 (Dynamic Scenario Generation) before generating a VR hostage-rescue training scenario.",
+  "type": "object",
+  "required": ["schemaVersion", "missionStructure", "entityConfiguration", "executionControls"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Schema version identifier for forward compatibility."
+    },
+
+    "missionStructure": {
+      "type": "object",
+      "description": "Physical layout and building structure parameters. All scenarios are single-floor.",
+      "required": ["missionType", "roomCount", "roomSize", "layoutType", "entryType"],
+      "properties": {
+        "missionType": {
+          "type": "string",
+          "enum": ["hostage_rescue"],
+          "default": "hostage_rescue",
+          "description": "Mission template identifier. Currently only hostage_rescue is supported; reserved for future expansion."
+        },
+        "roomCount": {
+          "type": "object",
+          "description": "Min/max range for number of rooms. Generator selects within range based on randomness level and layout type constraints.",
+          "required": ["min", "max"],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 20,
+              "default": 5,
+              "description": "Minimum number of rooms to generate."
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 20,
+              "default": 8,
+              "description": "Maximum number of rooms to generate."
+            }
+          }
+        },
+        "roomSize": {
+          "type": "string",
+          "enum": ["small", "medium", "large"],
+          "default": "medium",
+          "description": "Room dimension category. Mapped to Unity world units: small=4x4m, medium=6x6m, large=8x8m."
+        },
+        "layoutType": {
+          "type": "string",
+          "enum": ["linear", "branching", "hub_and_spoke", "loop"],
+          "default": "branching",
+          "description": "Room graph topology. linear=sequential chain; branching=tree with decision points; hub_and_spoke=central room with radiating corridors; loop=cyclical paths allowing flanking."
+        },
+        "entryType": {
+          "type": "string",
+          "enum": ["single", "multiple"],
+          "default": "single",
+          "description": "Number of building entry points. single=one breach point; multiple=2-3 entry points."
+        }
+      }
+    },
+
+    "entityConfiguration": {
+      "type": "object",
+      "description": "NPC placement and distribution parameters.",
+      "required": ["hostageCount", "terroristCount", "placementStrategy", "hostageRiskLevel"],
+      "properties": {
+        "hostageCount": {
+          "type": "integer",
+          "const": 1,
+          "default": 1,
+          "description": "Number of hostage NPCs. Fixed to 1 for the current implementation stage to reduce scenario complexity. Reserved for future expansion (range 1-5)."
+        },
+        "terroristCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 4,
+          "description": "Number of terrorist NPCs. Each receives a role assignment (patrol, stationary guard, roaming guard, hostage guardian) based on spatial structure and difficulty."
+        },
+        "placementStrategy": {
+          "type": "string",
+          "enum": ["clustered", "dispersed", "front_loaded", "deep"],
+          "default": "dispersed",
+          "description": "Spatial distribution pattern. clustered=entities in adjacent rooms creating compounding tactical effects [5]; dispersed=spread across layout; front_loaded=near entry; deep=far from entry in high-depth rooms."
+        },
+        "hostageRiskLevel": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "default": "medium",
+          "description": "Proximity constraint between the hostage and terrorists using distance thresholds [16]. high=small max distance (closely guarded); medium=moderate spacing; low=large min distance (separated from threats)."
+        }
+      }
+    },
+
+    "executionControls": {
+      "type": "object",
+      "description": "Generation behaviour, difficulty scaling, and reproducibility parameters.",
+      "required": ["difficultyLevel", "randomnessLevel"],
+      "properties": {
+        "difficultyLevel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3,
+          "description": "Overall difficulty (1=easiest, 5=hardest). Higher values place NPCs in tactically challenging positions such as behind doors or at sightline intersections [3], increase role assignment complexity, and tighten navigation context."
+        },
+        "randomnessLevel": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "default": "medium",
+          "description": "Structural variation between scenarios generated from the same config. low=minimal variation; medium=moderate; high=maximum variation in room positions, sizes, and connectivity [8][13]."
+        },
+        "seed": {
+          "type": ["integer", "null"],
+          "default": null,
+          "description": "Random seed for reproducible generation. Same seed + same config = identical output. null=system-generated random seed. The used seed is always recorded in output configurationMetadata."
+        },
+        "timeLimit": {
+          "type": ["integer", "null"],
+          "minimum": 60,
+          "maximum": 1800,
+          "default": null,
+          "description": "Optional mission time limit in seconds. null=no time constraint. Passed through to runtime modules; does not affect generation logic."
+        },
+        "customLabel": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "default": null,
+          "description": "Evaluator-defined label for tagging the scenario (e.g., session ID, training cohort). Stored in configurationMetadata for traceability [22]."
+        }
+      }
+    }
+  }
+}

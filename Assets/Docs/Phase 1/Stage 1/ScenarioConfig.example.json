@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0.0",
+
+  "missionStructure": {
+    "missionType": "hostage_rescue",
+    "roomCount": { "min": 6, "max": 10 },
+    "roomSize": "medium",
+    "layoutType": "branching",
+    "entryType": "single"
+  },
+
+  "entityConfiguration": {
+    "hostageCount": 1,
+    "terroristCount": 5,
+    "placementStrategy": "clustered",
+    "hostageRiskLevel": "high"
+  },
+
+  "executionControls": {
+    "difficultyLevel": 4,
+    "randomnessLevel": "medium",
+    "seed": 20260419,
+    "timeLimit": 600,
+    "customLabel": "Session_Alpha_Week3_Eval2"
+  }
+}

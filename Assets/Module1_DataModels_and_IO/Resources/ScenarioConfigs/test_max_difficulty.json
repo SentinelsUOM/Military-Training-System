@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0.0",
+  "missionStructure": {
+    "missionType": "hostage_rescue",
+    "roomCount": { "min": 10, "max": 15 },
+    "roomSize": "small",
+    "layoutType": "loop",
+    "entryType": "multiple"
+  },
+  "entityConfiguration": {
+    "hostageCount": 1,
+    "terroristCount": 8,
+    "placementStrategy": "deep",
+    "hostageRiskLevel": "high"
+  },
+  "executionControls": {
+    "difficultyLevel": 5,
+    "randomnessLevel": "high",
+    "seed": 42,
+    "timeLimit": 300,
+    "customLabel": "Test_MaxDifficulty_Stress"
+  }
+}
