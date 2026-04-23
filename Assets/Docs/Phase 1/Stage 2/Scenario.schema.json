@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scenario",
+  "description": "Complete generation output from Module 1. Consumed by Modules 2 (NPC Behaviour), 3 (Cognitive Analysis), and 4 (Logging/AAR).",
+  "type": "object",
+  "required": ["scenarioId", "missionType", "layout", "spawnPoints", "entities", "roleAssignments", "navigationContext", "configurationMetadata"],
+  "properties": {
+
+    "scenarioId": {
+      "type": "string",
+      "description": "Unique UUID v4 identifier for this generated scenario instance."
+    },
+
+    "missionType": {
+      "type": "string",
+      "enum": ["hostage_rescue"],
+      "description": "Mission template (mirrors ScenarioConfig input)."
+    },
+
+    "layout": {
+      "type": "object",
+      "description": "Complete room graph, entry points, and layout metadata.",
+      "required": ["rooms", "entryPoints", "layoutMetadata"],
+      "properties": {
+        "rooms": {
+          "type": "array",
+          "description": "Array of room nodes in the room graph.",
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "position", "size", "connectedRoomIds", "doors", "depth", "zoneLabel"],
+            "properties": {
+              "id": { "type": "string", "description": "Unique room identifier (e.g., 'room_01'). Used as zone ID for location-tagged events." },
+              "type": { "type": "string", "enum": ["entry", "corridor", "standard", "hostage_room"], "description": "Room type derived from generation context." },
+              "position": {
+                "type": "object",
+                "description": "Room centre in Unity world coordinates.",
+                "required": ["x", "y", "z"],
+                "properties": { "x": {"type":"number"}, "y": {"type":"number"}, "z": {"type":"number"} }
+              },
+              "size": {
+                "type": "object",
+                "description": "Room dimensions in metres.",
+                "required": ["width", "depth", "height"],
+                "properties": { "width": {"type":"number"}, "depth": {"type":"number"}, "height": {"type":"number"} }
+              },
+              "connectedRoomIds": { "type": "array", "items": {"type":"string"}, "description": "Room IDs connected via doors (graph edges)." },
+              "doors": {
+                "type": "array",
+                "description": "Door objects as attributes of this room.",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "connectsToRoomId", "position", "wallSide"],
+                  "properties": {
+                    "id": { "type": "string", "description": "Unique door identifier." },
+                    "connectsToRoomId": { "type": "string", "description": "Room ID on the other side." },
+                    "position": {
+                      "type": "object",
+                      "required": ["x","y","z"],
+                      "properties": { "x":{"type":"number"}, "y":{"type":"number"}, "z":{"type":"number"} }
+                    },
+                    "wallSide": { "type": "string", "enum": ["north","south","east","west"], "description": "Wall where the door is placed." }
+                  }
+                }
+              },
+              "depth": { "type": "integer", "minimum": 0, "description": "BFS depth from entry room. Used for role assignment [18] and cognitive context." },
+              "zoneLabel": { "type": "string", "description": "Human-readable label (e.g., 'Entry Hall'). Used by Modules 3 and 4." }
+            }
+          }
+        },
+        "entryPoints": {
+          "type": "array",
+          "description": "Building entry points (1 for single, 2-3 for multiple).",
+          "items": {
+            "type": "object",
+            "required": ["id", "roomId", "position", "facingDirection"],
+            "properties": {
+              "id": { "type": "string" },
+              "roomId": { "type": "string" },
+              "position": {
+                "type": "object", "required": ["x","y","z"],
+                "properties": { "x":{"type":"number"}, "y":{"type":"number"}, "z":{"type":"number"} }
+              },
+              "facingDirection": {
+                "type": "object", "required": ["x","y","z"],
+                "properties": { "x":{"type":"number"}, "y":{"type":"number"}, "z":{"type":"number"} }
+              }
+            }
+          }
+        },
+        "layoutMetadata": {
+          "type": "object",
+          "description": "Aggregate layout statistics for AAR and cognitive context.",
+          "required": ["totalRooms", "layoutType", "maxDepth", "graphDiameter", "roomSizeCategory", "entryType", "boundingBox"],
+          "properties": {
+            "totalRooms": { "type": "integer" },
+            "layoutType": { "type": "string", "enum": ["linear","branching","hub_and_spoke","loop"] },
+            "maxDepth": { "type": "integer" },
+            "graphDiameter": { "type": "integer" },
+            "roomSizeCategory": { "type": "string", "enum": ["small","medium","large"] },
+            "entryType": { "type": "string", "enum": ["single","multiple"] },
+            "boundingBox": {
+              "type": "object",
+              "required": ["min", "max"],
+              "properties": {
+                "min": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} },
+                "max": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "spawnPoints": {
+      "type": "object",
+      "description": "Initial positions for all actors.",
+      "required": ["trainee", "hostages", "terrorists"],
+      "properties": {
+        "trainee": {
+          "type": "object",
+          "required": ["roomId", "position", "facingDirection"],
+          "properties": {
+            "roomId": { "type": "string" },
+            "position": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} },
+            "facingDirection": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} }
+          }
+        },
+        "hostages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["entityId", "roomId", "position", "facingDirection"],
+            "properties": {
+              "entityId": { "type": "string" },
+              "roomId": { "type": "string" },
+              "position": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} },
+              "facingDirection": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} }
+            }
+          }
+        },
+        "terrorists": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["entityId", "roomId", "position", "facingDirection"],
+            "properties": {
+              "entityId": { "type": "string" },
+              "roomId": { "type": "string" },
+              "position": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} },
+              "facingDirection": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} }
+            }
+          }
+        }
+      }
+    },
+
+    "entities": {
+      "type": "array",
+      "description": "Full entity records for every actor.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "assignedRoom", "position", "metadata"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable entity ID used across all modules." },
+          "type": { "type": "string", "enum": ["trainee", "hostage", "terrorist"] },
+          "assignedRoom": { "type": "string", "description": "Room ID where entity is initially placed." },
+          "position": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} },
+          "metadata": { "type": "object", "description": "Entity-specific data (e.g., initialState)." }
+        }
+      }
+    },
+
+    "roleAssignments": {
+      "type": "array",
+      "description": "One entry per terrorist NPC linking role, priority, and navigation context.",
+      "items": {
+        "type": "object",
+        "required": ["entityId", "role", "priorityLevel", "assignedRoomId", "navigationContextId"],
+        "properties": {
+          "entityId": { "type": "string" },
+          "role": { "type": "string", "enum": ["patrol", "stationary_guard", "roaming_guard", "hostage_guardian"] },
+          "priorityLevel": { "type": "integer", "minimum": 1, "description": "Response priority (1=highest)." },
+          "assignedRoomId": { "type": "string", "description": "Primary room this NPC is responsible for." },
+          "navigationContextId": { "type": "string", "description": "Key into the navigationContext object." }
+        }
+      }
+    },
+
+    "navigationContext": {
+      "type": "object",
+      "description": "Dictionary keyed by navigationContextId. Each entry is role-specific movement data.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "enum": ["patrol", "stationary_guard", "roaming_guard", "hostage_guardian"] },
+          "patrolRoute": { "type": "array", "items": {"type":"string"}, "description": "Ordered room IDs (patrol only)." },
+          "waypoints": { "type": "array", "items": {"type":"object","required":["x","y","z"],"properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}}, "description": "World positions (patrol and roaming)." },
+          "looping": { "type": "boolean", "description": "Patrol loops or reverses (patrol only)." },
+          "guardRoomId": { "type": "string", "description": "Room ID (stationary_guard only)." },
+          "guardPosition": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}}, "description": "Guard/guardian position." },
+          "facingDirection": { "type":"object", "required":["x","y","z"], "properties":{"x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"}} },
+          "roamingRoomIds": { "type": "array", "items": {"type":"string"}, "description": "Adjacent rooms (roaming_guard only)." },
+          "anchorRoomId": { "type": "string", "description": "Return room (roaming_guard only)." },
+          "guardedEntityId": { "type": "string", "description": "Hostage entity ID (hostage_guardian only)." },
+          "hostageRoomId": { "type": "string", "description": "Room with hostage (hostage_guardian only)." }
+        }
+      }
+    },
+
+    "configurationMetadata": {
+      "type": "object",
+      "description": "Original config + generation metadata for traceability.",
+      "required": ["scenarioConfig", "generationTimestamp", "seedUsed", "generatorVersion", "validationResult"],
+      "properties": {
+        "scenarioConfig": { "type": "object", "description": "Complete copy of the ScenarioConfig.json input." },
+        "generationTimestamp": { "type": "string", "format": "date-time", "description": "ISO 8601 timestamp." },
+        "seedUsed": { "type": "integer", "description": "Actual seed used for generation." },
+        "generatorVersion": { "type": "string", "description": "Semantic version of the generator." },
+        "validationResult": {
+          "type": "object",
+          "required": ["passed", "checksRun", "checksPassed"],
+          "properties": {
+            "passed": { "type": "boolean" },
+            "checksRun": { "type": "integer" },
+            "checksPassed": { "type": "integer" },
+            "warnings": { "type": "array", "items": {"type":"string"} }
+          }
+        }
+      }
+    }
+  }
+}
