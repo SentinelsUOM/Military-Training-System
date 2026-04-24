@@ -155,3 +155,36 @@ Each entry follows this structure:
 - Stage 5: Implement `ScenarioGenerator.cs` orchestrator (wires Layout → Entities → Roles → NavigationContext and stamps `ConfigurationMetadata`) and `ScenarioValidator.cs` (post-generation invariants: reachability, role coverage, `terroristCount ≤ roomCount.max × 2`, etc.)
 
 ---
+
+### 2026-04-25 — Stage 5 (part 1): ScenarioGenerator orchestrator
+
+**Status:** Stage 5 orchestrator complete. `ScenarioValidator.cs` still pending (Phase 3).
+
+**Done:**
+- Replaced the `NotImplementedException` stub in `Generators/ScenarioGenerator.cs` with the full pipeline: seed resolve → `LayoutGenerator.Generate` → `EntityPlacer.Place` → `RoleAssigner.Assign` → `NavigationContextBuilder.Build` → `ScenarioData` assembly
+- Pipeline-stage instances (`LayoutGenerator`, `EntityPlacer`, `RoleAssigner`, `NavigationContextBuilder`) stored as `private readonly` fields and constructed once in the `ScenarioGenerator` constructor — the orchestrator is reusable across generations
+- Seed resolution: `config.executionControls.seed ?? Environment.TickCount`; the resolved seed is written into `ConfigurationMetadata.seedUsed` (if retries bumped it, the final working seed is recorded, not the original)
+- Retry logic: up to 3 retries on `LayoutGenerator` failures (unreachable rooms), seed incremented by 1 each retry, each retry logged via `Debug.LogWarning` with attempt index and old/new seed
+- `ConfigurationMetadata` stamped with embedded `scenarioConfig`, ISO 8601 UTC timestamp via `DateTime.UtcNow.ToString("o")`, `seedUsed`, `generatorVersion = "1.0.0"`, and a placeholder `ValidationResult.CreatePassed(0)` (to be replaced in Phase 3 once `ScenarioValidator` is implemented)
+- `scenarioId` generated via `Guid.NewGuid().ToString()` (UUID v4)
+- Per-stage `Debug.Log` messages added at the exact key points requested (resolving seed, layout generated, entities placed, roles assigned, navigation context built, scenario assembled)
+- Convenience methods retained/added: `GenerateAndExport(configPath, outputPath = null)` (load → generate → export) and `GenerateFromJson(configJson)` (parse raw JSON → generate)
+- `public const string GeneratorVersion = "1.0.0"` preserved as a single source of truth for the version string
+
+**Decisions:**
+- Orchestrator is a plain C# class, not a `MonoBehaviour` — matches the convention for all non-Scene generators in Module 1
+- Pipeline stages instantiated once in the constructor rather than on every `Generate` call — stages are stateless so reuse is safe, avoids per-generation allocation churn
+- Retry loop uses `catch (Exception ex) when (attempt < MaxLayoutRetries)` filter so only retryable failures are swallowed; the final attempt's exception still propagates naturally. Defensive post-loop null check re-throws a descriptive `Exception` in case control somehow exits the loop without a layout (shouldn't happen, but belt-and-braces given the `when` filter semantics)
+- A **single** `System.Random` instance is threaded through Layout → Entities → Roles → Navigation. On retry, a fresh `System.Random(seedInUse + 1)` replaces the old one so the entire downstream pipeline is reproducibly derived from the seed that actually produced the layout
+- `seedUsed` records the seed that successfully produced the scenario (post-retry), not the originally requested seed — this preserves the reproducibility contract (same seed + same config = same output) for the output file
+- Validation stub uses `ValidationResult.CreatePassed(0)` with `checksRun = 0` so downstream consumers can tell the validator has not yet been executed (Phase 3 will set `checksRun` to the real count)
+- `MaxLayoutRetries = 3` kept as a named `private const` rather than a magic `3` — central tuning point if we observe real-world retry rates during Stage 6 integration testing
+
+**Issues:**
+- None — orchestrator compiles against the existing generator signatures; no data-model or I/O changes required
+
+**Next:**
+- Stage 5 (part 2): implement `Validation/ScenarioValidator.cs` with post-generation invariants (reachability from entry room, every terrorist has a role assignment and a navigation context, `terroristCount ≤ roomCount.max × 2`, hostage room reachable, all referenced entity IDs exist). Wire its output into `ConfigurationMetadata.validationResult` in place of the current `CreatePassed(0)` placeholder
+- Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
+
+---
