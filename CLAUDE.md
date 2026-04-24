@@ -24,7 +24,9 @@ A VR military training system for hostage-rescue scenarios. Procedurally generat
 
 Module 1's `Scenario.json` is the **shared contract** between all modules. Never change its schema without coordinating with the full team.
 
-> Development progress is tracked in **[DEVLOG.md](DEVLOG.md)**. Add an entry at the end of every implementation session.
+> Development progress is tracked in **[Module_1_Devlog.md](Module_1_Devlog.md)**.
+>
+> **IMPORTANT — update the devlog after every implementation.** Whenever you finish implementing, modifying, or refactoring any Module 1 code (generator, data model, IO, validator, scene builder, editor tool, etc.), append a new dated entry to `Module_1_Devlog.md` before ending the session. Use the format block at the top of the devlog (`Status` / `Done` / `Decisions` / `Issues` / `Next`). If the change is a pure doc tweak with no code impact, a devlog entry is optional — otherwise it is mandatory.
 
 ---
 
