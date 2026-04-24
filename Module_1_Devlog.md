@@ -188,3 +188,36 @@ Each entry follows this structure:
 - Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
 
 ---
+
+### 2026-04-25 — Stage 5 (part 2): ScenarioValidator implementation
+
+**Status:** `Validation/ScenarioValidator.cs` complete with two-tier validation (10 checks). Pipeline still wires `ValidationResult.CreatePassed(0)` placeholder — wiring step pending.
+
+**Done:**
+- Replaced the Phase 3 stub in `Validation/ScenarioValidator.cs` with the full validator. Public surface is unchanged: `ValidationResult Validate(ScenarioData scenario)`
+- Tier 1 (local): `RoomBoundsCheck` (positive width/depth/height), `EntityBoundsCheck` (within room interior at 0.8 m wall margin), `DoorConsistencyCheck` (every `connectsToRoomId` exists, with reciprocal door pointing back, matching door IDs), `EntityMetadataCheck` (non-empty/unique ids, defined `EntityType` value)
+- Tier 2 (global): `ReachabilityCheck` (BFS from trainee spawn visits every room), `HostagePathCheck` (door-graph path trainee → hostage room), `EntityOverlapCheck` (no two entities within 1.5 m XZ), `NavigationContextCheck` (every `roleAssignment.navigationContextId` resolves to a key), `ReferentialIntegrityCheck` (room IDs in `spawnPoints`, `entities`, `roleAssignments`, and `navigationContext` entries — `guardRoomId`, `hostageRoomId`, `anchorRoomId`, `roamingRoomIds`, `patrolRoute` — all exist in `layout.rooms`), `RoleAssignmentCompletenessCheck` (every terrorist has exactly one assignment, and assignments never reference non-terrorist entities)
+- All ten checks run unconditionally — failures collected into `warnings`, never short-circuited. Each check logs `[ScenarioValidator] CHECK {name}: {PASS|FAIL} — {message}`
+- `passed` is true only when `checksPassed == TotalChecks` (10). `TotalChecks` exposed as `public const int` so callers and tests can reference the canonical count
+- Plain C# class in `TeamSentinels.ScenarioGeneration.Validation` namespace — no `MonoBehaviour`. XML doc comments on every public/protected member and on each private check method
+- Constants `WallMargin = 0.8f` and `MinClearance = 1.5f` mirrored from `EntityPlacer` so the validator reads the same thresholds the placer enforces (kept as separate constants rather than referencing `EntityPlacer.WallMargin` to keep the `Validation` namespace independent of `Generators`)
+- Helpers: `BuildRoomMap`, `BfsFrom(start, roomMap)`, `IsKnownRoom(roomId, set, out error)` factor the repeated lookup/BFS logic out of individual checks
+
+**Decisions:**
+- Each check returns `(bool passed, string message)` and is dispatched by a small `RunCheck` runner that handles logging and warnings list mutation. This keeps every check self-contained and trivially unit-testable; the runner is the only place that knows about `Debug.Log` formatting
+- Each check stops at the **first** offending item it finds (e.g. first out-of-bounds entity) and returns a descriptive message naming the specific item. The 10-check list itself never short-circuits, so the user still sees one failure per failing check. This matches the brief ("run ALL checks") while keeping individual failure messages actionable rather than dumping every single offender per check
+- `EntityOverlapCheck` uses squared-distance comparison (`sq < minSq`) to avoid `Sqrt` per pair; only computes the actual distance when reporting a failure. O(N²) is acceptable since `terroristCount ≤ 8` per schema, so worst-case ~10 entities ⇒ 45 pairs
+- `DoorConsistencyCheck` requires reciprocal doors to share the same `id` (matches `LayoutGenerator.PlaceDoors` which writes the same `door_AA_BB` id on both ends). Catches the realistic regression where one side's door is dropped or renamed
+- `ReferentialIntegrityCheck` and `EntityBoundsCheck` are intentionally redundant on the "assignedRoom exists" rule — a missing assigned room is reported by both, but the messages disambiguate (bounds check fails earlier; ref-integrity sweeps the rest). Both are needed because the bounds check needs the room object up-front, and the ref-integrity check is the canonical guarantee that *every* room reference (not just those touched by other checks) resolves
+- `RoleAssignmentCompletenessCheck` enforces exactly-one in **both** directions: every terrorist has ≥1 assignment (no orphan terrorists), no terrorist has >1 assignment (no duplicates), and no assignment references a non-terrorist entity (no stray rows). The brief only required the first two but the third is cheap to add and prevents a future regression where a hostage_01 row accidentally lands in `roleAssignments`
+- Checks defensively handle `null` collections (rooms, entities, assignments) — they return a failure message rather than NRE so the validator can still produce a usable `ValidationResult` for partially-malformed scenarios. The only top-level `ArgumentNullException` is on `scenario` itself
+- Validator does **not** mutate the scenario or set `validationResult` on it — that wiring belongs in `ScenarioGenerator`. The validator is a pure read-only function so it can be invoked independently (e.g. on a loaded Scenario.json from disk) for re-verification without changing the data
+
+**Issues:**
+- None during implementation. The orchestrator still hands callers a placeholder `ValidationResult.CreatePassed(0)` — the next step is to wire `new ScenarioValidator().Validate(scenario)` into the assembly stage
+
+**Next:**
+- Wire `ScenarioValidator` into `ScenarioGenerator.Generate`: instantiate alongside other pipeline stages, call `Validate(scenario)` after assembly, replace the `ValidationResult.CreatePassed(0)` placeholder in `ConfigurationMetadata.validationResult` with the real result. Decide whether a failed validation should throw or be returned as-is (current data model embeds it without halting)
+- Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
+
+---
