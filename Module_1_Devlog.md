@@ -221,3 +221,33 @@ Each entry follows this structure:
 - Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
 
 ---
+
+### 2026-04-25 — Stage 5 (part 3): ScenarioValidator wired into ScenarioGenerator
+
+**Status:** `ScenarioGenerator.Generate` now runs the validator as the final pipeline step and retries on validation failure. Public API unchanged.
+
+**Done:**
+- Added `private readonly ScenarioValidator _scenarioValidator` field, initialised in the constructor alongside the other pipeline stages
+- Imported `TeamSentinels.ScenarioGeneration.Validation`
+- Restructured `Generate` to wrap the **entire** pipeline (layout → entities → roles → navigation → assembly → validation) in a single retry loop, replacing the previous layout-only retry. The retry budget remains `MaxLayoutRetries = 3` (4 total attempts including the initial)
+- After assembly, calls `_scenarioValidator.Validate(scenario)` and stamps the result onto `scenario.configurationMetadata.validationResult` (replacing the old `ValidationResult.CreatePassed(0)` placeholder)
+- Logs the summary line on every attempt: `[ScenarioGenerator] Validation: {checksPassed}/{checksRun} checks passed. Warnings: [{warnings joined by "; "}]`
+- On validation failure, surfaces each individual warning via `Debug.LogWarning("[ScenarioGenerator] Validation warning: …")` before deciding whether to retry
+- On retry-budget exhaustion: if validation never passed, returns the **last** assembled scenario with `validationResult.passed = false` and logs `Debug.LogError` summarising the situation (per brief — does not throw). The pre-existing throw on layout-only failure is preserved (last-attempt layout exceptions still propagate naturally because `catch … when (attempt < MaxLayoutRetries)` only swallows non-final attempts)
+- `seedUsed` continues to record the seed that produced the (final) scenario, whether validated or not — preserves the reproducibility contract
+
+**Decisions:**
+- Folded layout retries and validation retries into a **single** unified loop rather than nesting two retry mechanisms. Rationale: the downstream stages (placement, roles, nav) thread the same `System.Random` instance; a validation failure is a property of the whole pipeline output, so the only sane "retry" is to re-run from layout with a fresh seeded RNG. Two separate loops would be more code for identical behaviour
+- Validation failures do **not** throw — the brief explicitly asks for the failed scenario to be returned. This matches the data model intent (`ConfigurationMetadata.validationResult` is the canonical place for validation status; throwing would prevent persistence and post-mortem inspection). Layout exceptions still throw because there is no scenario to return
+- Each in-loop validation failure logs both the per-warning lines (`Debug.LogWarning`) and the summary line (`Debug.Log`), so the Unity console shows actionable detail without duplicating the orchestrator's success summary on retries
+- Final exhausted-validation log uses `Debug.LogError` (not `LogWarning`) to make the "we returned an invalid scenario" outcome visually distinct from the per-attempt retry warnings — callers who don't read `validationResult.passed` will still see a red console entry
+- `MaxLayoutRetries` constant comment updated to reflect that it now governs both retry causes; the value (3) and the public API are unchanged
+
+**Issues:**
+- None — no data model, IO, or generator-stage changes required
+
+**Next:**
+- Optional follow-up: surface validation outcome through a return-type wrapper or out-parameter so callers don't need to reach into `configurationMetadata.validationResult` to check pass/fail. Deferred until a real consumer needs it
+- Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
+
+---
