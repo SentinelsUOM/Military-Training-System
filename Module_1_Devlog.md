@@ -119,3 +119,39 @@ Each entry follows this structure:
 - Stage 4: Implement `RoleAssigner.cs` and `NavigationContextBuilder.cs` — translate `NPC_Role_Assignment_Algorithm_Design.md` into C#
 
 ---
+
+### 2026-04-24 — Stage 4: RoleAssigner + NavigationContextBuilder implementation
+
+**Status:** Phase 2, Stage 4 complete.
+
+**Done:**
+- Replaced the `RoleAssigner.cs` stub with the full depth-based role assignment algorithm from `NPC_Role_Assignment_Algorithm_Design.md` §4
+- Public entry point `Assign(LayoutData, List<EntityRecord>, SpawnPointData, ScenarioConfig, System.Random)` returning `List<RoleAssignment>`
+- **Step 1 — Hostage Guardian:** always assigned first; single-terrorist case returns immediately, otherwise the terrorist already in the hostage room (ties broken by distance then id) or the globally nearest terrorist becomes guardian with priority = 1
+- **Step 2 — Role quotas:** `GetRoleQuotas(remaining, difficulty)` uses the exact decision matrix from §3.1 via a switch over `remaining ∈ [1,7]` and three difficulty brackets (1-2, 3, 4-5). Remaining ≤ 7 is guaranteed by the schema's `terroristCount ≤ 8` constraint
+- **Step 3 — Depth zones:** `shallowMax = ⌈maxDepth/3⌉`, `deepMin = ⌈2·maxDepth/3⌉`. Degenerate case `maxDepth ≤ 1` converts all `guardCount` allocation to `roamingCount` (covers hub-and-spoke and flat layouts)
+- **Step 4 — Stable sort:** terrorists sorted by assigned-room depth ascending with id as tiebreaker, ensuring deterministic assignment under a fixed seed
+- **Step 5 — Zone-matched assignment:** patrol (priority 3) → shallow, stationary_guard (priority 2) → deep, roaming_guard (priority 2) → mid/default, with overflow falling back to any slot that still has quota
+- Replaced the `NavigationContextBuilder.cs` stub with the full §5 context builders: `BuildPatrolContext`, `BuildStationaryGuardContext`, `BuildRoamingGuardContext`, `BuildHostageGuardianContext`
+- **Patrol:** route = assigned room + up to two adjacent non-entry rooms + return to start; waypoints = room centres along the route; `looping = true`
+- **Stationary guard:** `guardPosition` = entity's already placed position; `facingDirection` = normalised vector to the **nearest** door in the room
+- **Roaming guard:** `roamingRoomIds` = assigned room + up to two adjacent non-entry rooms (max 3 total); waypoints = room centres + explicit return waypoint at the anchor; `anchorRoomId` = assigned room
+- **Hostage guardian:** `guardedEntityId = "hostage_01"`; `facingDirection` = normalised vector to the room's **primary (first)** door
+- All four builders share a single `ComputeFacing` helper with a consistent fallback direction `(-1, 0, 0)` when the room has no doors or the source coincides with the target
+- All navigation contexts constructed via the factory methods on `NavigationContextEntry` (CreatePatrol / CreateStationaryGuard / CreateRoamingGuard / CreateHostageGuardian) so the `type` discriminator and role-specific fields stay in sync
+
+**Decisions:**
+- Used a switch over `remaining` rather than the design doc's formula-based `GetRoleQuotas` (⌈0.33⌉, ⌊0.33⌋ etc.) so output matches the §3.1 table verbatim — the formula rounds to the same values in most cases but diverges at `remaining = 3, difficulty = 3` (formula gives `(1,2,0)` via `⌊0.99⌋=0`; table gives `(1,1,1)`)
+- Overflow handling after the primary zone-match pass always fills remaining quota slots in the order patrol → stationary_guard → roaming_guard (rather than the pseudocode's patrol → roaming → guard), which keeps distribution closer to the matrix when a layout can't provide the expected depth zones — `roaming_guard` remains the terminal fallback since it has the most permissive zone requirement
+- Patrol waypoints use only room centres (per the implementation brief) rather than the pseudocode's room-centre + door-midpoint interleaving; door midpoints are already implicitly traversed by the NavMesh agent between adjacent room centres, so they would only add redundant path nodes
+- Stationary guards face their **nearest** door (matches EntityPlacer's facing convention), while hostage guardians face the **primary/first** door (matches the design doc's "primary entry door" semantics for the guardian role)
+- Facing-fallback constant lifted to a single static `FallbackFacing = (-1, 0, 0)` used by both guard and guardian builders — keeps the prompt's fallback contract consistent and trivially auditable
+- `MaxPatrolRooms = 3` and `MaxRoamingRooms = 3` exposed as named constants rather than magic numbers for future tuning
+
+**Issues:**
+- None — both generators compile against the existing DataModels and integrate with `LayoutData`/`EntityRecord` contracts from stages 2 and 3
+
+**Next:**
+- Stage 5: Implement `ScenarioGenerator.cs` orchestrator (wires Layout → Entities → Roles → NavigationContext and stamps `ConfigurationMetadata`) and `ScenarioValidator.cs` (post-generation invariants: reachability, role coverage, `terroristCount ≤ roomCount.max × 2`, etc.)
+
+---
