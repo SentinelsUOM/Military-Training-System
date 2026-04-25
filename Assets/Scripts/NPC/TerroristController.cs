@@ -134,6 +134,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
                    e.Type == ScenarioEventType.TerroristDown;
         }
 
+        // Squad-death events always bypass cooldown — every active NPC must react
+        if (e.Type == ScenarioEventType.TerroristDown) return true;
+
         // Cooldown applies to every other event
         if (Time.time - _lastResponseTime < responseCooldown) return false;
 
@@ -213,13 +216,32 @@ public class TerroristController : MonoBehaviour, INPCResponder
                     TransitionTo(TerroristState.Alert, e);
                 break;
 
-            // ── Squad loss ─────────────────────────────────────────────────────
+            // ── Squad alert ────────────────────────────────────────────────────
             case ScenarioEventType.AllyDownSeen:
+                // Squadmate started shooting — raise readiness but wait for personal LOS
+                if (currentState == TerroristState.Idle ||
+                    currentState == TerroristState.Suspicious)
+                    TransitionTo(TerroristState.Alert, e);
+                break;
+
             case ScenarioEventType.TerroristDown:
-                // Only escalate to Engage — never de-escalate
-                if (currentState != TerroristState.Engage &&
-                    currentState != TerroristState.Down)
-                    TransitionTo(TerroristState.Engage, e);
+                if (currentState == TerroristState.Down) break;
+                Debug.Log($"[TerroristController] {gameObject.name} received TerroristDown | " +
+                          $"currentState={currentState} | personallyConfirmed={_personallyConfirmedPlayer}");
+                if (_personallyConfirmedPlayer)
+                {
+                    // This NPC personally saw and confirmed the player — engage immediately
+                    if (currentState != TerroristState.Engage)
+                        TransitionTo(TerroristState.Engage, e);
+                }
+                else
+                {
+                    // Never personally saw the player — go to Alert so EventManager sends one to investigate
+                    if (currentState == TerroristState.Idle ||
+                        currentState == TerroristState.Suspicious ||
+                        currentState == TerroristState.Alert)
+                        TransitionTo(TerroristState.Alert, e);
+                }
                 break;
         }
     }
@@ -267,6 +289,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
             {
                 var cam = ResolvePlayerCamera(e);
                 if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); }
+                _personallyConfirmedPlayer = true; // own eyes confirmed the target
                 if (currentState == TerroristState.Alert ||
                     currentState == TerroristState.Suspicious)
                     TransitionTo(TerroristState.Engage, e);
@@ -288,6 +311,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     Coroutine _investigateRoutine;
     Coroutine _wanderRoutine;
     bool      _wasFiring;
+    bool      _personallyConfirmedPlayer; // true only when own PerceptionController fired TargetConfirmed
     CoverPoint _claimedCover;
     Vector3   _spawnPosition;
     Quaternion _spawnRotation;
@@ -468,6 +492,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 patrolLine?.StopAndLook(_lookAnchor);
                 if (shooter != null)
                 {
+                    Debug.Log($"[TerroristController] {gameObject.name} entering Engage | " +
+                              $"_lastSeenPlayer={((_lastSeenPlayer != null) ? _lastSeenPlayer.name : "NULL")} | " +
+                              $"shooter.target={(shooter.target != null ? shooter.target.name : "NULL")} | " +
+                              $"trigger={trigger?.Type.ToString() ?? "none"}");
                     if (_lastSeenPlayer != null) shooter.target = _lastSeenPlayer;
                     shooter.StartFiring();
                 }
@@ -514,18 +542,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         shooter?.StopFiring();
         patrolLine?.StopAndLook(_lookAnchor);
 
-        // Disable NavMeshAgent
+        // Disable NavMeshAgent and correct the base-offset elevation it was applying.
+        // Without this, the root sits above the floor and the death animation plays in mid-air.
         if (agent != null && agent.isActiveAndEnabled)
         {
+            float baseOffset = agent.baseOffset;
             agent.isStopped = true;
             agent.enabled   = false;
+            // Drop the root to true floor height now that the agent is no longer lifting it.
+            transform.position -= new Vector3(0f, baseOffset, 0f);
         }
 
-        // Disable all colliders (prevents further hits)
-        foreach (var col in GetComponentsInChildren<Collider>())
-            col.enabled = false;
+        // Disable only hitbox components so bullets no longer register.
+        // TakeHit() already guards Down state, but this removes the overhead.
+        foreach (var hb in GetComponentsInChildren<NPCHitBox>())
+            hb.enabled = false;
 
-        // Trigger death animation then freeze in final pose
+        // Trigger death animation then freeze in final pose.
+        // applyRootMotion stays true so the animation's own root curve carries
+        // the body to the floor — no need for a Rigidbody.
         if (animator != null)
         {
             animator.SetTrigger("Death");
@@ -560,6 +595,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
         float clipLength = animator.GetCurrentAnimatorStateInfo(0).length;
         // Clamp: some death clips are set to loop — treat anything > 5 s as 3 s
         yield return new WaitForSeconds(Mathf.Clamp(clipLength, 0.5f, 5f));
+
+        // Final floor snap — catches any remaining gap from NavMesh-to-geometry offset.
+        if (Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down,
+                            out RaycastHit hit, 2f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            transform.position = new Vector3(transform.position.x, hit.point.y, transform.position.z);
+        }
+
         animator.enabled = false;
     }
 
@@ -672,7 +715,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     public void InvestigatePosition(Vector3 soundPos)
     {
         if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
-        if (currentState != TerroristState.Suspicious) return;
+        // Allow both Suspicious (gunshot) and Alert (squad-member down) investigations
+        if (currentState != TerroristState.Suspicious && currentState != TerroristState.Alert) return;
 
         if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
         _investigateRoutine = StartCoroutine(InvestigateRoutine(soundPos));
@@ -680,33 +724,34 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     IEnumerator InvestigateRoutine(Vector3 soundPos)
     {
-        Debug.Log($"[TerroristController] {gameObject.name}: investigating sound at {soundPos}");
+        Debug.Log($"[TerroristController] {gameObject.name}: investigating position at {soundPos}");
 
+        var startState = currentState;
         agent.SetDestination(soundPos);
 
-        // Walk toward position — abort if state changes
-        while (currentState == TerroristState.Suspicious)
+        // Walk toward position — abort if state escalates beyond the start state
+        while (currentState == startState)
         {
             if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.5f)
                 break;
             yield return null;
         }
 
-        if (currentState != TerroristState.Suspicious) yield break;
+        if (currentState != startState) yield break;
 
         // Arrived — scan in place for investigateScanTime seconds
-        Debug.Log($"[TerroristController] {gameObject.name}: arrived at sound position, scanning...");
+        Debug.Log($"[TerroristController] {gameObject.name}: arrived at investigation position, scanning...");
         agent.ResetPath();
 
         float elapsed = 0f;
-        while (elapsed < investigateScanTime && currentState == TerroristState.Suspicious)
+        while (elapsed < investigateScanTime && currentState == startState)
         {
             elapsed += Time.deltaTime;
             yield return null;
         }
 
-        // Nothing found — return to Idle
-        if (currentState == TerroristState.Suspicious)
+        // Nothing found — Suspicious returns to Idle; Alert stays Alert
+        if (currentState == startState && startState == TerroristState.Suspicious)
         {
             Debug.Log($"[TerroristController] {gameObject.name}: nothing found, returning to Idle");
             TransitionTo(TerroristState.Idle, null);

@@ -106,6 +106,28 @@ public class EventManager : MonoBehaviour
                         Debug.Log($"[EventManager] GunshotHeard investigator → {tc.NPCId}");
                 }
             }
+
+            // TerroristDown: one Alert NPC walks to the dead NPC's position to investigate.
+            if (e.Type == ScenarioEventType.TerroristDown)
+            {
+                Debug.Log($"[EventManager] TerroristDown: total responders={responders.Count} / registry={registry.Count}");
+                var searchers = responders.FindAll(r =>
+                    r is TerroristController tc && tc.currentState == TerroristState.Alert);
+                Debug.Log($"[EventManager] TerroristDown: Alert-state searchers={searchers.Count}");
+                if (searchers.Count > 0)
+                {
+                    var investigator = NPCSelector.SelectBest(searchers, e, false);
+                    if (investigator is TerroristController tc)
+                    {
+                        tc.InvestigatePosition(e.Origin);
+                        Debug.Log($"[EventManager] TerroristDown investigator → {tc.NPCId}");
+                    }
+                }
+                else
+                {
+                    Debug.Log($"[EventManager] TerroristDown: no Alert NPCs to investigate — all are Engage or Down");
+                }
+            }
         }
         else
         {
