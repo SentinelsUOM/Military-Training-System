@@ -251,3 +251,40 @@ Each entry follows this structure:
 - Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
 
 ---
+
+### 2026-04-25 — Test suite: ScenarioGenerationTests MonoBehaviour
+
+**Status:** Added a single-file MonoBehaviour test harness covering the full Module 1 pipeline. No NUnit / Unity Test Runner dependency — runs from the Inspector via `[ContextMenu("Run All Tests")]`.
+
+**Done:**
+- Created `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/Tests/ScenarioGenerationTests.cs` (namespace `TeamSentinels.ScenarioGeneration.Tests`)
+- 21 tests across five categories:
+  - **Configuration Loading (4):** `LoadValidDefaultConfig`, `LoadMinimalConfig`, `RejectInvalidRoomCount` (min=10/max=5 ⇒ expects `ScenarioConfigValidationException`), `RejectInvalidHostageCount` (hostageCount=2 ⇒ expects rejection)
+  - **Layout Generation (6):** `GenerateLinearLayout` (≤2 connections per room), `GenerateBranchingLayout` (≥1 room with 3+ connections), `GenerateHubAndSpokeLayout` (hub connects to all others), `GenerateLoopLayout` (≥2 connections per room), `VerifyAllRoomsReachable` (BFS from `room_01` for each topology), `VerifySeedReproducibility` (identical room ids/positions/connections from twin RNG)
+  - **Entity Placement (5):** `VerifyEntityCounts` (1 trainee + 1 hostage + N terrorists), `VerifyNoEntityOverlap` (≥1.5m pairwise), `VerifyEntitiesWithinRoomBounds` (room half-extents minus `WallMargin`), `VerifyHostageInDeepRoom` (depth>0), `VerifyTraineeInEntryRoom` (room type = `Entry`)
+  - **Role Assignment (3):** `VerifyHostageGuardianExists` (exactly one guardian), `VerifyAllTerroristsHaveRoles` (every terrorist has a `RoleAssignment`), `VerifyNavigationContextCompleteness` (every `navigationContextId` resolves)
+  - **End-to-End (3):** `FullPipelineDefaultConfig` (`ValidationResult.passed = true` on `default_config.json`), `FullPipelineAllLayoutTypes` (one scenario per topology, all pass validation), `ExportAndReload` (export → reload → match `scenarioId` and entity count)
+- Each test logs `[TEST] {name}: PASS` or `[TEST] {name}: FAIL — {reason}`; suite summary `[TESTS] {passed}/{total} tests passed`
+- Failures are caught per-test via `RunTest(name, Action)` so one failure doesn't abort the suite
+- Configs loaded from `Application.dataPath + "/Module1_DataModels_and_IO/Resources/ScenarioConfigs/{filename}"` per task brief
+- Synthetic configs built via `MakeConfig(LayoutType, rooms, seed, randomness)` helper (locks min=max=rooms for predictable counts); rejection tests use a hand-rolled JSON helper to deliberately violate schema rules
+- `ExportAndReload` writes to `Application.temporaryCachePath` and cleans up via `try/finally` so tests don't litter the project's Output folder
+
+**Decisions:**
+- **MonoBehaviour over NUnit:** brief explicitly asked to keep it simple and avoid extra packages. `[ContextMenu]` gives one-click execution from the Inspector header
+- **Tests folder lives inside the existing `TeamSentinels.ScenarioGeneration.asmdef` scope** — no separate test asmdef needed since we're not using the Test Framework. Sub-folders inherit the parent assembly definition automatically
+- **Branching test uses a fixed seed list (`{1, 7, 42, 100, 12345}`)** rather than a single seed: the topology guarantees ≥2 children at root but the depth/breadth distribution is RNG-driven, so a small search across known-good seeds is more robust than gambling on one. First seed that produces a 3+ connection room wins; if none do, the test surfaces a real regression
+- **Entity placement tests reuse `default_config.json`** rather than synthetic configs — lets the tests double-check that the canonical evaluator config still round-trips through the placement pipeline
+- **Pipeline tests call `new ScenarioGenerator().Generate(cfg)`** (not direct stage invocation) so we exercise the orchestrator's seeded retry loop and validator integration in addition to the underlying stages
+- **Bounds check uses an epsilon of `1e-3f`** to avoid floating-point off-by-fraction-of-a-millimetre failures when the placement zone returns a position exactly on the half-extent boundary (e.g. `PlacementZone.Corner`, `NearWall`)
+- **Asserts throw `Exception` with descriptive messages** rather than using `Debug.Assert` — the harness catches them in `RunTest` and surfaces the message in the FAIL line
+
+**Issues:**
+- `GenerateBranchingLayout` is the only test whose pass/fail depends on RNG draws (the others are deterministic given the seed). The seed search (5 seeds) is the mitigation; if branching ever regresses to never producing 3+ connections, the test will fail loudly instead of flaking
+- `FullPipelineDefaultConfig` depends on `default_config.json` actually passing all 10 validator checks under the configured seed `20260419` (or a seed in the retry window `20260419..20260422`). Should be fine given current generator behaviour, but if the validator gains a stricter check this test is the canary
+
+**Next:**
+- Run the suite in the Editor (attach `ScenarioGenerationTests` to a GameObject in `BasicScene` or `SampleScene`, right-click → "Run All Tests") and capture any failures
+- Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
+
+---
