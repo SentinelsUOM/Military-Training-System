@@ -263,6 +263,10 @@ namespace TeamSentinels.ScenarioGeneration.IO
         /// <summary>Individual validation error messages.</summary>
         public List<string> ValidationErrors { get; }
 
+        /// <summary>
+        /// Constructs the exception with an aggregate message and the list of
+        /// individual validation error strings.
+        /// </summary>
         public ScenarioConfigValidationException(
             string message, List<string> errors)
             : base(message)
