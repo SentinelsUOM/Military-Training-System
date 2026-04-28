@@ -96,8 +96,10 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
         [JsonProperty("height")]
         public float height;
 
+        /// <summary>Default constructor required for deserialisation.</summary>
         public RoomSize() { }
 
+        /// <summary>Constructs a room size from width, depth, and height (metres).</summary>
         public RoomSize(float width, float depth, float height)
         {
             this.width = width;
@@ -122,8 +124,10 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
         [JsonProperty("max")]
         public int max = 8;
 
+        /// <summary>Default constructor required for deserialisation.</summary>
         public RoomCountRange() { }
 
+        /// <summary>Constructs a room count range from explicit min/max bounds.</summary>
         public RoomCountRange(int min, int max)
         {
             this.min = min;
@@ -172,8 +176,10 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
         [JsonProperty("max")]
         public SerializableVector3 max;
 
+        /// <summary>Default constructor required for deserialisation.</summary>
         public BoundingBox() { }
 
+        /// <summary>Constructs a bounding box from its min and max corners.</summary>
         public BoundingBox(SerializableVector3 min, SerializableVector3 max)
         {
             this.min = min;

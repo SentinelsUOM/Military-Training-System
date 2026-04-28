@@ -1,0 +1,209 @@
+=== Config: layout=Branching, rooms=[5-8], terrorists=4, difficulty=3, seed=20260419 ===
+=== Generation complete ===
+    scenarioId    : f27eaee8-3003-4e47-b130-0e51d67742c7
+    rooms         : 6
+    entities      : 6
+    roleAssignments: 4
+    validation    : passed=True (10/10); warnings=(none)
+=== JSON length: 12984 chars across 592 lines ===
+=== First 200 lines ===
+{
+  "scenarioId": "f27eaee8-3003-4e47-b130-0e51d67742c7",
+  "missionType": "hostage_rescue",
+  "layout": {
+    "rooms": [
+      {
+        "id": "room_01",
+        "type": "entry",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02",
+          "room_03",
+          "room_04"
+        ],
+        "doors": [
+          {
+            "id": "door_01_02",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "south"
+          },
+          {
+            "id": "door_01_03",
+            "connectsToRoomId": "room_03",
+            "position": {
+              "x": -4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "west"
+          },
+          {
+            "id": "door_01_04",
+            "connectsToRoomId": "room_04",
+            "position": {
+              "x": 4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "east"
+          }
+        ],
+        "depth": 0,
+        "zoneLabel": "Entry Hall"
+      },
+      {
+        "id": "room_02",
+        "type": "corridor",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": -8.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01",
+          "room_05"
+        ],
+        "doors": [
+          {
+            "id": "door_01_02",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "north"
+          },
+          {
+            "id": "door_02_05",
+            "connectsToRoomId": "room_05",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -12.0
+            },
+            "wallSide": "south"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Front Room"
+      },
+      {
+        "id": "room_03",
+        "type": "corridor",
+        "position": {
+          "x": -8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01",
+          "room_06"
+        ],
+        "doors": [
+          {
+            "id": "door_01_03",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": -4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "east"
+          },
+          {
+            "id": "door_03_06",
+            "connectsToRoomId": "room_06",
+            "position": {
+              "x": -8.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "south"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Side Room"
+      },
+      {
+        "id": "room_04",
+        "type": "standard",
+        "position": {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01"
+        ],
+        "doors": [
+          {
+            "id": "door_01_04",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": 4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "west"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Inner Room"
+      },
+      {
+        "id": "room_05",
+        "type": "hostage_room",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": -16.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02"
+        ],
+        "doors": [
+          {
+            "id": "door_02_05",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -12.0
+            },
+            "wallSide": "north"
+          }
