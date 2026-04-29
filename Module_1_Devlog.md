@@ -288,3 +288,53 @@ Each entry follows this structure:
 - Stage 6: `SceneBuilder.cs` — consume the generated `ScenarioData` to build the Unity scene (room prefabs, NavMesh bake, NPC instantiation, `EventManager.NotifyScenarioReady()` handoff)
 
 ---
+
+### 2026-04-29 — Stage 6: SceneBuilder implementation
+
+**Status:** Stage 6 (Unity scene integration) — first cut.
+
+**Done:**
+- Created `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/SceneBuilder/SceneBuilder.cs` (namespace `TeamSentinels.ScenarioGeneration.Scene`, MonoBehaviour)
+- Public surface: `BuildScene(ScenarioData)`, `BuildSceneFromFile(string)`, `ClearScene()`, `ActiveScenario` property, `OnSceneBuildComplete` / `OnSceneBuildFailed` C# events
+- Inspector prefabs: `roomPrefabSmall/Medium/Large`, `corridorPrefab`, `doorPrefab`, `terroristPrefab`, `hostagePrefab`, `traineeRig` Transform
+- Pipeline: `ClearScene` → `EnsureContainers` ("Rooms", "Doors", "NPCs" GameObjects under the SceneBuilder) → `BuildRooms` → `BuildDoors` → `PositionTrainee` → `SpawnHostages` → `SpawnTerrorists` → `BakeNavMesh` → `OnSceneBuildComplete` → `EventManager.NotifyScenarioReady()`
+- Room size selection driven by `layoutMetadata.roomSizeCategory`; per-room GameObject stored in `Dictionary<string, GameObject>`
+- Door reciprocal de-duplication via a `HashSet<string>` of ordered `roomA__roomB` pair keys
+- Door rotation: north/south = identity, east/west = `Quaternion.Euler(0, 90, 0)`
+- Trainee rig is **repositioned**, never instantiated; rig position resets to origin in `ClearScene`
+- Hostage initial state set on `HostageController.currentState` via `Enum.TryParse(EntityRecord.metadata.initialState, ...)` falling back to `HostageState.Calm`
+- Terrorist `IdleMode` mapping (verified against actual code, not CLAUDE.md mapping table):
+  - `NpcRole.Patrol` → `IdleMode.Patrol`, configures `controller.patrolLine` with two waypoint stub Transforms (first + last entry of `navigationContext.waypoints`)
+  - `NpcRole.RoamingGuard` → `IdleMode.Wander`, `wanderRadius` derived from the bounding-circle of `roamingRoomIds` centroids (+ 4 m, floored at 6 m)
+  - `NpcRole.StationaryGuard` → `IdleMode.Static`, `staticFaceTarget` is a child stub Transform placed 5 m along `navigationContext.facingDirection`
+  - `NpcRole.HostageGuardian` → `IdleMode.Static`, same face-target stub mechanism
+- NavMesh: `NavMeshSurface` is fetched-or-added on the "Rooms" container and `BuildNavMesh()` is called after every room is instantiated; bake exception is caught and logged as a warning so the scene still loads if it fails
+- Error handling: `Fail(string)` helper logs an error, raises `OnSceneBuildFailed`, and is wired to all null-prefab / null-data short-circuits; the whole `BuildScene` body sits inside a try/catch that funnels exceptions through `Fail`
+
+**Decisions:**
+- **PatrolLine collapsed to two waypoints (pointA / pointB)** instead of a full waypoint list, because the existing `Assets/XRI Starter Kit/Assets/Scripts/PatrolLine.cs` only exposes `pointA` and `pointB` Transforms. CLAUDE.md's "build PatrolLine from `navigationContext.waypoints`" wording implied a list; the implementation uses `waypoints[0]` and `waypoints[Count-1]` and the in-file comment notes the discrepancy. If multi-point patrols become a requirement we'll need to upgrade `PatrolLine` (Module 2 territory).
+- **`staticFaceTarget` is a generated stub** because `NavigationContextEntry.facingDirection` is a `SerializableVector3` (a direction), but `TerroristController.staticFaceTarget` expects a `Transform`. Solution: parent a transient `FaceTarget_<npc>` GameObject under the NPC, positioned 5 m along the facing direction. Cleaned up automatically when the NPC is destroyed via `ClearScene`.
+- **Wander radius from roaming-area geometry**: centroid of the `roamingRoomIds` positions + max distance from any of those rooms to the centroid + 4 m (≈ half a large-room stride) so the NPC can reach into rooms, not only their centres. Floor of 6 m so single-room roaming areas still feel non-trivial.
+- **Hostage initial state via `Enum.TryParse`** rather than a hard-coded "calm" mapping, so future scenarios can ship `EntityMetadata.initialState = "fearful"` (or similar) without a schema change. `EntityMetadata.initialState` defaults to `"idle"` for terrorists; we coerce unparseable / null values to `HostageState.Calm` for hostages.
+- **Containers parented under the SceneBuilder GameObject** (not the scene root) so `ClearScene` can clean up surgically without touching pre-existing scene objects (e.g. the XR rig, EventManager, environment props).
+
+**Issues:**
+- **Asmdef boundary blocked compilation on first cut.** `TerroristController`, `HostageController`, `EventManager` and `PatrolLine` all live in `Assembly-CSharp` (PatrolLine in `MikeNspiredXRIStarterKitr.Runtime`), and `Unity.AI.Navigation` was not in the Module 1 asmdef's references either. `TeamSentinels.ScenarioGeneration` is a sealed asmdef with `overrideReferences: true` and an empty `references` array, and asmdefs fundamentally cannot reference `Assembly-CSharp`. Errors caught in the Editor:
+  - `CS0234 Unity.AI` namespace not found
+  - `CS0246 TerroristController` could not be found
+  - `CS0246 HostageState` could not be found
+  - `CS0246 NavMeshSurface` could not be found
+- **Resolution: relocate the file out of the asmdef tree** rather than touch Module 2's territory. Final path:
+  - `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/SceneBuilder.cs`
+  - This sits one level above `ScenarioGeneration/` (the asmdef folder), so it compiles into `Assembly-CSharp` and sees Module 2 types and `Unity.AI.Navigation` directly. Module 1's data models stay reachable because the asmdef still has `autoReferenced: true` (Assembly-CSharp auto-references all auto-referenced asmdefs).
+  - Old folder `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/SceneBuilder/` (and its stray `SceneBuilder.meta` from the deleted folder) was removed; namespace `TeamSentinels.ScenarioGeneration.Scene` kept (namespace ≠ asmdef name; no enforcement).
+- **PatrolLine API is 2-point only** — see Decisions above. Multi-segment patrol routes from Module 1 are silently truncated to start/end.
+- **No corridor instantiation yet** — `corridorPrefab` is exposed but unused. Layout currently doesn't carry corridor geometry; rooms are placed at world positions and doors mark connectivity. Will revisit if/when corridors become a distinct geometric element.
+
+**Next:**
+- Build a small `SceneBuilderTests` MonoBehaviour mirroring `ScenarioGenerationTests`: smoke-test `BuildScene` → `ClearScene` → `BuildScene` cycle, verify NPC count, verify NavMesh existence
+- Wire a tiny editor menu / ContextMenu (`Generate + Build`) so an evaluator can go from `default_config.json` to a live scene in one click
+- Decide whether `ScenarioBootstrapper` should be deleted or repurposed once SceneBuilder owns the `NotifyScenarioReady()` call
+- (Optional cleanup) Update `CLAUDE.md` to reflect the new SceneBuilder path — repository structure section currently lists it under `ScenarioGeneration/SceneBuilder/`
+
+---
