@@ -13494,7 +13494,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1955406665}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
       insertIndex: -1
@@ -79807,6 +79810,7 @@ GameObject:
   - component: {fileID: 1370155274}
   - component: {fileID: 1370155275}
   - component: {fileID: 1370155276}
+  - component: {fileID: 1370155277}
   m_Layer: 8
   m_Name: PlayerHitbox
   m_TagString: Untagged
@@ -79865,6 +79869,21 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: MikeNspiredXRIStarterKit.Runtime::PlayerHealth
   health: 100
+--- !u!114 &1370155277
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1370155273}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cd4af71c30d7ac540a46515090d8fc66, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerHealthHitbox
+  playerHealth: {fileID: 0}
+  damageMultiplier: 1
+  echoToConsole: 1
 --- !u!1 &1370175983
 GameObject:
   m_ObjectHideFlags: 0
@@ -116058,6 +116077,75 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 8040499946273602300, guid: fcad743b45a1fcb4db8d143d6d8fae07, type: 3}
   m_PrefabInstance: {fileID: 1880303801}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &1882362007
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1882362008}
+  - component: {fileID: 1882362010}
+  - component: {fileID: 1882362009}
+  m_Layer: 0
+  m_Name: contactZone
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1882362008
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1882362007}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 1, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1934515944}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1882362009
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1882362007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d441dd53d2ef9dc4aa79688174078949, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HostageContactZone
+  hostage: {fileID: 0}
+  fireOnce: 1
+  echoToConsole: 1
+--- !u!135 &1882362010
+SphereCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1882362007}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Radius: 2.5
+  m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &1883806223
 GameObject:
   m_ObjectHideFlags: 0
@@ -118458,7 +118546,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 507a157b3ced0d948bc669f962cdca02, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1882362008}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 507a157b3ced0d948bc669f962cdca02, type: 3}
       insertIndex: -1
