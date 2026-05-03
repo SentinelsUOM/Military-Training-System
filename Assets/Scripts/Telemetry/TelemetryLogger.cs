@@ -60,6 +60,10 @@ public class TelemetryLogger : MonoBehaviour
 {
     public static TelemetryLogger Instance { get; private set; }
 
+    // ── Module 4 integration hook (additive, does not affect storage) ────────
+    /// <summary>Fires after every LogStateChange(). Subscribed by Module 4 (AAR / dashboard).</summary>
+    public static event Action<NPCStateChangeRecord> OnStateChangeLogged;
+
     [Header("Output")]
     [Tooltip("Sub-folder inside Application.persistentDataPath where session files are written.")]
     public string outputFolder = "Telemetry";
@@ -113,6 +117,9 @@ public class TelemetryLogger : MonoBehaviour
         if (echoToConsole)
             Debug.Log($"[Telemetry|StateChange] {actorId} ({actorType}): {previousState} → {newState} " +
                       $"(event E{record.triggerEventId}:{record.triggerEventType})");
+
+        // Module 4 integration hook (additive — does not affect storage)
+        OnStateChangeLogged?.Invoke(record);
     }
 
     /// <summary>

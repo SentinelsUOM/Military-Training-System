@@ -1,0 +1,94 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.topGrid,
+.botGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 800px) {
+  .topGrid,
+  .botGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+}
+
+.cardTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 1rem 0;
+}
+
+.scoreBars {
+  margin-bottom: 1.25rem;
+}
+
+.combatGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.cogRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.cfgTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  max-height: 260px;
+}
+
+.cfgRow {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  gap: 1rem;
+}
+
+.cfgRow:last-child {
+  border-bottom: none;
+}
+
+.cfgKey {
+  color: var(--muted);
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.cfgVal {
+  color: var(--text);
+  font-family: monospace;
+  font-size: 12px;
+  text-align: right;
+  word-break: break-all;
+}
+
+.cfgEmpty {
+  font-size: 13px;
+  color: var(--muted);
+}
