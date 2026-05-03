@@ -49,18 +49,24 @@ Assets/
 │   └── Project Proposal.docx
 │
 ├── Module1_DataModels_and_IO/            ← Module 1 territory — all new code goes here
-│   ├── Scripts/ScenarioGeneration/       ← LIVE implementation
-│   │   ├── TeamSentinels.ScenarioGeneration.asmdef
-│   │   ├── DataModels/                   ← ScenarioEnums, SharedTypes, ScenarioConfig,
-│   │   │                                    LayoutModels, EntityModels,
-│   │   │                                    RoleAndNavigationModels, ScenarioData
-│   │   ├── IO/                           ← ScenarioJsonSettings, ScenarioConfigLoader,
-│   │   │                                    ScenarioExporter
-│   │   ├── Generators/                   ← ScenarioGenerator, LayoutGenerator,
-│   │   │                                    EntityPlacer, RoleAssigner,
-│   │   │                                    NavigationContextBuilder
-│   │   ├── Validation/                   ← ScenarioValidator
-│   │   └── SceneBuilder/                 ← SceneBuilder (Stage 6 — not yet created)
+│   ├── Scripts/
+│   │   ├── ScenarioGeneration/           ← Generation pipeline (asmdef-bound,
+│   │   │   │                                isolated from Assembly-CSharp)
+│   │   │   ├── TeamSentinels.ScenarioGeneration.asmdef
+│   │   │   ├── DataModels/               ← ScenarioEnums, SharedTypes, ScenarioConfig,
+│   │   │   │                                LayoutModels, EntityModels,
+│   │   │   │                                RoleAndNavigationModels, ScenarioData
+│   │   │   ├── IO/                       ← ScenarioJsonSettings, ScenarioConfigLoader,
+│   │   │   │                                ScenarioExporter
+│   │   │   ├── Generators/               ← ScenarioGenerator, LayoutGenerator,
+│   │   │   │                                EntityPlacer, RoleAssigner,
+│   │   │   │                                NavigationContextBuilder
+│   │   │   ├── Validation/               ← ScenarioValidator
+│   │   │   ├── Tests/                    ← ScenarioGenerationTests (Stage 5b)
+│   │   │   └── Editor/                   ← ScenarioGeneratorEditor (Stage 8)
+│   │   └── SceneBuilder/                 ← SceneBuilder, EvaluatorConfigPanel
+│   │                                       (outside asmdef → Assembly-CSharp;
+│   │                                       references Module 2's NPC scripts)
 │   ├── Resources/ScenarioConfigs/        ← Evaluator JSON input files
 │   │   ├── default_config.json
 │   │   ├── test_minimal_easy.json
@@ -99,29 +105,39 @@ Assets/
 ### Phase 1 — COMPLETE (algorithm design, done with Claude research AI)
 All algorithm pseudocode is in `Assets/Docs/Phase 1/`. Do not modify these files — they are the reference specification.
 
-### Phase 2 — IN PROGRESS (implementation with Claude Code)
+### Phase 2 — COMPLETE (implementation with Claude Code)
 
 **Stage 1 — Data Models + IO** ✅ COMPLETE
-All files already exist in `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/`.
+Files in `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/`.
 Reference mirror: `Assets/Docs/Phase 2/Stage 1/Module1_DataModels_and_IO/`
 
-**Stage 2 — LayoutGenerator implementation** ⬜ NEXT
+**Stage 2 — LayoutGenerator implementation** ✅ COMPLETE
 File: `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/Generators/LayoutGenerator.cs`
 Reference: `Assets/Docs/Phase 1/Stage 3/Layout_Generation_Algorithm_Design.md`
 
-**Stage 3 — EntityPlacer implementation** ⬜
+**Stage 3 — EntityPlacer implementation** ✅ COMPLETE
 File: `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/Generators/EntityPlacer.cs`
 Reference: `Assets/Docs/Phase 1/Stage 4/Entity_Placement_Algorithm_Design.md`
 
-**Stage 4 — RoleAssigner + NavigationContextBuilder implementation** ⬜
+**Stage 4 — RoleAssigner + NavigationContextBuilder implementation** ✅ COMPLETE
 Files: `Generators/RoleAssigner.cs`, `Generators/NavigationContextBuilder.cs`
 Reference: `Assets/Docs/Phase 1/Stage 5/NPC_Role_Assignment_Algorithm_Design.md`
 
-**Stage 5 — ScenarioGenerator orchestrator + ScenarioValidator** ⬜
+**Stage 5 — ScenarioGenerator orchestrator + ScenarioValidator** ✅ COMPLETE
 Files: `Generators/ScenarioGenerator.cs`, `Validation/ScenarioValidator.cs`
+Test suite: `ScenarioGeneration/Tests/ScenarioGenerationTests.cs` (21 tests, MonoBehaviour-driven)
 
-**Stage 6 — SceneBuilder (Unity scene integration)** ⬜
-New file: `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/SceneBuilder/SceneBuilder.cs`
+**Stage 6 — SceneBuilder (Unity scene integration)** ✅ COMPLETE
+File: `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/SceneBuilder.cs`
+Lives **outside** the `TeamSentinels.ScenarioGeneration` asmdef so it compiles into `Assembly-CSharp` and can reference Module 2's `TerroristController` / `HostageController` / `EventManager` and the `Unity.AI.Navigation` package directly. Module 1's data models stay reachable via `autoReferenced: true` on the asmdef.
+
+**Stage 7 — Evaluator UI (EvaluatorConfigPanel)** ✅ COMPLETE
+File: `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/EvaluatorConfigPanel.cs`
+TextMeshPro-driven Canvas controller covering every `ScenarioConfig` field. `OnGenerateClicked` runs `ScenarioConfigLoader.IsValid` → `ScenarioGenerator.Generate` → enables Start Mission. `OnStartMissionClicked` hands the stored `ScenarioData` to `SceneBuilder`. PlayerPrefs key `LastScenarioConfig` round-trips the form between sessions.
+
+**Stage 8 — Editor Tools (ScenarioGeneratorEditor)** ✅ COMPLETE
+File: `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/Editor/ScenarioGeneratorEditor.cs`
+Five `Tools / Scenario Generator /` menu commands (Default / Minimal / Max Difficulty / Custom / Open Output Folder), each running the full load → generate → export pipeline with progress bars and result dialogs — no play-mode required.
 
 ---
 
@@ -130,23 +146,38 @@ New file: `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/SceneBuil
 ```
 ScenarioConfig.json
         ↓
-ScenarioGenerator.Generate(config)
+  ScenarioConfigLoader.LoadFromFile()       (or EvaluatorConfigPanel.BuildConfig() at runtime)
         ↓
-  LayoutGenerator.Generate()          → LayoutData (rooms, doors, entry points)
+ScenarioGenerator.Generate(config)          ← Stage 5 orchestrator
         ↓
-  EntityPlacer.PlaceEntities()        → SpawnPoints + List<EntityRecord>
+  LayoutGenerator.Generate()                → LayoutData (rooms, doors, entry points)
         ↓
-  RoleAssigner.AssignRoles()          → List<RoleAssignment>
+  EntityPlacer.Place()                      → SpawnPoints + List<EntityRecord>
         ↓
-  NavigationContextBuilder.Build()    → Dictionary<string, NavigationContextEntry>
+  RoleAssigner.Assign()                     → List<RoleAssignment>
         ↓
-  ScenarioValidator.Validate()        → ValidationResult
+  NavigationContextBuilder.Build()          → Dictionary<string, NavigationContextEntry>
         ↓
-ScenarioData (Scenario.json)
+  ScenarioValidator.Validate()              → ValidationResult (retries with seed+1 on fail)
         ↓
-SceneBuilder.BuildScene()             → Unity scene with rooms + NPCs spawned
+ScenarioData
         ↓
-EventManager.NotifyScenarioReady()   → Hands off to Module 2
+  ScenarioExporter.ExportToFile()           → Output/GeneratedScenarios/Scenario_<id>.json
+        ↓
+SceneBuilder.BuildScene(scenario)           ← Stage 6 runtime bridge (Module 1 → Module 2)
+        ├─ Instantiate rooms                (prefab chosen by RoomSizeCategory)
+        ├─ Instantiate doors                (reciprocal de-dup)
+        ├─ Reposition trainee XR rig
+        ├─ Spawn hostage(s)                 → HostageController.currentState
+        ├─ Spawn terrorists                 → TerroristController.idleMode
+        │                                       ├─ Patrol      → PatrolLine.pointA/B
+        │                                       ├─ Wander      → wanderRadius
+        │                                       └─ Static      → staticFaceTarget
+        └─ NavMeshSurface.BuildNavMesh()
+        ↓
+EventManager.NotifyScenarioReady()          ← Module 1 ⇒ Module 2 handoff
+        ↓
+Module 2 NPC FSMs become live
 ```
 
 ---
