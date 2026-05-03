@@ -462,6 +462,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (_navMeshSurface == null)
                 _navMeshSurface = _roomsRoot.gameObject.AddComponent<NavMeshSurface>();
 
+            // Only bake the children of the Rooms container, not the whole scene.
+            // Without this scope, NavMeshSurface defaults to CollectObjects.All and
+            // tries to voxelise every Renderer in the scene (XRI rig, environment,
+            // etc.), which can hang the editor for tens of seconds on Start Mission.
+            _navMeshSurface.collectObjects = CollectObjects.Children;
+
             try
             {
                 _navMeshSurface.BuildNavMesh();

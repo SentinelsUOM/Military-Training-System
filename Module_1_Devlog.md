@@ -338,3 +338,114 @@ Each entry follows this structure:
 - (Optional cleanup) Update `CLAUDE.md` to reflect the new SceneBuilder path — repository structure section currently lists it under `ScenarioGeneration/SceneBuilder/`
 
 ---
+
+### 2026-04-29 — Evaluator UI: EvaluatorConfigPanel
+
+**Status:** Stage 6 follow-on — evaluator-facing scenario configuration UI.
+
+**Done:**
+- Created `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/EvaluatorConfigPanel.cs` (namespace `TeamSentinels.ScenarioGeneration.Scene`, MonoBehaviour, alongside `SceneBuilder.cs` so it shares the Assembly-CSharp boundary)
+- TextMeshPro + UnityEngine.UI bindings cover every `ScenarioConfig` field across the three nested groups:
+  - **Mission Structure:** mission type dropdown (single option "Hostage Rescue"), room count min/max sliders (3-20), room size dropdown (Small/Medium/Large with metric labels), layout type dropdown (Linear/Branching/Hub & Spoke/Loop), entry type dropdown (Single/Multiple)
+  - **Entity Configuration:** hostage count label fixed at "1" (schema const), terrorist count slider (1-8), placement strategy dropdown (Clustered/Dispersed/Front-Loaded/Deep), hostage risk level dropdown (Low/Medium/High)
+  - **Execution Controls:** difficulty slider (1-5 with labels "1 (Easiest)" → "5 (Hardest)"), randomness dropdown (Low/Medium/High), seed `TMP_InputField` (blank = null), timeLimit `TMP_InputField` (blank = null, range 60-1800), customLabel `TMP_InputField` (max 128 chars)
+- `BuildConfig(out string warning)` translates UI -> `ScenarioConfig`. Performs lightweight UI-side checks (min<=max, terroristCount<=max*2, timeLimit range, customLabel length) and surfaces the first violation through the warning out-parameter
+- `OnGenerateClicked()` flow: disable buttons -> `SetStatus("Generating...")` -> `BuildConfig` -> `ScenarioConfigLoader.IsValid(config, out errors)` (canonical schema validator) -> `_generator.Generate(config)` -> if `validationResult.passed` then store `_generatedScenario`, `SaveConfigToPrefs(config)`, enable Start Mission button, and show `Success: {rooms} rooms, {entities} entities, seed={seedUsed}`. Caught failures: failed schema validation, validator-rejected scenario after retries, `Generate()` exceptions
+- `OnStartMissionClicked()` hands `_generatedScenario` to `sceneBuilder.BuildScene(...)`. Subscribed to `SceneBuilder.OnSceneBuildComplete` (hides `panelRoot` if assigned) and `OnSceneBuildFailed` (re-enables buttons + shows red warning)
+- Slider callbacks use a `_suspendCallbacks` flag to avoid feedback loops while:
+  - Forcing `roomCountMin <= roomCountMax` (push-up / pull-down the other slider)
+  - Live-updating labels and the terroristCount-vs-max*2 warning
+  - Bulk-applying a saved config from PlayerPrefs without retriggering events
+- PlayerPrefs persistence under key `LastScenarioConfig`: `JsonConvert.SerializeObject(config, ScenarioJsonSettings.WriterSettings)` on every successful Generate, `Start()` reads it back via `JsonConvert.DeserializeObject` and `ApplyConfigToUi(...)`. Failures (corrupted JSON, schema mismatch) log a warning and fall back to defaults
+
+**Decisions:**
+- **Lives next to `SceneBuilder.cs`, not under the asmdef**, for the same reason as SceneBuilder: it references `SceneBuilder` (Assembly-CSharp). Placing it inside `ScenarioGeneration/` would have replayed the previous compile-error round.
+- **Parallel arrays of enum values + display names** instead of reflection-driven enum population. Reflection works but obscures the display strings ("Hub & Spoke" is not directly derivable from `LayoutType.HubAndSpoke`); explicit arrays make the dropdown labels reviewable in one place.
+- **Validator: `ScenarioConfigLoader.IsValid(config, out errors)`** rather than reimplementing the schema rules in the panel. Single source of truth — if the schema gains a new check, the UI gets it for free.
+- **Two-tier feedback**: live warnings in the status text while editing (yellow path: range violations, parse errors) vs. hard failures from validation/Generate (red path). Both write to the same `statusText`, the colour and prefix make them distinguishable.
+- **`_suspendCallbacks` toggle** for the load-from-JSON path: setting `slider.value` programmatically triggers `onValueChanged`, which would otherwise stomp on neighbouring sliders (e.g. the min/max enforcement clamp would fight the saved values). Suspend during apply, then run `UpdateAllLabels()` once at the end.
+
+**Issues:**
+- **Default `LayoutType` mismatch**: the `ScenarioConfig` constructor defaults to `Branching` but the UI dropdown defaults to index 0 (Linear) until a saved config is restored. Mitigated by `ApplyConfigToUi(new ScenarioConfig())` running in `Start()` when no saved config exists, so the dropdown lands on Branching. If the panel is dropped into a scene without that initialisation path it would still work but with a different default.
+- **No live preview of the generated scenario** before clicking Start Mission. The intent was to keep the UI minimal — the success line tells the evaluator the room/entity count and seed; richer preview (e.g. a small minimap, or `ScenarioExporter.ExportToFile` for inspection) is deferred until needed.
+- **Single mission type only**: dropdown shows "Hostage Rescue" as the only option. Hard-coded since `MissionType` only has one member; if the enum gains values, swap the static option list for `Enum.GetValues` + a name lookup.
+
+**Next:**
+- Build the actual Canvas in `SampleScene` (Canvas + EventSystem + panel hierarchy with sliders / dropdowns / input fields wired to this script's serialised fields)
+- Add a "Reset to Defaults" button for evaluators who want to bypass the saved-config restore
+- Optional: pipe `ScenarioExporter.ExportToFile(scenario)` from the success path so each generation also leaves a `Scenario_<id>.json` artefact for Module 4
+
+---
+
+### 2026-04-29 — Editor menu: ScenarioGeneratorEditor
+
+**Status:** Editor tooling — one-click scenario generation from the Unity menu bar.
+
+**Done:**
+- Created `Assets/Module1_DataModels_and_IO/Scripts/ScenarioGeneration/Editor/ScenarioGeneratorEditor.cs` (namespace `TeamSentinels.ScenarioGeneration.Editor`, static class, entire file wrapped in `#if UNITY_EDITOR ... #endif`)
+- Five `[MenuItem]` entries under **Tools / Scenario Generator /** with priorities tuned so a separator appears before "Open Output Folder":
+  - `Generate Default Scenario` (priority 0) -> `default_config.json`
+  - `Generate Minimal (Easy)` (priority 1) -> `test_minimal_easy.json`
+  - `Generate Max Difficulty` (priority 2) -> `test_max_difficulty.json`
+  - `Generate from Custom Config...` (priority 3) -> opens `EditorUtility.OpenFilePanel` rooted at the configs directory
+  - `Open Output Folder` (priority 100, gap forces a menu separator) -> `EditorUtility.RevealInFinder`
+- Common pipeline `GenerateFromConfigPath(configPath, label)`:
+  1. `EditorUtility.DisplayProgressBar` at 10% (load), 40% (generate), 85% (export)
+  2. `ScenarioConfigLoader.LoadFromFile` -> `new ScenarioGenerator().Generate(config)` -> `ScenarioExporter.ExportToFile(scenario, outPath)`
+  3. `AssetDatabase.Refresh()` so the new JSON shows up immediately in the Project window
+  4. Success dialog: rooms / entities / seed used / validator pass-or-fail / absolute output path
+  5. Validator-fail still saves the file (per `ScenarioGenerator` contract) but flags it in the dialog title and button label ("Inspect Output")
+  6. Try/catch surfaces exceptions through `Debug.LogError` + an "OK" failure dialog
+  7. `EditorUtility.ClearProgressBar()` in `finally` so a thrown exception never leaves the bar stuck on screen
+- Path helpers centralise `Application.dataPath + "/Module1_DataModels_and_IO/..."` as constants (`ConfigsRelative`, `OutputRelative`) to avoid drift between commands. `GetOutputDirectory()` auto-creates the folder if missing so first-run from a clean checkout works.
+
+**Decisions:**
+- **Lives inside the existing `TeamSentinels.ScenarioGeneration` asmdef tree** (under `ScenarioGeneration/Editor/`) rather than a separate Editor asmdef. The whole file is wrapped in `#if UNITY_EDITOR`, and Unity auto-references `UnityEditor.dll` for editor-pass compilation of any asmdef regardless of `overrideReferences`. A standalone Editor asmdef would be the textbook setup but adds a second .asmdef to maintain for a 200-line tool — not worth the overhead at this scale.
+- **One method per menu item, all routed through `GenerateFromConfigPath`** so the progress-bar / dialog / try-catch policy is in one place. New canned configs (e.g., `stress_test_8_terrorists.json`) only need one `MenuItem` + one-line wrapper.
+- **Validator-failed scenarios still get exported.** Matches `ScenarioGenerator.Generate` semantics: when retries are exhausted the last attempt is returned with `validationResult.passed = false`. Saving it lets the developer open the JSON to debug what went wrong instead of having to re-run with logging.
+- **Custom config dialog rooted at the canned configs dir, not `Application.dataPath`**, so the most likely target folder is one click away. Falls back to `dataPath` if the dir somehow doesn't exist.
+
+**Issues:**
+- **No "Generate + Build into current scene" command yet.** Editor tools today only generate JSON; running the SceneBuilder still requires play mode + clicking Start Mission in the canvas. Adding a non-play-mode build command would need either an `EditorWindow` that holds a SceneBuilder reference, or a `[MenuItem]` that finds the SceneBuilder via `Object.FindObjectOfType`. Deferred until the canvas is wired up so we can test the runtime path first.
+- **Asmdef-internal Editor folder caveat:** if the asmdef ever gains `includePlatforms` other than the default (all-platforms), this file will need its own Editor asmdef or it'll fail player builds. Fine today, flagged here for future me.
+
+**Next:**
+- Wire EvaluatorConfigPanel into a real Canvas in `SampleScene` so the runtime path can finally be exercised
+- Add a "Generate + Build into Current Scene" menu item once a SceneBuilder exists in `SampleScene`
+- Consider an editor preference for the default output directory so different evaluators can route their generations to different folders without code changes
+
+---
+
+### 2026-04-29 — Phase 4 summary (Stages 6–8): runtime integration + tooling
+
+**Status:** Phase 4 closes out Module 1's path from "JSON sitting on disk" to "live VR scene with Module 2 NPCs running". Three parallel deliverables — runtime bridge, evaluator UI, and editor tooling — all landed in the same session and have been individually devlogged above. This entry is the consolidated picture.
+
+**What Phase 4 delivered:**
+- **Stage 6 — `SceneBuilder` (runtime bridge).** MonoBehaviour that turns a `ScenarioData` into a populated Unity scene: rooms (chosen by `RoomSizeCategory`), reciprocal-deduped doors, trainee rig reposition (no instantiate), hostage(s) with mapped initial state, terrorists with `IdleMode` + `PatrolLine` / `wanderRadius` / `staticFaceTarget` configured per Module 1 `NpcRole`, then `NavMeshSurface.BuildNavMesh()`, then `EventManager.NotifyScenarioReady()`. Public `BuildScene` / `BuildSceneFromFile` / `ClearScene` API plus `OnSceneBuildComplete` / `OnSceneBuildFailed` C# events.
+- **Stage 7 — `EvaluatorConfigPanel` (UI controller).** TMP-driven Canvas controller covering every `ScenarioConfig` field across the three nested groups. `BuildConfig` translates UI to config, `OnGenerateClicked` runs `ScenarioConfigLoader.IsValid` then `ScenarioGenerator.Generate`, `OnStartMissionClicked` hands off to `SceneBuilder`. PlayerPrefs round-trip under key `LastScenarioConfig`. Live constraint enforcement (min ≤ max, terrorist count ≤ max × 2).
+- **Stage 8 — `ScenarioGeneratorEditor` (editor menu).** Five `Tools / Scenario Generator /` menu items wrapping the full load → generate → export pipeline with progress bars, success dialogs, and `EditorUtility.RevealInFinder` for the output folder. No play-mode round-trip required during development.
+
+**Architectural decisions that bind Phase 4 together:**
+- **Two-assembly split for the runtime bridge.** `SceneBuilder` and `EvaluatorConfigPanel` live in `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/` (Assembly-CSharp), one folder above the asmdef-bound `ScenarioGeneration/` tree. Forced because asmdefs cannot reference `Assembly-CSharp` and Module 2's NPC scripts have no asmdef of their own — moving the bridge files out is the only resolution that doesn't touch Module 2's territory. Module 1 data models remain visible because the asmdef has `autoReferenced: true`.
+- **Single source of truth for validation.** Both the editor menu (`ScenarioGeneratorEditor`) and the runtime UI (`EvaluatorConfigPanel`) route through `ScenarioConfigLoader.IsValid` / `ScenarioGenerator.Generate`. UI-side checks are advisory only (live warning text); the canonical validator stays in one place.
+- **Validator-failed scenarios still get exported.** Matches `ScenarioGenerator.Generate` semantics — the last attempt is returned with `validationResult.passed = false`. Saving the JSON lets the developer/evaluator open the file to debug, and the editor dialog flags the state with an "Inspect Output" button rather than a generic "OK".
+- **NPC field assignments happen between `Awake` and `Start`.** `SceneBuilder` calls `Instantiate` (Awake fires synchronously) → captures the controller reference → writes `idleMode` / `wanderRadius` / `staticFaceTarget` / `patrolLine.pointA-B` → continues. Unity's `Start` only runs at end-of-frame, so NPCs initialise with the correct configuration on their first `Start` tick.
+
+**Cross-cutting issues:**
+- **`NotifyScenarioReady` fires before NPC `Start` methods**, because it's called synchronously inside `BuildScene`. The legacy `ScenarioBootstrapper` worked around this with a `0.1 s` delay; `SceneBuilder` does not. Acceptable today because `Start` runs immediately after `BuildScene` returns, but worth converting the call to a one-frame coroutine if any NPC FSM ever depends on `ScenarioReady` arriving after its own `Start`.
+- **PatrolLine still 2-point only.** Module 1 ships ordered waypoint lists; SceneBuilder collapses to first/last. Multi-segment routes need a Module 2 PatrolLine upgrade (out of scope for Module 1).
+- **`ScenarioBootstrapper.cs` is now redundant.** SceneBuilder owns the `NotifyScenarioReady` call once a scenario is built; ScenarioBootstrapper was the older "just fire ScenarioReady on scene load" stub. Not yet deleted because nothing in the canvas wiring is live yet — leave in place until SampleScene actually drives generation through the panel.
+
+**Where Phase 4 leaves Module 1:**
+- Generation pipeline (Stages 1–5) exercised end-to-end through both UI and editor entry points.
+- Runtime bridge (Stage 6) has every integration point mapped against Module 2's actual API — verified field-by-field.
+- Evaluator can configure scenarios (Stage 7) and developers can generate them (Stage 8) without writing a config JSON by hand.
+- The Canvas itself is not yet built in `SampleScene`; that's the only remaining gating step before a full evaluator → VR session can be exercised end-to-end.
+
+**Next (Phase 5 candidates):**
+- Build the actual Canvas in `SampleScene` and wire `EvaluatorConfigPanel` to it
+- Scene smoke-test: generate → build → ScenarioReady → confirm NPC FSMs activate
+- Decide on the fate of `ScenarioBootstrapper.cs` (delete vs. repurpose as a JSON-only quick-launcher)
+- World-space Canvas variant for in-headset evaluator setup (post-Canvas)
+
+---
