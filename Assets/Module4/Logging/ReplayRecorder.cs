@@ -132,7 +132,11 @@ namespace TeamSentinels.Module4.Logging
 
         private void CaptureFrame()
         {
-            float now = Time.time;
+            // Use elapsed-since-session-start so frames align with event/state-change
+            // timestamps. Falls back to Time.time if no session is active.
+            float now = SessionLogger.Instance != null && SessionLogger.Instance.IsSessionActive
+                ? Time.time - SessionLogger.Instance.SessionStartTime
+                : Time.time;
             foreach (var actor in _actors)
             {
                 if (actor.transform == null) continue;

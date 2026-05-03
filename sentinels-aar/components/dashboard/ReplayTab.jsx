@@ -9,7 +9,7 @@ import { formatTime, getActorStateAt, getMissionPhase, stateColor, chartTheme } 
 const SPEEDS = [0.5, 1, 2]
 
 export default function ReplayTab({ session }) {
-  const duration    = session.missionDuration || 1
+  const duration    = session.performance?.missionDuration || 1
   const frames      = session.replayFrames    || []
   const npcChanges  = session.npcStateChanges || []
   const events      = session.events          || []
@@ -57,13 +57,17 @@ export default function ReplayTab({ session }) {
     setTime(0)
   }
 
-  const currentFrame = frames.length > 0
-    ? frames.reduce((best, f) =>
-        f.timestamp <= time && f.timestamp > (best?.timestamp ?? -1) ? f : best
-      , null)
-    : null
-
-  const frameActors = currentFrame?.actors || []
+  // Unity sends one ReplayFrame per actor per tick. Group by actorId and
+  // pick the most recent frame at or before `time` for each actor.
+  const latestByActor = new Map()
+  for (const f of frames) {
+    if (f.timestamp > time) continue
+    const existing = latestByActor.get(f.actorId)
+    if (!existing || f.timestamp > existing.timestamp) {
+      latestByActor.set(f.actorId, f)
+    }
+  }
+  const frameActors = [...latestByActor.values()]
 
   const actorIds = [...new Set([
     ...npcChanges.map(n => n.actorId),
@@ -74,7 +78,7 @@ export default function ReplayTab({ session }) {
     x: a.position?.x ?? 0,
     y: a.position?.z ?? 0,
     actorId: a.actorId,
-    state: a.state || getActorStateAt(npcChanges, a.actorId, time),
+    state: a.currentState || getActorStateAt(npcChanges, a.actorId, time),
   }))
 
   const activeEvents = events.filter(e => Math.abs(e.timestamp - time) <= 2)
@@ -163,7 +167,7 @@ export default function ReplayTab({ session }) {
                 <span className={styles.muted}>No actors recorded.</span>
               ) : actorIds.map(id => {
                 const state = getActorStateAt(npcChanges, id, time) ||
-                  frameActors.find(a => a.actorId === id)?.state || '—'
+                  frameActors.find(a => a.actorId === id)?.currentState || '—'
                 return (
                   <div key={id} className={styles.actorRow}>
                     <span className={styles.actorId}>{id}</span>

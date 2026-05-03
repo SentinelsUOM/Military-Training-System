@@ -10,7 +10,7 @@ const CATEGORY_ORDER = ['Combat', 'Movement', 'Communication', 'Cognitive', 'Sys
 
 export default function TimelineTab({ session }) {
   const events = session.events || []
-  const duration = session.missionDuration || 1
+  const duration = session.performance?.missionDuration || 1
 
   const svgRef = useRef(null)
   const [svgWidth, setSvgWidth] = useState(800)

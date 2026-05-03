@@ -9,20 +9,23 @@ const SessionSchema = new mongoose.Schema(
   {
     sessionId:       { type: String, required: true, unique: true, index: true },
     scenarioId:      { type: String, required: true },
-    missionDuration: Number,
+    // Top-level "timestamp" sent by Unity (DateTime when EndSession ran).
+    // Distinct from Mongoose-managed createdAt/updatedAt.
+    timestamp:       Date,
 
     performance: {
-      safetyScore:      Number,
-      accuracyScore:    Number,
-      speedScore:       Number,
-      overallScore:     Number,
-      missionSuccess:   Boolean,
-      totalShots:       Number,
-      hits:             Number,
-      misses:           Number,
-      hostagesSaved:    Number,
-      hostagesTotal:    Number,
-      friendlyFireCount:Number
+      safetyScore:       Number,
+      accuracyScore:     Number,
+      speedScore:        Number,
+      overallScore:      Number,
+      missionSuccess:    Boolean,
+      totalShots:        Number,
+      hits:              Number,
+      misses:            Number,
+      hostagesSaved:     Number,
+      hostagesTotal:     Number,
+      missionDuration:   Number,
+      friendlyFireCount: Number
     },
 
     cognitiveSummary: {

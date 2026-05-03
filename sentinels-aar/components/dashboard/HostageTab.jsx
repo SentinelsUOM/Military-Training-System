@@ -11,7 +11,7 @@ const DISTRESS_MAP = {
 
 export default function HostageTab({ session }) {
   const history = session.hostageHistory || []
-  const duration = session.missionDuration || 1
+  const duration = session.performance?.missionDuration || 1
 
   const byHostage = {}
   for (const entry of history) {

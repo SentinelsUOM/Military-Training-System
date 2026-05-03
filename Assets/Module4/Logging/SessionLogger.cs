@@ -22,6 +22,12 @@ namespace TeamSentinels.Module4.Logging
 
         public static SessionLogger Instance { get; private set; }
 
+        /// <summary>True between StartSession() and EndSession(). Used by Module4Bridge to gate listener calls.</summary>
+        public bool IsSessionActive => _sessionActive;
+
+        /// <summary>Time.time captured at the most recent StartSession(). Used by Module4SessionController for elapsed checks.</summary>
+        public float SessionStartTime => _sessionStartTime;
+
         #endregion
 
         #region Data
@@ -161,7 +167,7 @@ namespace TeamSentinels.Module4.Logging
             hostagesTotal = Mathf.Max(hostagesTotal, 1);
 
             PerformanceSummary perf = PerformanceCalculator.Calculate(
-                _events, _npcStateChanges, _hostageHistory, duration, hostagesTotal);
+                _events, _hostageHistory, duration, hostagesTotal);
 
             List<IncidentRecord> incidents = IncidentExtractor.Extract(
                 _events, _npcStateChanges, _hostageHistory);

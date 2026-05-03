@@ -64,11 +64,11 @@ export default function SessionClient({ session }) {
         <div className={styles.meta}>
           <div className={styles.metaBlock}>
             <span className={styles.metaLabel}>Date</span>
-            <span>{formatDate(s.startTime)}</span>
+            <span>{formatDate(s.timestamp || s.createdAt)}</span>
           </div>
           <div className={styles.metaBlock}>
             <span className={styles.metaLabel}>Duration</span>
-            <span>{formatTime(s.missionDuration)}</span>
+            <span>{formatTime(perf.missionDuration)}</span>
           </div>
           <div className={styles.metaBlock}>
             <span className={styles.metaLabel}>Scenario</span>

@@ -144,8 +144,8 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
                     onClick={() => router.push(`/session/${s.sessionId}`)}
                   >
                     <td className={styles.sessionId}>{s.sessionId}</td>
-                    <td>{formatDate(s.startTime)}</td>
-                    <td>{formatTime(s.missionDuration)}</td>
+                    <td>{formatDate(s.timestamp || s.createdAt)}</td>
+                    <td>{formatTime(s.performance?.missionDuration)}</td>
                     <td>
                       <span style={{ color: scoreColor(s.performance?.overallScore) }}>
                         {scorePercent(s.performance?.overallScore)}%

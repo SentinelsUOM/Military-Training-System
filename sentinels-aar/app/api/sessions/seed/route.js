@@ -23,8 +23,7 @@ export async function POST() {
       {
         sessionId:       'SEN-2026-0045',
         scenarioId:      'GRID-3F-HIGH',
-        createdAt:       new Date('2026-04-20T09:23:00Z'),
-        missionDuration: 134,
+        timestamp:       new Date('2026-04-20T09:23:00Z'),
         performance: {
           safetyScore:      0.91,
           accuracyScore:    0.74,
@@ -36,6 +35,7 @@ export async function POST() {
           misses:           4,
           hostagesSaved:    2,
           hostagesTotal:    2,
+          missionDuration:  134,
           friendlyFireCount:0
         },
         cognitiveSummary: {
@@ -126,8 +126,7 @@ export async function POST() {
       {
         sessionId:       'SEN-2026-0046',
         scenarioId:      'LINEAR-2F-MED',
-        createdAt:       new Date('2026-04-21T14:45:00Z'),
-        missionDuration: 98,
+        timestamp:       new Date('2026-04-21T14:45:00Z'),
         performance: {
           safetyScore:      0.75,
           accuracyScore:    0.68,
@@ -139,6 +138,7 @@ export async function POST() {
           misses:           4,
           hostagesSaved:    1,
           hostagesTotal:    2,
+          missionDuration:  98,
           friendlyFireCount:0
         },
         cognitiveSummary: {
@@ -218,8 +218,7 @@ export async function POST() {
       {
         sessionId:       'SEN-2026-0047',
         scenarioId:      'HUB-4F-HIGH',
-        createdAt:       new Date('2026-04-22T11:10:00Z'),
-        missionDuration: 67,
+        timestamp:       new Date('2026-04-22T11:10:00Z'),
         performance: {
           safetyScore:      0.3,
           accuracyScore:    0.51,
@@ -231,6 +230,7 @@ export async function POST() {
           misses:           10,
           hostagesSaved:    0,
           hostagesTotal:    2,
+          missionDuration:  67,
           friendlyFireCount:1
         },
         cognitiveSummary: {

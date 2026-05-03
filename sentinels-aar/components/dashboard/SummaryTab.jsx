@@ -11,6 +11,10 @@ export default function SummaryTab({ session }) {
   const perf = session.performance || {}
   const cog  = session.cognitiveSummary || {}
   const cfg  = session.scenarioConfig || {}
+  const events = session.events || []
+
+  // Derive terrorist kill count from events (no dedicated field in PerformanceSummary)
+  const terroristsDown = events.filter(e => e.eventType === 'TerroristDown').length
 
   const radarData = [
     { axis: 'Overall',  value: Math.round((perf.overallScore  || 0) * 100) },
@@ -20,10 +24,10 @@ export default function SummaryTab({ session }) {
   ]
 
   const cogBarData = [
-    { name: 'Reaction Time', value: parseFloat((cog.averageReactionTime || 0).toFixed(2)) },
-    { name: 'Cognitive Load', value: parseFloat((cog.peakCognitiveLoad  || 0).toFixed(2)) },
-    { name: 'Stress Index',   value: parseFloat((cog.stressIndex        || 0).toFixed(2)) },
-    { name: 'Focus Score',    value: parseFloat((cog.focusScore         || 0).toFixed(2)) },
+    { name: 'Avg RT (s)',    value: parseFloat((cog.averageReactionTime || 0).toFixed(2)) },
+    { name: 'Peak RT (s)',   value: parseFloat((cog.peakReactionTime    || 0).toFixed(2)) },
+    { name: 'Stability',     value: parseFloat((cog.stabilityScore      || 0).toFixed(2)) },
+    { name: 'Attention',     value: parseFloat((cog.attentionScore      || 0).toFixed(2)) },
   ]
 
   return (
@@ -57,11 +61,11 @@ export default function SummaryTab({ session }) {
           </div>
 
           <div className={styles.combatGrid}>
-            <CombatStat label="Shots Fired"      value={perf.totalShotsFired ?? '—'} />
-            <CombatStat label="Shots Hit"         value={perf.shotsHit ?? '—'} />
+            <CombatStat label="Shots Fired"      value={perf.totalShots ?? 0} />
+            <CombatStat label="Shots Hit"         value={perf.hits ?? 0} />
             <CombatStat label="Friendly Fire"     value={perf.friendlyFireCount ?? 0} warn={perf.friendlyFireCount > 0} />
-            <CombatStat label="Terrorists Down"   value={perf.terroristsNeutralized ?? '—'} />
-            <CombatStat label="Hostages Saved"    value={perf.hostagesSaved ?? '—'} />
+            <CombatStat label="Terrorists Down"   value={terroristsDown} />
+            <CombatStat label="Hostages Saved"    value={`${perf.hostagesSaved ?? 0} / ${perf.hostagesTotal ?? 0}`} />
             <CombatStat label="Mission"
               value={perf.missionSuccess ? 'SUCCESS' : 'FAIL'}
               color={perf.missionSuccess ? '#34d399' : '#f87171'}
@@ -74,10 +78,10 @@ export default function SummaryTab({ session }) {
         <div className={styles.card}>
           <h3 className={styles.cardTitle}>Cognitive Metrics</h3>
           <div className={styles.cogRow}>
-            <CogStat label="Load Level"      value={cog.cognitiveLoadLabel} />
-            <CogStat label="Stress Level"    value={cog.stressLabel} />
+            <CogStat label="Load Level"      value={cog.estimatedCognitiveLoad} />
+            <CogStat label="Stress Level"    value={cog.estimatedStressLevel} />
             <CogStat label="Avg RT"          value={cog.averageReactionTime != null ? `${cog.averageReactionTime.toFixed(2)}s` : '—'} />
-            <CogStat label="Focus Score"     value={cog.focusScore != null ? `${(cog.focusScore * 100).toFixed(0)}%` : '—'} />
+            <CogStat label="Attention"       value={cog.attentionScore != null ? `${(cog.attentionScore * 100).toFixed(0)}%` : '—'} />
           </div>
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={cogBarData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>

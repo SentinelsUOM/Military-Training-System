@@ -19,19 +19,16 @@ namespace TeamSentinels.Module4.Analysis
         /// Calculates all performance metrics and returns a fully populated PerformanceSummary.
         /// </summary>
         /// <param name="events">All MissionEvents recorded during the session.</param>
-        /// <param name="npcChanges">All NPC state transitions (used for terrorist count).</param>
         /// <param name="hostageHistory">All hostage emotional-state entries.</param>
         /// <param name="missionDuration">Total session time in seconds.</param>
         /// <param name="hostagesTotal">Number of unique hostages in the scenario.</param>
         public static PerformanceSummary Calculate(
             List<MissionEvent>      events,
-            List<NPCStateChange>    npcChanges,
             List<HostageStateEntry> hostageHistory,
             float                   missionDuration,
             int                     hostagesTotal)
         {
             events         ??= new List<MissionEvent>();
-            npcChanges     ??= new List<NPCStateChange>();
             hostageHistory ??= new List<HostageStateEntry>();
 
             // ── Shot accuracy ────────────────────────────────────────────────
@@ -54,9 +51,11 @@ namespace TeamSentinels.Module4.Analysis
             safetyScore  = Mathf.Clamp01(safetyScore);
 
             // ── Mission success ──────────────────────────────────────────────
-            int terroristsDown = events.Count(e => e.eventType == "TerroristDown");
-            int terroristsExpected = CountTerrorists(npcChanges);
-            bool missionSuccess = hostagesSaved >= 1 && terroristsDown >= terroristsExpected;
+            // Aligned with Module4SessionController.AllHostagesFreed():
+            // at least one hostage rescued (Freed) → mission success.
+            // Terrorist count is no longer a gating factor; players can succeed
+            // by escorting hostages to safety even if some terrorists remain.
+            bool missionSuccess = hostagesSaved >= 1;
 
             // ── Speed ────────────────────────────────────────────────────────
             // Benchmark: 300 s. Anything longer scores 0.
@@ -91,25 +90,13 @@ namespace TeamSentinels.Module4.Analysis
 
         private static int CountHostagesSaved(List<HostageStateEntry> history)
         {
-            // A hostage is "saved" if their final recorded state is "Follow"
+            // A hostage is "saved" only when their final recorded state is "Freed"
+            // (reached the extraction zone). "Follow" means still being escorted.
             var finalStates = new Dictionary<string, string>();
             foreach (var entry in history)
                 finalStates[entry.hostageId] = entry.state;
 
-            return finalStates.Values.Count(s => s == "Follow");
-        }
-
-        private static int CountTerrorists(List<NPCStateChange> npcChanges)
-        {
-            // Infer distinct terrorist actor IDs from state change records
-            var ids = npcChanges
-                .Where(c => c.actorType == "Terrorist")
-                .Select(c => c.actorId)
-                .Distinct()
-                .Count();
-
-            // If no state changes were logged, assume at least 1 to avoid division issues
-            return Mathf.Max(ids, 1);
+            return finalStates.Values.Count(s => s == "Freed");
         }
 
         #endregion
