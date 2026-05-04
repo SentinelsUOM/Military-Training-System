@@ -449,3 +449,66 @@ Each entry follows this structure:
 - World-space Canvas variant for in-headset evaluator setup (post-Canvas)
 
 ---
+
+### 2026-05-03 — Scene prefab builder + runtime JSON export
+
+**Status:** Bridging the gap between "Module 1 pipeline runs" and "scene actually renders" — Phase 4 polish so the demo doesn't depend on Module 2's NPC prefabs being ready.
+
+**Done:**
+- **Runtime JSON export** added to `EvaluatorConfigPanel.OnGenerateClicked`. Every successful Generate now writes `Scenario_<id>.json` to `Assets/Module1_DataModels_and_IO/Output/GeneratedScenarios/` and refreshes `AssetDatabase` so the new file appears in Unity's Project window without restarting. The status text gains a `Saved: <filename>` suffix. Failures log a warning but don't fail the generate (so the success state still displays). Editor-only `AssetDatabase.Refresh` guarded by `#if UNITY_EDITOR`.
+- **`ScenePrefabBuilder.cs`** — new editor-only one-shot tool at `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/Editor/ScenePrefabBuilder.cs` (Assembly-CSharp-Editor, namespace `TeamSentinels.ScenarioGeneration.EditorTools`). Menu command `Tools / Scenario Generator / Build Scene Prefabs` builds, in one click:
+  - `RoomSmall.prefab` (4×3×4), `RoomMedium.prefab` (6×3×6), `RoomLarge.prefab` (8×3×8) - each is a floor cube + 8 wall segments (2 per side, leaving a 2 m centre gap for door alignment with Module 1's grid)
+  - `DoorVisual.prefab` - two jambs + lintel (frame, solid colliders) + thin door panel (collider as trigger so the trainee can walk through). Default orientation has length on X so SceneBuilder's identity rotation maps to N/S walls, 90deg-Y to E/W.
+  - 5 materials in `Assets/Prefabs/Materials/` (Floor / Wall / Door / DoorFrame / Ground) - URP-Lit if available, fall back to Standard, set both `_BaseColor` and `_Color` so it renders correctly under either pipeline.
+  - `GroundPlane` GameObject in the active scene (100x100 m floor at y = -0.02). Covers the 2 m corridor gaps Module 1 leaves between rooms so the trainee can actually walk between them.
+  - Auto-wires the four prefabs into the active scene's `SceneBuilder` (small / medium / large / door). Logs a warning + skips wiring if no `SceneBuilder` is in the scene.
+- Idempotent rebuild: re-running the menu command deletes any pre-existing `RoomSmall/Medium/Large/DoorVisual.prefab`, deletes any existing `GroundPlane`, and rebuilds from scratch. Lets you iterate on the geometry without polluting the Project window.
+- Wraps the whole flow in try/catch with `EditorUtility.DisplayDialog` for both success and failure paths; `EditorUtility.ClearProgressBar()` in the failure path so a stuck progress bar is impossible.
+- Uses `Object.FindFirstObjectByType<SceneBuilder>()` under `#if UNITY_2022_2_OR_NEWER` (Unity 6 deprecated `FindObjectOfType`); falls back to the legacy API on older editors.
+
+**Decisions:**
+- **Primitives over ProBuilder** for the prefab geometry. ProBuilder programmatic API is fiddly and adds a package dependency just for greybox cubes. Unity's `GameObject.CreatePrimitive(Cube)` already comes with a `BoxCollider`, which is what NavMesh baking needs anyway. Polish-level geometry can replace these prefabs later by simply dropping new ones into the SceneBuilder slots.
+- **Open archways on every wall** (not just the walls Module 1 actually placed doors on). Each room prefab is generic - it doesn't know per-spawn which walls will get a door. Cutting a 2 m gap in every wall means the door prefab always lands in an opening and the room is always traversable. Walls without doors look like empty archways, acceptable for a research demo.
+- **Door panel collider is a trigger.** Lets the trainee physically walk through the door without it being an obstacle, while still allowing future code (e.g. `OnTriggerEnter` to raise `DoorOpened`) to detect the crossing. Frame jambs keep solid colliders so they're picked up by NavMesh.
+- **Single ground plane in the scene, not per-room floors that span corridors.** Tried per-room-extended floors first (each room's floor extends 1 m into the gap) - works but creates Z-fighting where adjacent room floors meet. One big ground plane at y=-0.02 (just below room floor at y=0.04) sidesteps Z-fighting and gives a continuous walkable surface. NavMesh bake of room walls/floor handles the navigation surface; the ground plane is purely visual + trainee physics.
+- **URP-vs-Standard shader detection** at material creation time. Couldn't assume the project uses URP - check `Shader.Find("Universal Render Pipeline/Lit")` first, fall back to `Standard`, then to `Unlit/Color` as last resort. Set both `_BaseColor` (URP) and `_Color` (Standard) on the material so swapping pipelines doesn't break the materials.
+- **Auto-wire SceneBuilder fields directly** (not via `SerializedObject`/`SerializedProperty`). The fields are `public GameObject` so direct assignment + `EditorUtility.SetDirty` works and is shorter. SerializedProperty would be safer for prefab edits but SceneBuilder is a scene component so direct assignment is fine.
+
+**Issues:**
+- **Open archways in non-door walls look weird.** Acceptable for greybox but obvious - for a polished build, room prefabs would need to be dynamically punched (mesh CSG or per-wall variants) so only the actual door positions are open. Out of scope for Module 1 (this is presentation polish).
+- ~~**Door visual doesn't perfectly fill the wall opening** because Module 1 places the door 1 m outside the room wall (in the corridor gap centre). Trainee sees a gap in the wall, then walks 1 m to reach the door, then walks through into the next room's gap. Functional but not architecturally tight. Same fix as above - only acceptable for greybox.~~ **Resolved 2026-05-04 — see follow-up entry below.**
+- ~~**Adjacent room walls overlap with the corridor centre door.** Two rooms both have a 2 m wall gap on adjacent sides; the door sits between them. Visually you see two openings + a door panel = three layers of visible "doorway". Greybox tolerates it.~~ **Resolved 2026-05-04 — see follow-up entry below.**
+- **Doesn't generate per-room navigation tweaks** (e.g. patrol paths, cover points). NPCs that depend on those still need Module 2 to set them up at runtime.
+
+**Next:**
+- Try the canned `default_config.json` end-to-end with the new prefabs and confirm the generated layout reads as a recognisable building from the trainee's spawn point
+- Coordinate with Module 2 on swapping the `TerroristPlaceholder` / `HostagePlaceholder` cubes for real rigged NPC prefabs once those exist
+- Optional: a "Build NPC Placeholders" sibling menu command that creates prefabs with the correct `TerroristController` / `HostageController` components attached (instead of plain cubes), so Start Mission's NPCs at least have FSM behaviour even without art assets
+- Optional: replace the greybox open-archway walls with a "wall-with-doorway" prefab variant and have SceneBuilder pick the right one per door position
+
+---
+
+### 2026-05-04 — Room prefab geometry: extend walls into corridor gap
+
+**Status:** Visual fix following first VR walkthrough. The 2 m corridor gap between rooms made doors look like floating panels in the middle of a void, with two visible wall openings (one per adjacent room) flanking the door.
+
+**Done:**
+- `ScenePrefabBuilder.BuildRoomPrefab` now constructs each room with `outerSize = nominalSize + 2 m` instead of just `nominalSize`. The floor and walls extend 1 m past the room's nominal boundary on every side, so adjacent rooms meet exactly at the corridor centerline (Module 1's stride is `width + 2 m`, so 1 m extension per room exactly fills the gap).
+- Walls now sit at the *outer* (extended) edge with the existing 2 m centre gap. The door (placed by SceneBuilder at the corridor centre, 1 m outside each room's nominal wall) lands flush with the wall opening - the previous "wall, gap, door, gap, wall" sandwich collapses into "wall, door, wall".
+- Resolved both issues marked under the previous entry's *Issues* section ("door visual doesn't perfectly fill the wall opening" and "adjacent room walls overlap with the corridor centre door").
+
+**Decisions:**
+- **Extend the room geometry, not the door geometry.** Considered widening the door prefab to cover the full 2 m corridor span instead, but that would have made the door look like a 2 m thick airlock and would need separate variants per room size pair. Extending the room is cleaner because it works uniformly across small/medium/large (CLAUDE.md guarantees `stride = width + 2`).
+- **Floor extends too, not just walls.** Floor edges of adjacent rooms now meet exactly at the corridor centerline, so the trainee walks across continuous floor instead of stepping over the GroundPlane. NavMesh bake (`CollectObjects.Children`) picks up the extended floors automatically. GroundPlane stays as a backup visual but is largely hidden under the meeting room floors.
+- **Walls without a neighbouring room still extend outward** by 1 m. Looks visually identical to walls between adjacent rooms (Module 1 doesn't tell SceneBuilder which sides have neighbours per room), and the open archway leads onto the GroundPlane rather than into another room. Acceptable for greybox; a polished build would need per-wall conditional rendering.
+
+**Issues:**
+- **Outer walls of edge rooms have visible "doorway to nowhere"** — opens onto the GroundPlane. Same caveat as before, just more obvious now that the geometry is tight elsewhere.
+- **No verification yet at non-medium room sizes.** Tested with the user's medium scenario; small (4 m → 6 m outer) and large (8 m → 10 m outer) should follow the same maths but worth re-running with `Generate Minimal (Easy)` (small rooms) and `Generate Max Difficulty` (mix) to confirm.
+
+**Next:**
+- Re-run the user's last scenario after rebuilding prefabs - confirm doors render flush with wall openings
+- Generate one of each canned config (default / minimal / max) to sanity-check small + large room geometry
+- Decide whether to add a per-wall "is this a real door or just an archway" hint to the room prefab so outer walls can be solid
+
+---

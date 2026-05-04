@@ -74,6 +74,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "reposition this; we never instantiate a new rig.")]
         public Transform traineeRig;
 
+        [Header("Debug")]
+        [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
+                 "every spawn point in the Scene view after Start Mission. " +
+                 "Trainee = green, hostage = blue, terrorist = red.")]
+        public bool showSpawnGizmos = true;
+
         // ── Public API ───────────────────────────────────────────────────────
 
         /// <summary>
@@ -615,6 +621,69 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         {
             Debug.LogError($"[SceneBuilder] {reason}");
             OnSceneBuildFailed?.Invoke(reason);
+        }
+
+        // ── Gizmo overlay for spawn points ───────────────────────────────────
+
+        // Colour palette for the spawn-point markers.
+        private static readonly Color GizmoTrainee   = new Color(0.30f, 1.00f, 0.40f);
+        private static readonly Color GizmoHostage   = new Color(0.30f, 0.65f, 1.00f);
+        private static readonly Color GizmoTerrorist = new Color(1.00f, 0.30f, 0.30f);
+
+        private void OnDrawGizmos()
+        {
+            if (!showSpawnGizmos || ActiveScenario?.spawnPoints == null) return;
+            var sp = ActiveScenario.spawnPoints;
+
+            if (sp.trainee != null)
+                DrawSpawnGizmo(sp.trainee.position, sp.trainee.facingDirection,
+                               GizmoTrainee, "trainee_01", 0.55f);
+
+            if (sp.hostages != null)
+                foreach (var h in sp.hostages)
+                    DrawSpawnGizmo(h.position, h.facingDirection,
+                                   GizmoHostage, h.entityId, 0.45f);
+
+            if (sp.terrorists != null)
+                foreach (var t in sp.terrorists)
+                    DrawSpawnGizmo(t.position, t.facingDirection,
+                                   GizmoTerrorist, t.entityId, 0.45f);
+        }
+
+        private static void DrawSpawnGizmo(SerializableVector3 pos,
+                                           SerializableVector3 facing,
+                                           Color color, string label, float radius)
+        {
+            if (pos == null) return;
+
+            Vector3 p   = pos.ToVector3() + Vector3.up * 0.1f;
+            Vector3 dir = facing != null ? facing.ToVector3() : Vector3.forward;
+            dir.y = 0f;
+
+            // Wireframe sphere is more readable than solid - solid gizmos
+            // can occlude the actual NPCs.
+            Gizmos.color = color;
+            Gizmos.DrawWireSphere(p, radius);
+
+            // Facing arrow: a 1.5 m line in the facing direction, capped with
+            // a small wire sphere so it reads as an arrowhead.
+            if (dir.sqrMagnitude > 0.0001f)
+            {
+                Vector3 tip = p + dir.normalized * 1.5f;
+                Gizmos.DrawLine(p, tip);
+                Gizmos.DrawWireSphere(tip, 0.08f);
+            }
+
+#if UNITY_EDITOR
+            // Labels are editor-only; this whole gizmo path stops compiling
+            // out in player builds via the #if guard so it's free at runtime.
+            var style = new GUIStyle
+            {
+                normal = { textColor = color },
+                fontStyle = FontStyle.Bold,
+            };
+            UnityEditor.Handles.Label(p + Vector3.up * (radius + 0.4f), label, style);
+#endif
         }
     }
 }

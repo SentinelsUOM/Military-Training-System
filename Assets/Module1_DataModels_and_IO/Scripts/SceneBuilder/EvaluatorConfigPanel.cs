@@ -16,6 +16,7 @@
 // =============================================================================
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using TeamSentinels.ScenarioGeneration.DataModels;
@@ -480,10 +481,28 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             sceneBuilder.BuildScene(_generatedScenario);
         }
 
+        [Header("Post-Mission UX")]
+        [Tooltip("Seconds the panel stays visible after Start Mission succeeds. " +
+                 "0 = hide immediately. Negative = never hide.")]
+        public float hideDelayAfterMissionStart = 3f;
+
         private void OnSceneBuildComplete(ScenarioData scenario)
         {
-            SetStatus($"Mission live: {scenario.scenarioId}");
-            if (panelRoot != null) panelRoot.SetActive(false);
+            SetStatus($"Mission live: {scenario.scenarioId}\n" +
+                      $"Panel hides in {hideDelayAfterMissionStart:F0}s. " +
+                      $"Re-enable EvaluatorPanel in Hierarchy to start a new mission.");
+
+            if (hideDelayAfterMissionStart >= 0f)
+                StartCoroutine(HidePanelAfterDelay(hideDelayAfterMissionStart));
+        }
+
+        private IEnumerator HidePanelAfterDelay(float seconds)
+        {
+            if (seconds > 0f) yield return new WaitForSeconds(seconds);
+            // Fall back to this script's own GameObject if panelRoot isn't wired
+            // (e.g. canvases built before that field existed).
+            GameObject target = panelRoot != null ? panelRoot : gameObject;
+            if (target != null) target.SetActive(false);
         }
 
         private void OnSceneBuildFailed(string reason)
