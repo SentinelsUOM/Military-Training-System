@@ -512,3 +512,62 @@ Each entry follows this structure:
 - Decide whether to add a per-wall "is this a real door or just an archway" hint to the room prefab so outer walls can be solid
 
 ---
+
+### 2026-05-04 — SceneBuilder spawn-point gizmos
+
+**Status:** Visual debugging affordance for the runtime bridge. Verifying spawn placements without inspecting JSON.
+
+**Done:**
+- Added `OnDrawGizmos` to `SceneBuilder` (`Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/SceneBuilder.cs`). When `showSpawnGizmos` is on (default), every entity in `ActiveScenario.spawnPoints` renders as a colour-coded wire sphere at its spawn position with a 1.5 m facing-arrow line and a label.
+- Colour palette: trainee = green (`0.30, 1.00, 0.40`), hostage = blue (`0.30, 0.65, 1.00`), terrorist = red (`1.00, 0.30, 0.30`). Wire spheres at radius 0.55 (trainee) / 0.45 (NPCs) so the markers don't occlude the actual NPC meshes.
+- Facing arrow is the entity's `facingDirection` flattened to the XZ plane and drawn as a line from spawn → spawn + 1.5 m, capped with a small wire-sphere arrowhead at radius 0.08.
+- Entity-ID label rendered via `UnityEditor.Handles.Label` above the sphere; whole label call is wrapped in `#if UNITY_EDITOR` so it compiles out cleanly in player builds.
+- Added `[Header("Debug")]` + tooltip on the new `showSpawnGizmos` field so it's discoverable in the inspector and the toggle reads naturally next to the `traineeRig` field.
+
+**Decisions:**
+- **Wireframe over solid gizmos.** Solid spheres at 0.45 m radius would have hidden the spawned NPC mesh inside them, defeating the debugging purpose. Wireframes let you see both the marker and the actual NPC.
+- **Read directly from `ActiveScenario.spawnPoints`, not the instantiated GameObjects.** The point of the gizmo is to verify *what Module 1 said should happen*, not what Unity actually rendered — so reading from the JSON-side data model catches placement bugs that would otherwise be masked by NPC physics or NavMesh snapping.
+- **No editor-only assembly split.** Gizmo code lives directly in `SceneBuilder` (Assembly-CSharp) with the label call guarded by `#if UNITY_EDITOR`. Avoids a third assembly just for ~70 lines of debug rendering.
+- **Default `showSpawnGizmos = true`.** Cost is zero in player builds (the whole `OnDrawGizmos` path is editor-only) and the markers are useful by default during development. Easy to toggle off in the inspector if a screenshot needs to be uncluttered.
+
+**Issues:**
+- **`ActiveScenario.spawnPoints` is null until `BuildScene` completes.** Gizmos render nothing in an empty scene, which is fine (the `?.` null-coalescing in `OnDrawGizmos` handles it) but means there's no preview of what *would* spawn before pressing Start Mission. Acceptable — preview-before-spawn is a different feature.
+- **Labels can flicker when the scene view camera is rotated quickly** because `Handles.Label` is rasterised per-frame. Not a real issue, just a Unity quirk.
+
+**Next:**
+- Hook the gizmo radius / arrow length to inspector fields if the defaults turn out wrong at large room sizes
+- Optional: a "preview spawn points" mode that draws gizmos from a JSON file on disk without instantiating anything — useful for evaluators who want to sanity-check placements before firing the build
+
+---
+
+### 2026-05-06 — Template content toggle (XRI demo content hide/show)
+
+**Status:** Editor-side ergonomic fix. The XRI Starter Kit ships with a busy demo scene (mini-games, environment buildings, a weapons rack, demo NPCs) that overlapped the generated scenario geometry and made it hard to see what Module 1 had built.
+
+**Done:**
+- New file `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/Editor/TemplateContentToggle.cs` (Assembly-CSharp-Editor, namespace `TeamSentinels.ScenarioGeneration.EditorTools`, ~130 lines, whole file under `#if UNITY_EDITOR`).
+- Two `[MenuItem]` entries under **Tools / Scenario Generator /**:
+  - `Hide Template Content` (priority 70) → disables every root GameObject whose name matches the deny list
+  - `Show Template Content` (priority 71) → re-enables them
+- Deny list is two parts: `DenyContains` (case-insensitive substring match) covering `INTERTABLES`, `MINI GAMES`, `ENVIRONMENT`, `[LookAnchor]`, `HandPoseReferenceTool`, `CoverPoint`; and `DenyExact` (case-insensitive exact match) covering `Cube` and the `-------- NPC` divider GameObject the XRI scene uses.
+- `AlwaysKeepContains` override ensures `PLAYER`, `SceneBuilder`, `GroundPlane`, `EvaluatorCanvas`, `ScenarioManager`, `EventSystem`, `Directional Light`, `Main Camera` are never disabled even if their name happens to overlap a deny pattern.
+- After toggling, `EditorSceneManager.MarkSceneDirty(scene)` so the change persists across editor restarts; success dialog lists every GameObject that flipped state ("Hid 7 GameObject(s): ..."). No-op runs report `Nothing to hide/show - all template GameObjects are already in that state`.
+- Imports `UnityEngine.SceneManagement.Scene` aliased as `UnityScene` to disambiguate from the sibling namespace `TeamSentinels.ScenarioGeneration.Scene` (where `SceneBuilder` lives) — bare `Scene` would otherwise resolve to that namespace and the file wouldn't compile.
+
+**Decisions:**
+- **Toggle root GameObjects only, not nested children.** Keeps the rule predictable and reversible — you only need to remember which roots got hit, not a tree of nested overrides. The XRI scene already groups its demo content by root anyway.
+- **Substring + exact-match split.** Substring is right for grouped content (`MINI GAMES (1)`, `MINI GAMES (2)` both hit a single rule); exact match is right for short generic names like `Cube` where a substring would also match unrelated objects.
+- **Save the deny list in code, not as an asset.** A `ScriptableObject`-driven list would be more flexible, but the XRI scene's structure is stable per-template and the patterns are all obvious from a glance at the scene root. Hard-coded list keeps the tool one-file and zero-config.
+- **Marking the scene dirty *and* relying on a manual save.** Decided not to call `EditorSceneManager.SaveScene` automatically — a one-click "hide and never get it back" would be too easy to mis-trigger. The dirty marker shows the unsaved-changes asterisk, then the user explicitly saves when they're sure.
+
+**Issues:**
+- **The d8cc1a1 commit also re-saved `Assets/XRI Starter Kit/XRI Starter Kit.unity` (~32k lines of diff)** — Unity persisting the new disabled state for every demo root, plus its usual whitespace/precision churn. Cosmetic only but it bloats the diff; future runs of `Hide Template Content` will produce smaller deltas now that the baseline is set.
+- **Re-saved prefab/material files** (`Door*.prefab`, `Room*.prefab`, every `*_M.mat`) — Unity re-serialised them with sub-millibit precision changes (e.g. `0.66` → `0.65999997` on `_Color`). Pure noise, no visual difference. Considered reverting but it's the kind of thing that'll re-appear on the next save anyway.
+- **Deny list will need updates if the XRI Starter Kit version changes** and renames or restructures its demo roots. Worth scanning the kit's release notes when bumping the package.
+
+**Next:**
+- Mention `Hide Template Content` in the team-facing README / handoff notes so Module 2 / 3 / 4 don't have to disable demo content by hand
+- Consider a sibling `Tools / Scenario Generator / Reset Scene to Module 1 Baseline` that combines `Hide Template Content` + clears any existing `SceneBuilder` instantiated content + resets the trainee rig to origin
+- Optional: persist the hide-state in `EditorPrefs` so opening the project on a fresh machine starts with the demo content already hidden
+
+---
