@@ -2,7 +2,9 @@
   <Project Path="MikeNspiredXRIStarterKit.Runtime.csproj" />
   <Project Path="TeamSentinels.ScenarioGeneration.csproj" />
   <Project Path="TeamSentinels.ScenarioGeneration.Reference.csproj" />
+  <Project Path="TeamSentinels.Module4.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="MikeNspired XR HandPoser Editor.csproj" />
   <Project Path="Assembly-CSharp.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.csproj" />
@@ -10,5 +12,4 @@
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.DeviceSimulator.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.Editor.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.Editor.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
 </Solution>
