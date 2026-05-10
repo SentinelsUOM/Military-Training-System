@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -25,10 +24,6 @@ using UnityEngine;
 public class EventManager : MonoBehaviour
 {
     public static EventManager Instance { get; private set; }
-
-    // ── Module 4 integration hook (additive, does not affect routing) ────────
-    /// <summary>Fires on every Raise() before NPC routing. Subscribed by Module 4 (AAR / dashboard).</summary>
-    public static event Action<ScenarioEvent> OnEventRaised;
 
     [Header("Debug")]
     [Tooltip("Print every event, candidate scores, and selection result to the Console.")]
@@ -63,9 +58,6 @@ public class EventManager : MonoBehaviour
     {
         if (logEvents)
             Debug.Log($"[EventManager] {e}");
-
-        // Module 4 integration hook (additive — does not affect routing)
-        OnEventRaised?.Invoke(e);
 
         RouteToNPCs(e);
 

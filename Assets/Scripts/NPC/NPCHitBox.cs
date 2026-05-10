@@ -31,15 +31,6 @@ public class NPCHitBox : MonoBehaviour, IDamageable, IImpactType
     {
         if (_controller == null) return;
         _controller.TakeHit(damage * damageMultiplier);
-
-        // Module 4 integration hook (additive — fires per bullet impact for accuracy metrics)
-        EventManager.Instance?.Raise(new ScenarioEvent(
-            ScenarioEventType.TerroristHit,
-            transform.position,
-            damager,
-            roomId: null,
-            targetActorId: _controller.NPCId
-        ));
     }
 
     // ── IImpactType — tells bullet to use flesh decal ─────────────────────────

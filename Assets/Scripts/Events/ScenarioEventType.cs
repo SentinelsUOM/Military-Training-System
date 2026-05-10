@@ -21,7 +21,6 @@ public enum ScenarioEventType
     TargetConfirmed,     // NPC sustained LOS long enough to commit to Engage
 
     // ── Combat ────────────────────────────────────────────────────────────────
-    TerroristHit,        // A bullet damaged a terrorist (per-impact, fires before TerroristDown)
     TerroristDown,       // Terrorist health reached 0 — broadcast for squad reaction
     AllyDownSeen,        // NPC saw a squad-mate go Down with confirmed LOS
 
