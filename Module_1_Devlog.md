@@ -571,3 +571,39 @@ Each entry follows this structure:
 - Optional: persist the hide-state in `EditorPrefs` so opening the project on a fresh machine starts with the demo content already hidden
 
 ---
+
+### 2026-05-10 — Web bridge: ScenarioHttpServer for the AAR dashboard
+
+**Status:** New bridge component so the external AAR web dashboard (Next.js, currently localhost:3000) can drive the same generation + scene-build pipeline that `EvaluatorConfigPanel` drives from the in-VR canvas. Implements Option 1 from the feasibility discussion (HTTP listener inside Unity, no cloud relay, no `adb push` polling).
+
+**Done:**
+- Added `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/ScenarioHttpServer.cs` — a `MonoBehaviour` that runs an in-process `System.Net.HttpListener` on a configurable port (default 8080). Lives outside the asmdef alongside `SceneBuilder` / `EvaluatorConfigPanel` so it can reference both `SceneBuilder` (Assembly-CSharp) and the asmdef-bound generators.
+- Endpoints exposed:
+  - `GET  /health` → `{ ok, port, state }` for dashboard liveness checks
+  - `GET  /status` → `{ state, scenarioId, lastError }` (state ∈ `idle | generating | building | live | error`)
+  - `POST /scenario/generate` → body is a full `ScenarioConfig` JSON; runs `ScenarioConfigLoader.LoadFromJson` → `ScenarioGenerator.Generate` → optional `Scenario_<id>.json` export; returns `{ scenarioId, rooms, entities, seedUsed }`
+  - `POST /scenario/start` → same as above plus `SceneBuilder.BuildScene`
+  - `OPTIONS *` → 204 with CORS headers (preflight)
+- CORS headers (`Access-Control-Allow-Origin`, `…-Methods`, `…-Headers`) applied to every response; `allowedOrigin` is an inspector field so prod can lock it down to the dashboard URL.
+- Wired up `SceneBuilder.OnSceneBuildComplete` / `OnSceneBuildFailed` so `_state` flips to `live` / `error` automatically without the listener thread having to know about scene-build internals.
+- Pipeline cancellation safety: `OnDestroy` and `OnApplicationQuit` both stop the listener and join the worker thread (500 ms cap).
+
+**Decisions:**
+- **In-process `HttpListener` over a local relay or cloud backend.** Evaluator and trainee will be on the same lab Wi-Fi during demos, so adding a Firebase/Supabase relay just to bounce a JSON config would be pure overhead. `HttpListener` works on both Windows (Editor / standalone build) and Android (Quest 3 standalone) without native plugins.
+- **Marshal generator + scene-build calls onto the Unity main thread via a `ConcurrentQueue<Action>` drained in `Update()`.** `ScenarioGenerator.Generate` itself is plain C# and would run fine on any thread, but `SceneBuilder.BuildScene` calls `Instantiate`, `NavMeshSurface.BuildNavMesh`, `Resources.Load`, etc. — all main-thread-only. The listener thread blocks on a `ManualResetEventSlim` (default 30 s) for the response to stay synchronous from the dashboard's perspective.
+- **JSON parse + validation happen on the listener thread**, not the main thread. They have no Unity API dependencies and we want bad-JSON 400s to come back without ever touching the main-thread queue.
+- **Volatile string state instead of locks.** `_state`, `_lastScenarioId`, `_lastError` are read by `/status` from the listener thread and written from the main thread only. `volatile` is sufficient — no read-modify-write, no compound state.
+- **`POST /scenario/start` returns as soon as `BuildScene` finishes** (which is synchronous and fires `OnSceneBuildComplete` before returning). State will already be `live` by the time the response is sent, so the dashboard can rely on a single round-trip rather than polling `/status`.
+- **Defaulted `exportScenarioJson = true`** so every web-driven run still drops a `Scenario_<id>.json` into `Output/GeneratedScenarios/` for Module 4 replay. Mirrors `EvaluatorConfigPanel.TryExportScenarioJson` so the on-disk artefact is identical regardless of which UI triggered the run.
+
+**Issues:**
+- **Windows requires a `urlacl` entry to bind `http://+:8080/` without admin rights.** The error path logs the exact `netsh` command (`netsh http add urlacl url=http://+:8080/ user=Everyone`) so this is a one-time setup on each dev machine — not a code issue.
+- **University Wi-Fi networks often have client isolation enabled**, which silently blocks PC-to-Quest peer traffic even when both devices are on the same SSID. If the dashboard sees `ERR_CONNECTION_TIMED_OUT`, the workaround is a phone hotspot or a dedicated lab router. Documented in the source-file CORS / setup comments.
+- **No authentication on the endpoints.** Acceptable for a single-user lab demo but a real deployment would need at least a shared bearer token. Deferred — a single-line check inside `HandleRequest` will cover it when needed.
+
+**Next:**
+- Add a "Start Mission" button + form to the AAR dashboard (`localhost:3000`) that POSTs the assembled `ScenarioConfig` to `http://<quest-ip>:8080/scenario/start`. Reuse the same enum option lists as `EvaluatorConfigPanel` so the two UIs stay in sync.
+- Optional: expose a `GET /scenario/last` that returns the most recent generated `Scenario.json` payload directly, so the dashboard can render a layout preview without re-reading the file off disk.
+- Optional follow-up if `HttpListener` turns out to be flaky on IL2CPP Android builds: swap to a small `TcpListener`-based handler or pull in a Unity-friendly mini web server package. Editor + Mono Quest builds work fine today.
+
+---

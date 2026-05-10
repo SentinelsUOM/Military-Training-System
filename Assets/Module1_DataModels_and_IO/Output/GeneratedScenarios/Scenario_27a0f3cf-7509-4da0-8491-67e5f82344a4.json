@@ -1,0 +1,646 @@
+{
+  "scenarioId": "27a0f3cf-7509-4da0-8491-67e5f82344a4",
+  "missionType": "hostage_rescue",
+  "layout": {
+    "rooms": [
+      {
+        "id": "room_01",
+        "type": "entry",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02",
+          "room_03"
+        ],
+        "doors": [
+          {
+            "id": "door_01_02",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "east"
+          },
+          {
+            "id": "door_01_03",
+            "connectsToRoomId": "room_03",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "south"
+          }
+        ],
+        "depth": 0,
+        "zoneLabel": "Entry Hall"
+      },
+      {
+        "id": "room_02",
+        "type": "standard",
+        "position": {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01",
+          "room_04",
+          "room_05",
+          "room_06"
+        ],
+        "doors": [
+          {
+            "id": "door_01_02",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": 4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "west"
+          },
+          {
+            "id": "door_02_04",
+            "connectsToRoomId": "room_04",
+            "position": {
+              "x": 8.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "south"
+          },
+          {
+            "id": "door_02_05",
+            "connectsToRoomId": "room_05",
+            "position": {
+              "x": 8.0,
+              "y": 0.0,
+              "z": 4.0
+            },
+            "wallSide": "north"
+          },
+          {
+            "id": "door_02_06",
+            "connectsToRoomId": "room_06",
+            "position": {
+              "x": 12.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "east"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Front Room"
+      },
+      {
+        "id": "room_03",
+        "type": "corridor",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": -8.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01",
+          "room_07"
+        ],
+        "doors": [
+          {
+            "id": "door_01_03",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "north"
+          },
+          {
+            "id": "door_03_07",
+            "connectsToRoomId": "room_07",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -12.0
+            },
+            "wallSide": "south"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Side Room"
+      },
+      {
+        "id": "room_04",
+        "type": "hostage_room",
+        "position": {
+          "x": 8.0,
+          "y": 0.0,
+          "z": -8.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02"
+        ],
+        "doors": [
+          {
+            "id": "door_02_04",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 8.0,
+              "y": 0.0,
+              "z": -4.0
+            },
+            "wallSide": "north"
+          }
+        ],
+        "depth": 2,
+        "zoneLabel": "Back Office"
+      },
+      {
+        "id": "room_05",
+        "type": "hostage_room",
+        "position": {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 8.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02"
+        ],
+        "doors": [
+          {
+            "id": "door_02_05",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 8.0,
+              "y": 0.0,
+              "z": 4.0
+            },
+            "wallSide": "south"
+          }
+        ],
+        "depth": 2,
+        "zoneLabel": "Inner Room"
+      },
+      {
+        "id": "room_06",
+        "type": "standard",
+        "position": {
+          "x": 16.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02"
+        ],
+        "doors": [
+          {
+            "id": "door_02_06",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 12.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "west"
+          }
+        ],
+        "depth": 2,
+        "zoneLabel": "Back Room"
+      },
+      {
+        "id": "room_07",
+        "type": "standard",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": -16.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_03"
+        ],
+        "doors": [
+          {
+            "id": "door_03_07",
+            "connectsToRoomId": "room_03",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": -12.0
+            },
+            "wallSide": "north"
+          }
+        ],
+        "depth": 2,
+        "zoneLabel": "Storage Room"
+      }
+    ],
+    "entryPoints": [
+      {
+        "id": "entry_main",
+        "roomId": "room_01",
+        "position": {
+          "x": -4.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "facingDirection": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      }
+    ],
+    "layoutMetadata": {
+      "totalRooms": 7,
+      "layoutType": "branching",
+      "maxDepth": 2,
+      "graphDiameter": 4,
+      "roomSizeCategory": "medium",
+      "entryType": "single",
+      "boundingBox": {
+        "min": {
+          "x": -4.0,
+          "y": 0.0,
+          "z": -19.0
+        },
+        "max": {
+          "x": 19.0,
+          "y": 3.0,
+          "z": 11.0
+        }
+      }
+    }
+  },
+  "spawnPoints": {
+    "trainee": {
+      "roomId": "room_01",
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "facingDirection": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    },
+    "hostages": [
+      {
+        "entityId": "hostage_01",
+        "roomId": "room_05",
+        "position": {
+          "x": 7.9505024,
+          "y": 0.0,
+          "z": 8.255111
+        },
+        "facingDirection": {
+          "x": -0.544198036,
+          "y": 0.0,
+          "z": -0.8389568
+        }
+      }
+    ],
+    "terrorists": [
+      {
+        "entityId": "terrorist_01",
+        "roomId": "room_02",
+        "position": {
+          "x": 7.92958927,
+          "y": 0.0,
+          "z": -0.101816654
+        },
+        "facingDirection": {
+          "x": 0.0180595014,
+          "y": 0.0,
+          "z": -0.9998369
+        }
+      },
+      {
+        "entityId": "terrorist_02",
+        "roomId": "room_06",
+        "position": {
+          "x": 15.73553,
+          "y": 0.0,
+          "z": 0.432436466
+        },
+        "facingDirection": {
+          "x": -0.993366063,
+          "y": 0.0,
+          "z": -0.114995122
+        }
+      },
+      {
+        "entityId": "terrorist_03",
+        "roomId": "room_02",
+        "position": {
+          "x": 7.343785,
+          "y": 0.0,
+          "z": -2.2
+        },
+        "facingDirection": {
+          "x": 0.3425127,
+          "y": 0.0,
+          "z": -0.939513147
+        }
+      },
+      {
+        "entityId": "terrorist_04",
+        "roomId": "room_05",
+        "position": {
+          "x": 7.39979172,
+          "y": 0.0,
+          "z": 10.2
+        },
+        "facingDirection": {
+          "x": 0.09635733,
+          "y": 0.0,
+          "z": -0.995346844
+        }
+      }
+    ]
+  },
+  "entities": [
+    {
+      "id": "trainee_01",
+      "type": "trainee",
+      "assignedRoom": "room_01",
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "hostage_01",
+      "type": "hostage",
+      "assignedRoom": "room_05",
+      "position": {
+        "x": 7.9505024,
+        "y": 0.0,
+        "z": 8.255111
+      },
+      "metadata": {
+        "initialState": "calm"
+      }
+    },
+    {
+      "id": "terrorist_01",
+      "type": "terrorist",
+      "assignedRoom": "room_02",
+      "position": {
+        "x": 7.92958927,
+        "y": 0.0,
+        "z": -0.101816654
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "terrorist_02",
+      "type": "terrorist",
+      "assignedRoom": "room_06",
+      "position": {
+        "x": 15.73553,
+        "y": 0.0,
+        "z": 0.432436466
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "terrorist_03",
+      "type": "terrorist",
+      "assignedRoom": "room_02",
+      "position": {
+        "x": 7.343785,
+        "y": 0.0,
+        "z": -2.2
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "terrorist_04",
+      "type": "terrorist",
+      "assignedRoom": "room_05",
+      "position": {
+        "x": 7.39979172,
+        "y": 0.0,
+        "z": 10.2
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    }
+  ],
+  "roleAssignments": [
+    {
+      "entityId": "terrorist_04",
+      "role": "hostage_guardian",
+      "priorityLevel": 1,
+      "assignedRoomId": "room_05",
+      "navigationContextId": "nav_terrorist_04"
+    },
+    {
+      "entityId": "terrorist_01",
+      "role": "patrol",
+      "priorityLevel": 3,
+      "assignedRoomId": "room_02",
+      "navigationContextId": "nav_terrorist_01"
+    },
+    {
+      "entityId": "terrorist_03",
+      "role": "roaming_guard",
+      "priorityLevel": 2,
+      "assignedRoomId": "room_02",
+      "navigationContextId": "nav_terrorist_03"
+    },
+    {
+      "entityId": "terrorist_02",
+      "role": "stationary_guard",
+      "priorityLevel": 2,
+      "assignedRoomId": "room_06",
+      "navigationContextId": "nav_terrorist_02"
+    }
+  ],
+  "navigationContext": {
+    "nav_terrorist_04": {
+      "type": "hostage_guardian",
+      "guardedEntityId": "hostage_01",
+      "hostageRoomId": "room_05",
+      "guardPosition": {
+        "x": 7.39979172,
+        "y": 0.0,
+        "z": 10.2
+      },
+      "facingDirection": {
+        "x": 0.09635733,
+        "y": 0.0,
+        "z": -0.995346844
+      }
+    },
+    "nav_terrorist_01": {
+      "type": "patrol",
+      "patrolRoute": [
+        "room_02",
+        "room_04",
+        "room_05",
+        "room_02"
+      ],
+      "looping": true,
+      "waypoints": [
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": -8.0
+        },
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 8.0
+        },
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      ]
+    },
+    "nav_terrorist_03": {
+      "type": "roaming_guard",
+      "roamingRoomIds": [
+        "room_02",
+        "room_04",
+        "room_05"
+      ],
+      "anchorRoomId": "room_02",
+      "waypoints": [
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": -8.0
+        },
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 8.0
+        },
+        {
+          "x": 8.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      ]
+    },
+    "nav_terrorist_02": {
+      "type": "stationary_guard",
+      "guardRoomId": "room_06",
+      "guardPosition": {
+        "x": 15.73553,
+        "y": 0.0,
+        "z": 0.432436466
+      },
+      "facingDirection": {
+        "x": -0.993366063,
+        "y": 0.0,
+        "z": -0.114995122
+      }
+    }
+  },
+  "configurationMetadata": {
+    "scenarioConfig": {
+      "schemaVersion": "1.0.0",
+      "missionStructure": {
+        "missionType": "hostage_rescue",
+        "roomCount": {
+          "min": 5,
+          "max": 8
+        },
+        "roomSize": "medium",
+        "layoutType": "branching",
+        "entryType": "single"
+      },
+      "entityConfiguration": {
+        "hostageCount": 1,
+        "terroristCount": 4,
+        "placementStrategy": "dispersed",
+        "hostageRiskLevel": "medium"
+      },
+      "executionControls": {
+        "difficultyLevel": 3,
+        "randomnessLevel": "medium",
+        "seed": null,
+        "timeLimit": null,
+        "customLabel": null
+      }
+    },
+    "generationTimestamp": "2026-05-10T10:28:29.4088533Z",
+    "seedUsed": 601875484,
+    "generatorVersion": "1.0.0",
+    "validationResult": {
+      "passed": true,
+      "checksRun": 10,
+      "checksPassed": 10,
+      "warnings": []
+    }
+  }
+}
