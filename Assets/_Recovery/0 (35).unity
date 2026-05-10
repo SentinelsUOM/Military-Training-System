@@ -69766,6 +69766,7 @@ MonoBehaviour:
   wanderPauseTime: 4
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 1703180023}
+  deathFloorOffset: 0
   role: 1
   squadId: beta
   maxHealth: 100
@@ -69776,11 +69777,15 @@ MonoBehaviour:
   hearingRange: 20
   currentState: 0
   currentHealth: 0
-  investigateScanTime: 3
   investigateSpeed: 1.5
+  gunReadyDistance: 4
   searchCheckPoints: 5
   searchPausePerDirection: 1.2
   searchTurnSpeed: 90
+  searchWaypointCount: 3
+  searchWaypointMinRadius: 4
+  searchWaypointMaxRadius: 10
+  searchWaypointPauseTime: 2
 --- !u!114 &1703180027
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -72036,6 +72041,7 @@ MonoBehaviour:
   wanderPauseTime: 2
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 1751747675}
+  deathFloorOffset: 0
   role: 2
   squadId: beta
   maxHealth: 100
@@ -72046,11 +72052,15 @@ MonoBehaviour:
   hearingRange: 20
   currentState: 0
   currentHealth: 0
-  investigateScanTime: 3
   investigateSpeed: 1.5
+  gunReadyDistance: 4
   searchCheckPoints: 5
   searchPausePerDirection: 1.2
   searchTurnSpeed: 90
+  searchWaypointCount: 3
+  searchWaypointMinRadius: 4
+  searchWaypointMaxRadius: 10
+  searchWaypointPauseTime: 2
 --- !u!114 &1751747679
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -81110,6 +81120,7 @@ MonoBehaviour:
   wanderPauseTime: 2
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 1975473699}
+  deathFloorOffset: 0
   role: 0
   squadId: alpha
   maxHealth: 100
@@ -81120,11 +81131,15 @@ MonoBehaviour:
   hearingRange: 20
   currentState: 0
   currentHealth: 0
-  investigateScanTime: 3
   investigateSpeed: 1.5
+  gunReadyDistance: 4
   searchCheckPoints: 5
   searchPausePerDirection: 1.2
   searchTurnSpeed: 90
+  searchWaypointCount: 3
+  searchWaypointMinRadius: 4
+  searchWaypointMaxRadius: 10
+  searchWaypointPauseTime: 2
 --- !u!114 &1975473707
 MonoBehaviour:
   m_ObjectHideFlags: 0
