@@ -63,6 +63,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Animator on this NPC (used to trigger death animation). Optional.")]
     public Animator animator;
 
+    [Tooltip("Vertical offset applied after death to make the body lie flat on the floor.\n" +
+             "If the body floats above the floor → set this to a NEGATIVE number (e.g. -0.3).\n" +
+             "If the body sinks into the floor → set this to a POSITIVE number (e.g. 0.1).\n" +
+             "Adjust until the body sits visually correctly on the ground.")]
+    public float deathFloorOffset = 0f;
+
     [Header("Role & Squad")]
     [Tooltip("Tactical role — drives roleBonus in NPCSelector.")]
     public NPCRole role = NPCRole.Guard;
@@ -315,6 +321,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     CoverPoint _claimedCover;
     Vector3   _spawnPosition;
     Quaternion _spawnRotation;
+    float     _originalAgentSpeed;
+    bool      _isInvestigating;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -327,6 +335,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Reusable world-space anchor so PatrolLine.StopAndLook() always gets a valid target.
         var go = new GameObject($"[LookAnchor] {gameObject.name}");
         _lookAnchor = go.transform;
+
+        if (agent != null) _originalAgentSpeed = agent.speed;
 
         NPCRegistry.Register(this);
 
@@ -394,7 +404,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Wander/Static NPCs have PatrolLine disabled so we rotate them ourselves.
         // Patrol NPCs use PatrolLine.StopAndLook which reads _lookAnchor, but we also
         // handle rotation here so all three idle modes track the player smoothly.
-        if (currentState != TerroristState.Idle && _lookAnchor != null)
+        // Skip during investigation — the InvestigateRoutine controls rotation for searching.
+        if (currentState != TerroristState.Idle && _lookAnchor != null && !_isInvestigating)
         {
             Vector3 dir = _lookAnchor.position - transform.position;
             dir.y = 0f;
@@ -451,7 +462,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             StopCoroutine(_investigateRoutine);
             _investigateRoutine = null;
-            if (agent != null && agent.isActiveAndEnabled) agent.ResetPath();
+            _isInvestigating = false;
+            animator?.SetBool("Investigating", false);
+            if (agent != null && agent.isActiveAndEnabled)
+            {
+                agent.speed = _originalAgentSpeed;
+                agent.ResetPath();
+            }
         }
 
         // ── Cancel wander when leaving Idle ──────────────────────────────────
@@ -474,11 +491,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             case TerroristState.Suspicious:
                 patrolLine?.StopAndLook(_lookAnchor);
+                animator?.SetBool("Alert", false);
                 _suspiciousRoutine = StartCoroutine(SuspiciousTimeout());
                 break;
 
             case TerroristState.Alert:
                 patrolLine?.StopAndLook(_lookAnchor);
+                animator?.SetBool("Alert", true);
                 // Trigger Ring 1+2 alert propagation
                 AlertPropagator.Instance?.Broadcast(this, trigger);
                 break;
@@ -540,7 +559,20 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         // Stop all combat
         shooter?.StopFiring();
-        patrolLine?.StopAndLook(_lookAnchor);
+
+        // Stop ALL active routines so the body doesn't keep wandering / patrolling / investigating.
+        StopAllCoroutines();
+        _wanderRoutine = null;
+        _investigateRoutine = null;
+        _suspiciousRoutine = null;
+        _isInvestigating = false;
+
+        // Fully disable PatrolLine — StopAndLook only pauses it, the component can still drive movement.
+        if (patrolLine != null)
+        {
+            patrolLine.StopAndLook(_lookAnchor);
+            patrolLine.enabled = false;
+        }
 
         // Disable NavMeshAgent and correct the base-offset elevation it was applying.
         // Without this, the root sits above the floor and the death animation plays in mid-air.
@@ -548,10 +580,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             float baseOffset = agent.baseOffset;
             agent.isStopped = true;
+            agent.ResetPath();
             agent.enabled   = false;
             // Drop the root to true floor height now that the agent is no longer lifting it.
             transform.position -= new Vector3(0f, baseOffset, 0f);
         }
+
+        // Snap immediately to the floor so the body doesn't appear to die in mid-air.
+        // Project is single-floor (Y=0 per CLAUDE.md), but we raycast first to handle any geometry.
+        SnapToFloor();
 
         // Disable only hitbox components so bullets no longer register.
         // TakeHit() already guards Down state, but this removes the overhead.
@@ -563,6 +600,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // the body to the floor — no need for a Rigidbody.
         if (animator != null)
         {
+            animator.SetBool("Alert", false);
             animator.SetTrigger("Death");
             StartCoroutine(FreezeAfterDeath());
         }
@@ -581,6 +619,40 @@ public class TerroristController : MonoBehaviour, INPCResponder
             Squad.Get(squadId)?.NotifyMemberDown(this, downEvent);
     }
 
+    /// <summary>
+    /// Snaps the NPC's transform down to the floor. Excludes own colliders so the raycast
+    /// doesn't hit the NPC's own body and stop short.
+    /// </summary>
+    void SnapToFloor()
+    {
+        // Disable own colliders for the raycast so we don't hit ourselves.
+        var ownColliders = GetComponentsInChildren<Collider>();
+        var savedStates = new bool[ownColliders.Length];
+        for (int i = 0; i < ownColliders.Length; i++)
+        {
+            savedStates[i] = ownColliders[i].enabled;
+            ownColliders[i].enabled = false;
+        }
+
+        Vector3 origin = transform.position + Vector3.up * 1.5f;
+        float floorY;
+        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 5f, ~0,
+                            QueryTriggerInteraction.Ignore))
+        {
+            floorY = hit.point.y;
+        }
+        else
+        {
+            // Fallback — single-floor project, snap to Y=0
+            floorY = 0f;
+        }
+        transform.position = new Vector3(transform.position.x, floorY + deathFloorOffset, transform.position.z);
+
+        // Restore collider states (hitboxes are disabled separately later, but other colliders stay on).
+        for (int i = 0; i < ownColliders.Length; i++)
+            ownColliders[i].enabled = savedStates[i];
+    }
+
     IEnumerator FreezeAfterDeath()
     {
         // Wait one frame for the Death trigger to register, then wait until
@@ -596,14 +668,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Clamp: some death clips are set to loop — treat anything > 5 s as 3 s
         yield return new WaitForSeconds(Mathf.Clamp(clipLength, 0.5f, 5f));
 
-        // Final floor snap — catches any remaining gap from NavMesh-to-geometry offset.
-        if (Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down,
-                            out RaycastHit hit, 2f, ~0, QueryTriggerInteraction.Ignore))
-        {
-            transform.position = new Vector3(transform.position.x, hit.point.y, transform.position.z);
-        }
-
+        // Disable animator FIRST so the pose is frozen — then snap. Otherwise the animator
+        // can still drive root motion this frame and offset our snap.
         animator.enabled = false;
+        yield return null; // wait one frame for the disable to fully take effect
+
+        SnapToFloor();
     }
 
     // ── Cover movement ────────────────────────────────────────────────────────
@@ -705,8 +775,33 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     // ── Investigate ───────────────────────────────────────────────────────────
 
-    [Tooltip("Seconds to scan on arrival before returning to Idle.")]
-    public float investigateScanTime = 3f;
+    [Header("Investigation Tuning")]
+    [Tooltip("Walk speed while approaching the gunshot location (normal speed is used otherwise).")]
+    public float investigateSpeed = 1.5f;
+
+    [Tooltip("Distance from destination at which the NPC raises its weapon (gun-ready stance).")]
+    public float gunReadyDistance = 4f;
+
+    [Tooltip("Number of directions to look at on arrival (rotation scan).")]
+    public int searchCheckPoints = 4;
+
+    [Tooltip("Seconds to pause and look at each search direction.")]
+    public float searchPausePerDirection = 1.0f;
+
+    [Tooltip("Degrees of rotation per second while turning to check a direction.")]
+    public float searchTurnSpeed = 90f;
+
+    [Tooltip("Number of nearby points to walk to and check after the initial scan (other rooms / areas).")]
+    public int searchWaypointCount = 3;
+
+    [Tooltip("Minimum distance from the gunshot location for a search waypoint (so the NPC actually moves).")]
+    public float searchWaypointMinRadius = 4f;
+
+    [Tooltip("Maximum distance from the gunshot location for a search waypoint.")]
+    public float searchWaypointMaxRadius = 10f;
+
+    [Tooltip("Seconds to scan each search waypoint before moving to the next.")]
+    public float searchWaypointPauseTime = 2f;
 
     /// <summary>
     /// Walk to soundPos and scan. Called by EventManager on the selected responder.
@@ -727,37 +822,142 @@ public class TerroristController : MonoBehaviour, INPCResponder
         Debug.Log($"[TerroristController] {gameObject.name}: investigating position at {soundPos}");
 
         var startState = currentState;
+        _isInvestigating = true;
+        animator?.SetBool("Investigating", true);
+
+        // ── Phase 1: Cautious walk toward the location (no gun) ───────────────
+        // They only know a gunshot came from there. Normal walk, weapon lowered.
+        agent.speed = investigateSpeed;
+        animator?.SetBool("Alert", false);
         agent.SetDestination(soundPos);
 
-        // Walk toward position — abort if state escalates beyond the start state
+        bool gunRaised = false;
         while (currentState == startState)
         {
+            // Reached the gunshot location
             if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.5f)
                 break;
+
+            // ── Phase 1b: Approaching the area — raise weapon to gun-ready ────
+            // Player could be in this room, get ready before stepping in.
+            if (!gunRaised && !agent.pathPending && agent.remainingDistance <= gunReadyDistance)
+            {
+                animator?.SetBool("Alert", true);
+                gunRaised = true;
+                Debug.Log($"[TerroristController] {gameObject.name}: nearing investigation area — weapon ready");
+            }
+
             yield return null;
         }
 
-        if (currentState != startState) yield break;
+        if (currentState != startState) { EndInvestigation(); yield break; }
 
-        // Arrived — scan in place for investigateScanTime seconds
-        Debug.Log($"[TerroristController] {gameObject.name}: arrived at investigation position, scanning...");
+        // Make sure the gun is up by the time we start searching
+        if (!gunRaised) animator?.SetBool("Alert", true);
         agent.ResetPath();
 
-        float elapsed = 0f;
-        while (elapsed < investigateScanTime && currentState == startState)
+        // ── Phase 2: Quick rotation scan at the gunshot location ──────────────
+        Debug.Log($"[TerroristController] {gameObject.name}: arrived — scanning area with weapon ready");
+
+        yield return StartCoroutine(ScanRotation(startState));
+        if (currentState != startState) { EndInvestigation(); yield break; }
+
+        // ── Phase 3: Search nearby points (other rooms, doorways, behind cover)
+        Debug.Log($"[TerroristController] {gameObject.name}: searching surrounding area");
+
+        for (int i = 0; i < searchWaypointCount; i++)
         {
-            elapsed += Time.deltaTime;
-            yield return null;
+            if (currentState != startState) { EndInvestigation(); yield break; }
+
+            // Pick a random point on the NavMesh AT LEAST searchWaypointMinRadius away from the
+            // gunshot location, so the NPC actually moves to a different area instead of pacing
+            // in place. Direction is random; distance is uniform between min and max radius.
+            Vector2 dir2D = Random.insideUnitCircle.normalized;
+            if (dir2D.sqrMagnitude < 0.01f) dir2D = Vector2.up; // safety
+            float distance = Random.Range(searchWaypointMinRadius, searchWaypointMaxRadius);
+            Vector3 candidate = soundPos + new Vector3(dir2D.x, 0f, dir2D.y) * distance;
+
+            if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, searchWaypointMaxRadius, NavMesh.AllAreas))
+                continue;
+
+            Debug.Log($"[TerroristController] {gameObject.name}: searching waypoint {i + 1}/{searchWaypointCount} at {hit.position}");
+
+            // Walk slowly to this search point — gun stays ready
+            agent.SetDestination(hit.position);
+            while (currentState == startState &&
+                   (agent.pathPending || agent.remainingDistance > agent.stoppingDistance + 0.5f))
+                yield return null;
+
+            if (currentState != startState) { EndInvestigation(); yield break; }
+
+            // Pause and look around at this checkpoint
+            agent.ResetPath();
+            float waited = 0f;
+            while (waited < searchWaypointPauseTime && currentState == startState)
+            {
+                waited += Time.deltaTime;
+                yield return null;
+            }
         }
 
-        // Nothing found — Suspicious returns to Idle; Alert stays Alert
+        // ── Phase 4: Nothing found — de-escalate ──────────────────────────────
         if (currentState == startState && startState == TerroristState.Suspicious)
         {
-            Debug.Log($"[TerroristController] {gameObject.name}: nothing found, returning to Idle");
+            Debug.Log($"[TerroristController] {gameObject.name}: area clear, returning to Idle");
+            EndInvestigation();
             TransitionTo(TerroristState.Idle, null);
+            yield break;
         }
 
+        EndInvestigation();
+    }
+
+    /// <summary>
+    /// Rotates the NPC to look at several directions around it, pausing at each.
+    /// Returns false if the state changed (player detected) during the scan.
+    /// </summary>
+    IEnumerator ScanRotation(TerroristState startState)
+    {
+        float baseAngle = transform.eulerAngles.y;
+        float angleStep = 360f / searchCheckPoints;
+
+        for (int i = 0; i < searchCheckPoints; i++)
+        {
+            if (currentState != startState) yield break;
+
+            float targetAngle = baseAngle + (angleStep * i) + Random.Range(-15f, 15f);
+            Quaternion targetRot = Quaternion.Euler(0f, targetAngle, 0f);
+
+            while (Quaternion.Angle(transform.rotation, targetRot) > 2f)
+            {
+                if (currentState != startState) yield break;
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation, targetRot, searchTurnSpeed * Time.deltaTime);
+                yield return null;
+            }
+
+            float pause = searchPausePerDirection + Random.Range(-0.2f, 0.2f);
+            float waited = 0f;
+            while (waited < pause)
+            {
+                if (currentState != startState) yield break;
+                waited += Time.deltaTime;
+                yield return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Restores original agent speed and clears the investigation flag.
+    /// Called when investigation ends normally or is interrupted by state change.
+    /// </summary>
+    void EndInvestigation()
+    {
+        _isInvestigating = false;
         _investigateRoutine = null;
+        animator?.SetBool("Investigating", false);
+        if (agent != null && agent.isActiveAndEnabled)
+            agent.speed = _originalAgentSpeed;
     }
 
     // ── Inspector test helpers ────────────────────────────────────────────────

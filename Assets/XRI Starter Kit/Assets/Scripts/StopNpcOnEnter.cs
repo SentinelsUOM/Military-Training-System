@@ -39,12 +39,9 @@ public class StopNpcOnEnter : MonoBehaviour
             }
         }
 
-        // Start shooting
-        if (npcShooter != null && playerCamera != null)
-        {
-            npcShooter.target = playerCamera;
-            npcShooter.StartFiring();
-        }
+        // Auto-shooting on trigger removed — combat is now driven entirely by
+        // PerceptionController (NPC shoots only when it actually sees the player).
+        // The trigger still stops the patrol and plays the voice line.
     }
 
     private void OnTriggerExit(Collider other)
@@ -54,10 +51,6 @@ public class StopNpcOnEnter : MonoBehaviour
         // Resume patrol
         if (npcPatrol != null)
             npcPatrol.ResumePatrol();
-
-        // Stop firing
-        if (npcShooter != null)
-            npcShooter.StopFiring();
 
         // Reset so it can play again next time (optional)
         hasPlayed = false;
