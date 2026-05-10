@@ -1,0 +1,206 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1.25rem;
+  flex-wrap: wrap;
+}
+
+.ctrlBtn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0.35rem 0.6rem;
+  transition: background 0.15s;
+}
+
+.ctrlBtn:hover {
+  background: var(--border);
+}
+
+.playBtn {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 14px;
+  min-width: 36px;
+}
+
+.scrubber {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.timeLabel {
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.speedGroup {
+  display: flex;
+  gap: 4px;
+}
+
+.speedBtn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 8px;
+  transition: all 0.15s;
+}
+
+.speedBtn.activeSpeed {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.phaseBar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+}
+
+.phaseLabel {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.phaseValue {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.mainGrid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .mainGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.right {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+}
+
+.cardTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.75rem 0;
+}
+
+.noData {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 1rem;
+}
+
+.actorBoard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.actorRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.actorRow:last-child {
+  border-bottom: none;
+}
+
+.actorId {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.actorState {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.eventLog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.eventEntry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 12px;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.eventEntry:last-child {
+  border-bottom: none;
+}
+
+.evTime {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--accent);
+  min-width: 40px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
