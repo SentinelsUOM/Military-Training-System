@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git revert *)",
+      "Bash(grep -iE '\\\\.\\(wav|mp3|ogg|aif\\)$')",
+      "Bash(git fetch *)",
+      "Bash(git cherry-pick *)",
+      "Bash(if [ -f .claude/settings.local.json ]; then mv .claude/settings.local.json .claude/settings.local.json.BACKUP; echo \"moved aside\"; else echo \"no local file\"; fi)",
+      "Bash(rm .git/index.lock)",
+      "Bash(mv .claude/settings.local.json.BACKUP .claude/settings.local.json)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(mv .claude .claude.LOCAL_BACKUP)",
+      "Bash(git rm *)",
+      "Bash(rm -f .claude/settings.local.json \"Assets/Module4/Resources/session_b180b553-dd92-4cb5-882d-d31175b33303.json\" \"Assets/Module4/Resources/session_b180b553-dd92-4cb5-882d-d31175b33303.json.meta\" \"Assets/Module4/Resources/session_b53218df-5265-40fe-aba7-04afa12b6864.json\" \"Assets/_Recovery/0 \\(36\\).unity\" \"Assets/_Recovery/0 \\(36\\).unity.meta\")",
+      "Bash(rmdir .claude)",
+      "Bash(git commit -m ' *)",
+      "Bash(if [ -d .claude.LOCAL_BACKUP ]; then mv .claude.LOCAL_BACKUP .claude; echo \"restored .claude\"; fi)",
+      "Bash(rm -rf \".claude/.claude.LOCAL_BACKUP\" 2>&1; echo \"---\"; ls -la .claude/; echo \"---\"; git status --short)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Navindu\\Documents\\GitHub\\Military-Training-System\\.claude",
+      "C:\\Users\\Navindu\\Documents\\GitHub\\Military-Training-System\\.claude\\.claude.LOCAL_BACKUP"
+    ]
+  }
+}
