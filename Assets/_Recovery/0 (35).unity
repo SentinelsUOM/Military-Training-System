@@ -8521,7 +8521,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1955406665}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
       insertIndex: -1
@@ -50815,6 +50818,7 @@ GameObject:
   - component: {fileID: 1370155274}
   - component: {fileID: 1370155275}
   - component: {fileID: 1370155276}
+  - component: {fileID: 1370155277}
   m_Layer: 8
   m_Name: PlayerHitbox
   m_TagString: Untagged
@@ -50873,6 +50877,21 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: MikeNspiredXRIStarterKit.Runtime::PlayerHealth
   health: 100
+--- !u!114 &1370155277
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1370155273}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cd4af71c30d7ac540a46515090d8fc66, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerHealthHitbox
+  playerHealth: {fileID: 0}
+  damageMultiplier: 1
+  echoToConsole: 1
 --- !u!1 &1370175983
 GameObject:
   m_ObjectHideFlags: 0
@@ -69747,6 +69766,7 @@ MonoBehaviour:
   wanderPauseTime: 4
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 1703180023}
+  deathFloorOffset: 0
   role: 1
   squadId: beta
   maxHealth: 100
@@ -69757,11 +69777,15 @@ MonoBehaviour:
   hearingRange: 20
   currentState: 0
   currentHealth: 0
-  investigateScanTime: 3
   investigateSpeed: 1.5
+  gunReadyDistance: 4
   searchCheckPoints: 5
   searchPausePerDirection: 1.2
   searchTurnSpeed: 90
+  searchWaypointCount: 3
+  searchWaypointMinRadius: 4
+  searchWaypointMaxRadius: 10
+  searchWaypointPauseTime: 2
 --- !u!114 &1703180027
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -72017,6 +72041,7 @@ MonoBehaviour:
   wanderPauseTime: 2
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 1751747675}
+  deathFloorOffset: 0
   role: 2
   squadId: beta
   maxHealth: 100
@@ -72027,11 +72052,15 @@ MonoBehaviour:
   hearingRange: 20
   currentState: 0
   currentHealth: 0
-  investigateScanTime: 3
   investigateSpeed: 1.5
+  gunReadyDistance: 4
   searchCheckPoints: 5
   searchPausePerDirection: 1.2
   searchTurnSpeed: 90
+  searchWaypointCount: 3
+  searchWaypointMinRadius: 4
+  searchWaypointMaxRadius: 10
+  searchWaypointPauseTime: 2
 --- !u!114 &1751747679
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -79056,7 +79085,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 507a157b3ced0d948bc669f962cdca02, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1882362008}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 507a157b3ced0d948bc669f962cdca02, type: 3}
       insertIndex: -1
@@ -81088,6 +81120,7 @@ MonoBehaviour:
   wanderPauseTime: 2
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 1975473699}
+  deathFloorOffset: 0
   role: 0
   squadId: alpha
   maxHealth: 100
@@ -81098,11 +81131,15 @@ MonoBehaviour:
   hearingRange: 20
   currentState: 0
   currentHealth: 0
-  investigateScanTime: 3
   investigateSpeed: 1.5
+  gunReadyDistance: 4
   searchCheckPoints: 5
   searchPausePerDirection: 1.2
   searchTurnSpeed: 90
+  searchWaypointCount: 3
+  searchWaypointMinRadius: 4
+  searchWaypointMaxRadius: 10
+  searchWaypointPauseTime: 2
 --- !u!114 &1975473707
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -99358,3 +99395,6 @@ SceneRoots:
   - {fileID: 519306383}
   - {fileID: 2126641991}
   - {fileID: 1934547886}
+  - {fileID: 889206581}
+  - {fileID: 1426852025}
+  - {fileID: 526135965}

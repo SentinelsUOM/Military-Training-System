@@ -53,6 +53,17 @@ namespace MikeNspired.XRIStarterKit
         {
             OnValidate();
 
+            // Defensive: NPC weapon prefabs sometimes have ProjectileWeapon attached without
+            // an XRGrabInteractable (those use NpcShooterRaycast instead). Skip XRI wiring
+            // gracefully so the scene doesn't throw on Awake.
+            if (interactable == null)
+            {
+                Debug.LogWarning($"[ProjectileWeapon] {gameObject.name}: no XRGrabInteractable found — " +
+                                 "disabling player-fire wiring. (This is expected on NPC weapons.)");
+                enabled = false;
+                return;
+            }
+
             interactable.activated.AddListener(_ => TryFire(true));
             interactable.deactivated.AddListener(_ => TryFire(false));
             interactable.selectEntered.AddListener(SetupRecoilVariables);
