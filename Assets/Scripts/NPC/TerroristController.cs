@@ -463,6 +463,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
             StopCoroutine(_investigateRoutine);
             _investigateRoutine = null;
             _isInvestigating = false;
+            animator?.SetBool("Investigating", false);
             if (agent != null && agent.isActiveAndEnabled)
             {
                 agent.speed = _originalAgentSpeed;
@@ -822,6 +823,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
         var startState = currentState;
         _isInvestigating = true;
+        animator?.SetBool("Investigating", true);
 
         // ── Phase 1: Cautious walk toward the location (no gun) ───────────────
         // They only know a gunshot came from there. Normal walk, weapon lowered.
@@ -953,6 +955,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         _isInvestigating = false;
         _investigateRoutine = null;
+        animator?.SetBool("Investigating", false);
         if (agent != null && agent.isActiveAndEnabled)
             agent.speed = _originalAgentSpeed;
     }

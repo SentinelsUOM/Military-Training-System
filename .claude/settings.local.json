@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git revert *)",
+      "Bash(grep -iE '\\\\.\\(wav|mp3|ogg|aif\\)$')"
+    ]
+  }
+}
