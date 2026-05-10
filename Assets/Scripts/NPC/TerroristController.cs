@@ -234,20 +234,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 if (currentState == TerroristState.Down) break;
                 Debug.Log($"[TerroristController] {gameObject.name} received TerroristDown | " +
                           $"currentState={currentState} | personallyConfirmed={_personallyConfirmedPlayer}");
-                if (_personallyConfirmedPlayer)
-                {
-                    // This NPC personally saw and confirmed the player — engage immediately
-                    if (currentState != TerroristState.Engage)
-                        TransitionTo(TerroristState.Engage, e);
-                }
-                else
-                {
-                    // Never personally saw the player — go to Alert so EventManager sends one to investigate
-                    if (currentState == TerroristState.Idle ||
-                        currentState == TerroristState.Suspicious ||
-                        currentState == TerroristState.Alert)
-                        TransitionTo(TerroristState.Alert, e);
-                }
+                // Squadmate down — go to Alert and investigate. Do NOT auto-engage:
+                // even if this NPC personally saw the player before, they should NOT shoot blindly.
+                // PerceptionController will trigger Engage only when player is actually visible now.
+                if (currentState == TerroristState.Idle ||
+                    currentState == TerroristState.Suspicious ||
+                    currentState == TerroristState.Alert)
+                    TransitionTo(TerroristState.Alert, e);
                 break;
         }
     }
@@ -449,6 +442,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
             NPCId, "Terrorist", prev.ToString(), next.ToString(), trigger);
 
         Debug.Log($"[TerroristController] {gameObject.name}: {prev} → {next}");
+
+        // ── Stop firing when leaving Engage ───────────────────────────────────
+        // NPCs should ONLY shoot while they actually see the player. The moment
+        // state leaves Engage (e.g. PlayerLost), kill the firing loop so they
+        // don't keep shooting at a position where the player isn't.
+        if (prev == TerroristState.Engage && next != TerroristState.Engage)
+        {
+            shooter?.StopFiring();
+        }
 
         // ── Cancel pending Suspicious timeout ─────────────────────────────────
         if (_suspiciousRoutine != null)
@@ -791,8 +793,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Degrees of rotation per second while turning to check a direction.")]
     public float searchTurnSpeed = 90f;
 
-    [Tooltip("Number of nearby points to walk to and check after the initial scan (other rooms / areas).")]
-    public int searchWaypointCount = 3;
+    [Tooltip("Maximum search waypoints before giving up. Set high (e.g. 30) so the NPC keeps " +
+             "searching the area until they actually see the player. The search will end early " +
+             "if the player is spotted (state escalates to Engage).")]
+    public int searchWaypointCount = 30;
 
     [Tooltip("Minimum distance from the gunshot location for a search waypoint (so the NPC actually moves).")]
     public float searchWaypointMinRadius = 4f;
@@ -869,18 +873,19 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             if (currentState != startState) { EndInvestigation(); yield break; }
 
-            // Pick a random point on the NavMesh AT LEAST searchWaypointMinRadius away from the
-            // gunshot location, so the NPC actually moves to a different area instead of pacing
-            // in place. Direction is random; distance is uniform between min and max radius.
+            // Pick a random point on the NavMesh. Direction is random; distance is uniform
+            // between min and max radius. As the search continues, expand the max radius
+            // so the NPC progressively searches a wider area instead of pacing the same spot.
             Vector2 dir2D = Random.insideUnitCircle.normalized;
             if (dir2D.sqrMagnitude < 0.01f) dir2D = Vector2.up; // safety
-            float distance = Random.Range(searchWaypointMinRadius, searchWaypointMaxRadius);
+            float expandedMax = searchWaypointMaxRadius + (i * 0.5f); // grow by 0.5m per waypoint
+            float distance = Random.Range(searchWaypointMinRadius, expandedMax);
             Vector3 candidate = soundPos + new Vector3(dir2D.x, 0f, dir2D.y) * distance;
 
-            if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, searchWaypointMaxRadius, NavMesh.AllAreas))
+            if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, expandedMax, NavMesh.AllAreas))
                 continue;
 
-            Debug.Log($"[TerroristController] {gameObject.name}: searching waypoint {i + 1}/{searchWaypointCount} at {hit.position}");
+            Debug.Log($"[TerroristController] {gameObject.name}: searching waypoint {i + 1}/{searchWaypointCount} at {hit.position} (radius {expandedMax:F1}m)");
 
             // Walk slowly to this search point — gun stays ready
             agent.SetDestination(hit.position);
