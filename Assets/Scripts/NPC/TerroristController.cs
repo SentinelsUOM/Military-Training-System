@@ -99,6 +99,33 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Radius within which this NPC can hear a GunshotHeard event.")]
     public float hearingRange = 20f;
 
+    [Header("Aim (Engage state)")]
+    [Tooltip("Optional. Drag the gun mesh (or its parent transform) here. Used to read the gun's " +
+             "current barrel direction so the chest bone can be rotated to make the gun point at " +
+             "the player. If left blank, falls back to shooter.firePoint automatically.")]
+    public Transform weaponPivot;
+
+    [Tooltip("How fast the body rotates to face the player when alerted/engaged. Higher = snappier.")]
+    public float aimRotationSpeed = 8f;
+
+    [Tooltip("Maximum degrees the chest bone can rotate per frame to aim the gun. Prevents " +
+             "extreme spine twists when the player is in an awkward position. 45° is a good balance.")]
+    public float maxAimAngle = 45f;
+
+    [Tooltip("Which humanoid bone to rotate for aim. Chest gives the cleanest 'rifle stock' aim. " +
+             "UpperChest is more subtle; Spine swings the hips too. Leave on Chest for most rigs.")]
+    public HumanBodyBones aimBoneType = HumanBodyBones.Chest;
+
+    [Header("Death / Cleanup")]
+    [Tooltip("If true, automatically positions the body so the mesh bottom sits on the floor " +
+             "regardless of where the prefab's transform origin is. Uses renderer bounds. " +
+             "Turn this OFF and use deathFloorOffset manually if you need fine control.")]
+    public bool autoCalculateDeathOffset = true;
+
+    [Tooltip("If true, disables all non-trigger colliders on death so alive NPCs can walk through " +
+             "the body instead of being blocked when investigating. Recommended on.")]
+    public bool clearCollidersOnDeath = true;
+
     [Header("Debug — read-only in Play mode")]
     public TerroristState currentState = TerroristState.Idle;
     public float          currentHealth;
@@ -316,6 +343,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     Quaternion _spawnRotation;
     float     _originalAgentSpeed;
     bool      _isInvestigating;
+    LeaderDirective _activeDirective;   // last directive received from squad Leader; null when none active
+    Transform _aimBone;                 // cached chest/spine bone used to aim the upper body at the player
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -330,6 +359,17 @@ public class TerroristController : MonoBehaviour, INPCResponder
         _lookAnchor = go.transform;
 
         if (agent != null) _originalAgentSpeed = agent.speed;
+
+        // Cache the aim bone (Chest by default) so LateUpdate can rotate it without per-frame lookup.
+        // Falls back through UpperChest → Chest → Spine in case the rig is missing some bones.
+        // Non-humanoid rigs return null; aim falls back to weapon-pivot-only mode.
+        if (animator != null && animator.isHuman)
+        {
+            _aimBone = animator.GetBoneTransform(aimBoneType);
+            if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.Chest);
+            if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.UpperChest);
+            if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.Spine);
+        }
 
         NPCRegistry.Register(this);
 
@@ -428,6 +468,72 @@ public class TerroristController : MonoBehaviour, INPCResponder
         _wasFiring = isFiring;
     }
 
+    /// <summary>
+    /// Runs AFTER the Animator so our rotation overrides any animation root rotation.
+    /// Two responsibilities:
+    ///   1) Rotate the BODY horizontally (Y-axis) toward the player when alerted/engaged.
+    ///   2) Rotate the CHEST BONE in 3D so the gun barrel points at the player camera.
+    ///      Because the chest is the parent of (shoulders → arms → hands → gun), rotating
+    ///      the chest carries the whole upper-body chain together — hands stay attached
+    ///      to the gun, the gun stays attached to the hands, everything moves as one unit.
+    ///
+    /// This is "additive aim" on top of the animation: the animator plays its idle/fire
+    /// clip normally, and after that runs we adjust the chest rotation just enough that
+    /// the gun's forward direction points at the player.
+    /// </summary>
+    void LateUpdate()
+    {
+        if (currentState == TerroristState.Down) return;
+        if (_lastSeenPlayer == null) return;
+
+        bool engagedOrAlert =
+            currentState == TerroristState.Engage ||
+            currentState == TerroristState.Alert  ||
+            currentState == TerroristState.TakeCover;
+
+        // ── 1) Body Y-rotation toward player (horizontal facing) ──────────────
+        if (engagedOrAlert && !_isInvestigating)
+        {
+            Vector3 toPlayer = _lastSeenPlayer.position - transform.position;
+            toPlayer.y = 0f;
+            if (toPlayer.sqrMagnitude > 0.001f)
+            {
+                Quaternion target = Quaternion.LookRotation(toPlayer);
+                transform.rotation = Quaternion.Slerp(
+                    transform.rotation, target, Time.deltaTime * aimRotationSpeed);
+            }
+        }
+
+        // ── 2) Chest bone aim — rotates whole arm chain so gun points at player ────
+        // The gun is a descendant of the chest (chest → shoulder → arm → forearm → hand
+        // → weaponPivot → gun mesh). Rotating the chest carries everything together.
+        if (currentState == TerroristState.Engage && _aimBone != null)
+        {
+            // Find the gun's current forward direction in world space.
+            // Prefer the actual fire point (most accurate barrel direction); fall back
+            // to weaponPivot, then to the aim bone's own forward as last resort.
+            Transform gunRef = null;
+            if (shooter != null && shooter.firePoint != null) gunRef = shooter.firePoint;
+            else if (weaponPivot != null)                     gunRef = weaponPivot;
+
+            Vector3 currentForward = gunRef != null ? gunRef.forward : _aimBone.forward;
+            Vector3 desiredForward = (_lastSeenPlayer.position - _aimBone.position).normalized;
+
+            if (currentForward.sqrMagnitude > 0.001f && desiredForward.sqrMagnitude > 0.001f)
+            {
+                // Rotation that maps current gun-forward → desired (player) direction.
+                Quaternion delta = Quaternion.FromToRotation(currentForward, desiredForward);
+
+                // Clamp magnitude so an awkward player position can't cause an extreme
+                // spine twist that breaks the silhouette.
+                delta = Quaternion.RotateTowards(Quaternion.identity, delta, maxAimAngle);
+
+                // Apply additively to the chest's animator-driven rotation.
+                _aimBone.rotation = delta * _aimBone.rotation;
+            }
+        }
+    }
+
     // ── State machine ─────────────────────────────────────────────────────────
 
     void TransitionTo(TerroristState next, ScenarioEvent trigger)
@@ -502,6 +608,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 animator?.SetBool("Alert", true);
                 // Trigger Ring 1+2 alert propagation
                 AlertPropagator.Instance?.Broadcast(this, trigger);
+                // Leader coordination: issue Converge directive to squad, then
+                // follow any directive we currently hold (no-op for Leaders unless
+                // another Leader exists in the same squad).
+                IssueDirectiveIfLeader(trigger);
+                FollowActiveDirective();
                 break;
 
             case TerroristState.TakeCover:
@@ -522,6 +633,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 }
                 // Trigger Ring 1+2 alert propagation
                 AlertPropagator.Instance?.Broadcast(this, trigger);
+                // Leader coordination: issue Converge directive to squad, then
+                // follow any directive we currently hold (no-op for Leaders unless
+                // another Leader exists in the same squad).
+                IssueDirectiveIfLeader(trigger);
+                FollowActiveDirective();
                 break;
 
             case TerroristState.Idle:
@@ -597,6 +713,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         foreach (var hb in GetComponentsInChildren<NPCHitBox>())
             hb.enabled = false;
 
+        // Disable all non-trigger colliders so the corpse doesn't block alive NPCs.
+        // Investigating teammates use NavMeshAgent path-finding which respects the
+        // capsule collider — without this, bodies become walls in the middle of the room.
+        // Triggers (zone detectors, hitboxes already off) are preserved.
+        if (clearCollidersOnDeath)
+        {
+            int disabledCount = 0;
+            foreach (var col in GetComponentsInChildren<Collider>())
+            {
+                if (col == null) continue;
+                if (col.isTrigger) continue;
+                if (!col.enabled)  continue;
+                col.enabled = false;
+                disabledCount++;
+            }
+            if (disabledCount > 0)
+                Debug.Log($"[TerroristController] {gameObject.name}: disabled {disabledCount} colliders so corpse doesn't block NavMesh paths.");
+        }
+
         // Trigger death animation then freeze in final pose.
         // applyRootMotion stays true so the animation's own root curve carries
         // the body to the floor — no need for a Rigidbody.
@@ -622,8 +757,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
     }
 
     /// <summary>
-    /// Snaps the NPC's transform down to the floor. Excludes own colliders so the raycast
-    /// doesn't hit the NPC's own body and stop short.
+    /// Snaps the NPC's transform so the mesh BOTTOM sits on the floor. Excludes own
+    /// colliders during the raycast so we don't hit ourselves.
+    ///
+    /// When autoCalculateDeathOffset is true: reads renderer bounds to compute how far
+    /// the mesh extends below the transform origin, then offsets accordingly. This works
+    /// even if the prefab's transform pivot is at the hips, chest, or head instead of feet.
+    ///
+    /// When false: uses the manual deathFloorOffset field.
     /// </summary>
     void SnapToFloor()
     {
@@ -636,9 +777,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
             ownColliders[i].enabled = false;
         }
 
-        Vector3 origin = transform.position + Vector3.up * 1.5f;
+        // Raycast from well above the NPC straight down to find the actual floor surface.
+        Vector3 origin = transform.position + Vector3.up * 2f;
         float floorY;
-        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 5f, ~0,
+        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 10f, ~0,
                             QueryTriggerInteraction.Ignore))
         {
             floorY = hit.point.y;
@@ -648,9 +790,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
             // Fallback — single-floor project, snap to Y=0
             floorY = 0f;
         }
-        transform.position = new Vector3(transform.position.x, floorY + deathFloorOffset, transform.position.z);
 
-        // Restore collider states (hitboxes are disabled separately later, but other colliders stay on).
+        // Calculate how far the mesh extends BELOW the transform origin so we can put
+        // the mesh's lowest point on the floor (rather than the transform itself).
+        float belowTransform = 0f;
+        if (autoCalculateDeathOffset)
+        {
+            var renderers = GetComponentsInChildren<Renderer>();
+            float minY = float.MaxValue;
+            foreach (var r in renderers)
+            {
+                if (r == null || !r.enabled) continue;
+                if (r.bounds.min.y < minY) minY = r.bounds.min.y;
+            }
+            if (minY < float.MaxValue)
+                belowTransform = transform.position.y - minY; // positive when mesh extends below transform
+        }
+
+        transform.position = new Vector3(
+            transform.position.x,
+            floorY + belowTransform + deathFloorOffset,
+            transform.position.z);
+
+        // Restore collider states (hitboxes/non-triggers are disabled separately in EnterDownState).
         for (int i = 0; i < ownColliders.Length; i++)
             ownColliders[i].enabled = savedStates[i];
     }
@@ -668,7 +830,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         }
         float clipLength = animator.GetCurrentAnimatorStateInfo(0).length;
         // Clamp: some death clips are set to loop — treat anything > 5 s as 3 s
-        yield return new WaitForSeconds(Mathf.Clamp(clipLength, 0.5f, 5f));
+        float dur = Mathf.Clamp(clipLength, 0.5f, 5f);
+
+        // Re-snap periodically DURING the death animation so root motion / aim curves
+        // can't lift the body off the floor. Without this, animations that translate
+        // the root upward (or NPCs that never had a death clip at all) leave the body
+        // floating in mid-air.
+        float elapsed     = 0f;
+        float reSnapEvery = 0.15f;
+        float nextSnap    = reSnapEvery;
+        while (elapsed < dur)
+        {
+            elapsed += Time.deltaTime;
+            if (elapsed >= nextSnap)
+            {
+                SnapToFloor();
+                nextSnap += reSnapEvery;
+            }
+            yield return null;
+        }
 
         // Disable animator FIRST so the pose is frozen — then snap. Otherwise the animator
         // can still drive root motion this frame and offset our snap.
@@ -963,6 +1143,75 @@ public class TerroristController : MonoBehaviour, INPCResponder
         animator?.SetBool("Investigating", false);
         if (agent != null && agent.isActiveAndEnabled)
             agent.speed = _originalAgentSpeed;
+    }
+
+    // ── Leader coordination (squad directives) ────────────────────────────────
+
+    /// <summary>
+    /// Called by Squad.IssueDirective on every non-engaged, non-down member of the
+    /// Leader's squad. Stores the directive and routes the NavMeshAgent toward
+    /// TargetPosition. Members in Idle/Suspicious are escalated to Alert.
+    /// </summary>
+    public void OnDirective(LeaderDirective directive)
+    {
+        if (directive == null) return;
+        if (currentState == TerroristState.Down || currentState == TerroristState.Engage) return;
+
+        _activeDirective = directive;
+        SetLookTarget(directive.TargetPosition);
+
+        Debug.Log($"[TerroristController] {gameObject.name} received directive: {directive}");
+
+        // Escalate to Alert so wander/patrol routines stop and the NPC focuses
+        // on the directive. If already Alert/TakeCover, just refresh the destination.
+        if (currentState == TerroristState.Idle || currentState == TerroristState.Suspicious)
+        {
+            TransitionTo(TerroristState.Alert, null);
+            // FollowActiveDirective() runs inside the Alert case in TransitionTo
+            return;
+        }
+
+        FollowActiveDirective();
+    }
+
+    /// <summary>
+    /// If this NPC is a Leader with a valid squad, broadcast a Converge directive.
+    /// Target is the trigger's origin (the threat location); falls back to leader's
+    /// own position when no trigger is supplied.
+    /// </summary>
+    void IssueDirectiveIfLeader(ScenarioEvent trigger)
+    {
+        if (role != NPCRole.Leader) return;
+        if (string.IsNullOrEmpty(squadId)) return;
+
+        Vector3 target = trigger?.Origin ?? transform.position;
+        string  reason = trigger?.Type.ToString() ?? "manual";
+
+        var directive = new LeaderDirective(
+            LeaderDirectiveType.Converge, target, this, reason);
+
+        Squad.Get(squadId)?.IssueDirective(directive);
+    }
+
+    /// <summary>
+    /// If a directive is currently held, route the NavMeshAgent toward its target.
+    /// Called when entering Alert (post-AlertPropagator) and when a new directive arrives.
+    /// </summary>
+    void FollowActiveDirective()
+    {
+        if (_activeDirective == null) return;
+        if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
+
+        switch (_activeDirective.Type)
+        {
+            case LeaderDirectiveType.Converge:
+                agent.SetDestination(_activeDirective.TargetPosition);
+                break;
+
+            case LeaderDirectiveType.Hold:
+                agent.ResetPath();
+                break;
+        }
     }
 
     // ── Inspector test helpers ────────────────────────────────────────────────
