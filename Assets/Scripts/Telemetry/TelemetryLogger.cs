@@ -43,6 +43,18 @@ public class BehaviorSnapshotRecord
     public string notes;
 }
 
+/// <summary>Emitted when a Leader-role terrorist issues a coordination directive to its squad.</summary>
+[Serializable]
+public class LeaderDirectiveRecord
+{
+    public float  timestamp;
+    public string squadId;
+    public string leaderId;
+    public string directiveType;   // "Converge" / "Hold"
+    public float  targetX, targetY, targetZ;
+    public string reason;          // event type that triggered the directive
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -73,9 +85,10 @@ public class TelemetryLogger : MonoBehaviour
 
     // ── Storage ───────────────────────────────────────────────────────────────
 
-    readonly List<NPCStateChangeRecord>  _stateChanges = new List<NPCStateChangeRecord>();
-    readonly List<ResponderDecisionRecord> _decisions  = new List<ResponderDecisionRecord>();
-    readonly List<BehaviorSnapshotRecord>  _snapshots  = new List<BehaviorSnapshotRecord>();
+    readonly List<NPCStateChangeRecord>   _stateChanges = new List<NPCStateChangeRecord>();
+    readonly List<ResponderDecisionRecord> _decisions   = new List<ResponderDecisionRecord>();
+    readonly List<BehaviorSnapshotRecord>  _snapshots   = new List<BehaviorSnapshotRecord>();
+    readonly List<LeaderDirectiveRecord>   _directives  = new List<LeaderDirectiveRecord>();
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -164,11 +177,40 @@ public class TelemetryLogger : MonoBehaviour
         });
     }
 
+    /// <summary>
+    /// Called by Squad.IssueDirective when a Leader broadcasts a coordination command.
+    /// Captured separately from state changes so Module 4 AAR can render directives
+    /// as their own timeline events ("Leader α → Converge on Room 3").
+    /// </summary>
+    public void LogDirective(string squadId, LeaderDirective directive)
+    {
+        if (directive == null) return;
+
+        var record = new LeaderDirectiveRecord
+        {
+            timestamp     = directive.Timestamp,
+            squadId       = squadId,
+            leaderId      = directive.Source != null ? directive.Source.NPCId : "?",
+            directiveType = directive.Type.ToString(),
+            targetX       = directive.TargetPosition.x,
+            targetY       = directive.TargetPosition.y,
+            targetZ       = directive.TargetPosition.z,
+            reason        = directive.Reason,
+        };
+        _directives.Add(record);
+
+        if (echoToConsole)
+            Debug.Log($"[Telemetry|Directive] {squadId} ({record.leaderId}): " +
+                      $"{record.directiveType} @ ({record.targetX:F1},{record.targetY:F1},{record.targetZ:F1}) " +
+                      $"reason={record.reason}");
+    }
+
     // ── File I/O ──────────────────────────────────────────────────────────────
 
-    [Serializable] class StateChangeList   { public List<NPCStateChangeRecord>   records; }
-    [Serializable] class DecisionList      { public List<ResponderDecisionRecord> records; }
-    [Serializable] class SnapshotList      { public List<BehaviorSnapshotRecord>  records; }
+    [Serializable] class StateChangeList { public List<NPCStateChangeRecord>   records; }
+    [Serializable] class DecisionList    { public List<ResponderDecisionRecord> records; }
+    [Serializable] class SnapshotList    { public List<BehaviorSnapshotRecord>  records; }
+    [Serializable] class DirectiveList   { public List<LeaderDirectiveRecord>   records; }
 
     void WriteSessionFiles()
     {
@@ -190,6 +232,10 @@ public class TelemetryLogger : MonoBehaviour
             File.WriteAllText(
                 Path.Combine(dir, $"Snapshots_{stamp}.json"),
                 JsonUtility.ToJson(new SnapshotList { records = _snapshots }, prettyPrint: true));
+
+            File.WriteAllText(
+                Path.Combine(dir, $"Directives_{stamp}.json"),
+                JsonUtility.ToJson(new DirectiveList { records = _directives }, prettyPrint: true));
 
             Debug.Log($"[TelemetryLogger] Session files written to: {dir}");
         }

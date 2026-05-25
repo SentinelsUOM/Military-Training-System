@@ -63,4 +63,35 @@ public class Squad
     {
         AlertPropagator.Instance?.HandleMemberDown(this, downed, trigger);
     }
+
+    // ── Leader directives (squad coordination) ────────────────────────────────
+
+    /// Last directive issued to this squad by its Leader. Null if no directive active.
+    public LeaderDirective CurrentDirective { get; private set; }
+
+    /// <summary>
+    /// Broadcast a directive to every non-engaged, non-down squad member.
+    /// Only callable by a Leader-role member of THIS squad (silently ignored otherwise).
+    /// Logged to TelemetryLogger so Module 4 can replay it on the AAR timeline.
+    /// </summary>
+    public void IssueDirective(LeaderDirective directive)
+    {
+        if (directive == null || directive.Source == null) return;
+        if (directive.Source.role != NPCRole.Leader)      return;
+        if (!_members.Contains(directive.Source))         return; // not our leader
+
+        CurrentDirective = directive;
+        TelemetryLogger.Instance?.LogDirective(SquadId, directive);
+
+        foreach (var member in _members)
+        {
+            if (member == null || member == directive.Source) continue;
+            if (member.currentState == TerroristState.Down)   continue;
+            if (member.currentState == TerroristState.Engage) continue; // committed
+            member.OnDirective(directive);
+        }
+    }
+
+    /// Clear the active directive (call at scenario reset or when the leader dies).
+    public void ClearDirective() => CurrentDirective = null;
 }

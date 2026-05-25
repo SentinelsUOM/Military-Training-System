@@ -31,3 +31,6 @@ sysinfo.txt
 
 # Optional: Addressables cache
 [Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
+
+# Claude Code project instructions (personal, not shared with team)
+CLAUDE.md
