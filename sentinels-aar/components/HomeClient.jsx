@@ -3,6 +3,7 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import MetricCard from '@/components/ui/MetricCard'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import MissionLauncher from '@/components/MissionLauncher'
 import styles from './HomeClient.module.css'
 import { formatDate, formatTime, scoreColor, scorePercent } from '@/lib/utils'
 
@@ -14,6 +15,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [seeding, setSeeding] = useState(false)
+  const [launcherOpen, setLauncherOpen] = useState(false)
 
   const LIMIT = 20
 
@@ -63,14 +65,24 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
           <h1 className={styles.title}>SENTINELS AAR</h1>
           <p className={styles.sub}>After-Action Review Dashboard — VR Military Training</p>
         </div>
-        <button
-          className={styles.seedBtn}
-          onClick={handleSeed}
-          disabled={seeding}
-        >
-          {seeding ? 'Seeding…' : 'Load Demo Data'}
-        </button>
+        <div className={styles.headerActions}>
+          <button
+            className={styles.seedBtn}
+            onClick={() => setLauncherOpen(true)}
+          >
+            New Mission
+          </button>
+          <button
+            className={styles.seedBtn}
+            onClick={handleSeed}
+            disabled={seeding}
+          >
+            {seeding ? 'Seeding…' : 'Load Demo Data'}
+          </button>
+        </div>
       </header>
+
+      <MissionLauncher open={launcherOpen} onClose={() => setLauncherOpen(false)} />
 
       {stats && (
         <section className={styles.statsGrid}>

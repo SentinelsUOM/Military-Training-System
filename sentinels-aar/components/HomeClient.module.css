@@ -26,6 +26,11 @@
   margin: 0;
 }
 
+.headerActions {
+  display: flex;
+  gap: 0.6rem;
+}
+
 .seedBtn {
   background: var(--surface);
   border: 1px solid var(--accent);
