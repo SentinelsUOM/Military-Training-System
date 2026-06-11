@@ -101,6 +101,19 @@ public class PerceptionController : MonoBehaviour
         CancelInvoke(nameof(EmitSnapshot));
     }
 
+    /// <summary>
+    /// Re-arms TargetConfirmed so it can fire again WITHOUT requiring LOS to break
+    /// first. Called by TerroristController when a retreat ends: if the player kept
+    /// the NPC in continuous view through the whole retreat, the original confirm
+    /// flag is still set and the NPC would otherwise never re-escalate to Engage.
+    /// The confirm timer restarts, so re-engage still takes targetConfirmTime.
+    /// </summary>
+    public void RearmTargetConfirmation()
+    {
+        _targetConfirmedRaised = false;
+        _continuousLosTime     = 0f;
+    }
+
     // ── Perception tick ───────────────────────────────────────────────────────
 
     void PerceptionTick()

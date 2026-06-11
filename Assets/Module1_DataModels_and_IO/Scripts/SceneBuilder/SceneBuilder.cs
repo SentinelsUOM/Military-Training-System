@@ -19,8 +19,10 @@
 //
 // DISCREPANCIES vs CLAUDE.md (resolved against the actual code):
 //   * IdleMode is a top-level enum (global namespace), not TerroristController.IdleMode.
-//   * PatrolLine accepts only two waypoints (pointA / pointB) - the navigation
-//     context's waypoints[] is collapsed to first/last for the patrol segment.
+//   * PatrolLine supports multi-segment routes - the navigation context's full
+//     ordered waypoints[] is passed via SetWaypoints() along with the looping
+//     flag (loop vs ping-pong). pointA/pointB are still populated for legacy
+//     tooling that reads the two-point fields.
 //   * staticFaceTarget is a Transform; we create a child "FaceTarget" stub
 //     positioned along navigationContext.facingDirection from the NPC.
 //   * Hostage initial state is set on HostageController.currentState (enum),
@@ -175,9 +177,13 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 BuildRooms(scenario);
                 BuildDoors(scenario);
                 PositionTrainee(scenario);
+                // Bake BEFORE spawning NPCs: NavMeshAgent attaches to the mesh in
+                // OnEnable, so spawning first throws "Failed to create agent because
+                // it is not close enough to the NavMesh" and leaves agents dead
+                // (NPCs can shoot but never walk).
+                BakeNavMesh();
                 SpawnHostages(scenario);
                 SpawnTerrorists(scenario);
-                BakeNavMesh();
 
                 OnSceneBuildComplete?.Invoke(scenario);
 
@@ -397,6 +403,26 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     controller.staticFaceTarget = MakeFaceTargetStub(controller.transform, nav);
                     break;
             }
+
+            // ── Module 2 combat role + squad (Module 2's territory per HANDOFF §4) ──
+            // Without this, generated missions have no squads and no Leader, so
+            // Ring-1 alert propagation and Converge/Flank directives never fire.
+            // Mapping rationale:
+            //   HostageGuardian → Leader (mission-critical, commands the squad)
+            //   StationaryGuard → Guard  (role bonus on RoomBreached)
+            //   Patrol / RoamingGuard → Roamer (mobile; role bonus on GunshotHeard)
+            // All terrorists in a scenario share one squad so coordination spans
+            // the whole site.
+            NPCRole combatRole = role.role switch
+            {
+                NpcRole.HostageGuardian => NPCRole.Leader,
+                NpcRole.StationaryGuard => NPCRole.Guard,
+                NpcRole.Patrol          => NPCRole.Roamer,
+                NpcRole.RoamingGuard    => NPCRole.Roamer,
+                _                       => NPCRole.Guard,
+            };
+
+            controller.AssignRoleAndSquad(combatRole, "squad_alpha");
         }
 
         private void ConfigurePatrolLine(TerroristController controller, NavigationContextEntry nav)
@@ -413,12 +439,23 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (patrol == null) patrol = controller.gameObject.AddComponent<PatrolLine>();
             controller.patrolLine = patrol;
 
-            // PatrolLine only supports two waypoints; collapse to first/last.
-            Vector3 first = nav.waypoints[0].ToVector3();
-            Vector3 last  = nav.waypoints[nav.waypoints.Count - 1].ToVector3();
+            // Hand the FULL ordered waypoint list to PatrolLine (multi-segment
+            // routes supported since the Module 2 PatrolLine upgrade). The
+            // navigationContext 'looping' flag picks loop vs ping-pong traversal.
+            var stubs = new List<Transform>(nav.waypoints.Count);
+            for (int i = 0; i < nav.waypoints.Count; i++)
+            {
+                stubs.Add(MakeWaypointStub(
+                    $"Patrol_{i}_{controller.gameObject.name}",
+                    nav.waypoints[i].ToVector3()));
+            }
 
-            patrol.pointA = MakeWaypointStub($"Patrol_A_{controller.gameObject.name}", first);
-            patrol.pointB = MakeWaypointStub($"Patrol_B_{controller.gameObject.name}", last);
+            patrol.SetWaypoints(stubs, nav.looping ?? false);
+
+            // Keep the legacy two-point fields populated so older tooling /
+            // inspector checks that read pointA/pointB still see a valid line.
+            patrol.pointA = stubs[0];
+            patrol.pointB = stubs[stubs.Count - 1];
         }
 
         private float ComputeWanderRadius(NavigationContextEntry nav, ScenarioData scenario)

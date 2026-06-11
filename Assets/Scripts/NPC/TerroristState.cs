@@ -11,5 +11,6 @@ public enum TerroristState
     Alert,       // Confirmed threat nearby — holding position, scanning
     Engage,      // Actively firing — blocks further event responses
     TakeCover,   // Moving to / sheltering at a CoverPoint
+    Retreat,     // Health low — falling back away from the threat (once per life)
     Down,        // Terminal — health reached 0; no further responses
 }
