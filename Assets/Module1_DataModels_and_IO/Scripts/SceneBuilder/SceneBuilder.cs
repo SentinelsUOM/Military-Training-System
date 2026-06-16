@@ -62,6 +62,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         [Tooltip("Door prefab placed at every DoorData position.")]
         public GameObject doorPrefab;
 
+        [Tooltip("Material applied to procedurally built wall segments. If left " +
+                 "empty, the wall material is borrowed from the room prefab's floor.")]
+        public Material wallMaterial;
+
         [Header("NPC Prefabs")]
         [Tooltip("Terrorist prefab. Must have a TerroristController component.")]
         public GameObject terroristPrefab;
@@ -103,6 +107,20 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private const string DOORS_ROOT = "Doors";
         private const string NPCS_ROOT  = "NPCs";
 
+        // ── Wall geometry (mirrors ScenePrefabBuilder so walls, floors and doors
+        //    line up exactly) ──────────────────────────────────────────────────
+        // Module 1 leaves a 2 m corridor gap between adjacent room centres; each
+        // room's outer wall sits half that gap (1 m) beyond its nominal extent so
+        // neighbouring walls meet on a shared plane and the 2 m door opening lands
+        // flush in it.
+        private const float CorridorGap   = 2f;   // gap Module 1 leaves between rooms
+        private const float DoorGap       = 2f;   // width of the door opening in a wall
+        private const float WallThickness = 0.12f;
+        // Height of the door opening. Above this, a header (transom) fills the
+        // wall up to the ceiling so doorways aren't open to the full wall height.
+        // Matches the door prefab's leaf top and jamb height (2.1 m).
+        private const float DoorOpeningHeight = 2.1f;
+
         private Transform _roomsRoot;
         private Transform _doorsRoot;
         private Transform _npcsRoot;
@@ -111,6 +129,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             new Dictionary<string, GameObject>();
 
         private readonly HashSet<string> _placedDoorPairs = new HashSet<string>();
+
+        // An opening carved in a room's exterior wall for a building entry point,
+        // plus the door placed there. Keyed by room id.
+        private struct EntryOpening
+        {
+            public WallSide side;
+            public Vector3  position;
+            public string   id;
+        }
+
+        private readonly Dictionary<string, List<EntryOpening>> _entryOpenings =
+            new Dictionary<string, List<EntryOpening>>();
 
         private NavMeshSurface _navMeshSurface;
 
@@ -172,8 +202,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
                 ActiveScenario = scenario;
 
+                ComputeEntryOpenings(scenario);
                 BuildRooms(scenario);
                 BuildDoors(scenario);
+                BuildEntryDoors(scenario);
                 PositionTrainee(scenario);
                 SpawnHostages(scenario);
                 SpawnTerrorists(scenario);
@@ -207,6 +239,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             _roomObjects.Clear();
             _placedDoorPairs.Clear();
+            _entryOpenings.Clear();
 
             if (traineeRig != null)
             {
@@ -247,7 +280,128 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                                             _roomsRoot);
                 go.name = room.id;
                 _roomObjects[room.id] = go;
+
+                BuildWalls(room, go);
             }
+        }
+
+        /// <summary>
+        /// Procedurally builds the four walls of a room from its door data. A
+        /// wall side that carries a door gets two segments framing a 2 m opening;
+        /// a side with no door gets a single solid wall. This makes the geometry
+        /// match connectivity exactly — no more open holes on unconnected walls,
+        /// and the building perimeter is fully enclosed.
+        /// </summary>
+        private void BuildWalls(RoomData room, GameObject roomGo)
+        {
+            Material mat = ResolveWallMaterial(roomGo);
+
+            float height = room.size != null && room.size.height > 0f ? room.size.height : 3f;
+            float width  = room.size != null && room.size.width  > 0f ? room.size.width  : 6f;
+            float depth  = room.size != null && room.size.depth  > 0f ? room.size.depth  : 6f;
+
+            // Outer extents: nominal size extended by half the corridor gap on
+            // each side, so adjacent rooms' walls meet on the shared plane.
+            float halfW = (width + CorridorGap) * 0.5f;
+            float halfD = (depth + CorridorGap) * 0.5f;
+            float outerW = width + CorridorGap;
+            float outerD = depth + CorridorGap;
+
+            var doorSides = new HashSet<WallSide>();
+            if (room.doors != null)
+                foreach (DoorData d in room.doors) doorSides.Add(d.wallSide);
+
+            // Exterior building entrances also need an opening in the perimeter
+            // wall, otherwise the trainee spawns outside a sealed building.
+            if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
+                foreach (EntryOpening e in openings) doorSides.Add(e.side);
+
+            // North / South run along X (span = outerW, thin in Z).
+            BuildWallSide(roomGo, "South", doorSides.Contains(WallSide.South),
+                          axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height, mat: mat);
+            BuildWallSide(roomGo, "North", doorSides.Contains(WallSide.North),
+                          axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height, mat: mat);
+
+            // East / West run along Z (span = outerD, thin in X).
+            BuildWallSide(roomGo, "East", doorSides.Contains(WallSide.East),
+                          axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height, mat: mat);
+            BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West),
+                          axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height, mat: mat);
+        }
+
+        /// <summary>
+        /// Builds one side of a room: either a single solid wall, or two segments
+        /// framing a centred <see cref="DoorGap"/>-wide opening when a door is
+        /// present. <paramref name="axisAlongX"/> selects whether the wall runs
+        /// along X (north/south) or Z (east/west).
+        /// </summary>
+        private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor,
+                                   bool axisAlongX, float fixedCoord, float span,
+                                   float height, Material mat)
+        {
+            if (!hasDoor)
+            {
+                AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
+                               offset: 0f, length: span, height: height, mat: mat);
+                return;
+            }
+
+            float segLen = (span - DoorGap) * 0.5f;
+            if (segLen <= 0f) return; // opening as wide as the wall — leave it open
+
+            // Full-height segments either side of the opening.
+            float segOffset = DoorGap * 0.5f + segLen * 0.5f;
+            AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
+                           offset: -segOffset, length: segLen, height: height, mat: mat);
+            AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
+                           offset:  segOffset, length: segLen, height: height, mat: mat);
+
+            // Header (transom) filling the wall above the door opening, so the
+            // doorway isn't open all the way to the ceiling.
+            float headerHeight = height - DoorOpeningHeight;
+            if (headerHeight > 0.01f)
+                AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
+                               offset: 0f, length: DoorGap, height: headerHeight,
+                               mat: mat, baseY: DoorOpeningHeight);
+        }
+
+        private void AddWallSegment(GameObject roomGo, string name, bool axisAlongX,
+                                    float fixedCoord, float offset, float length,
+                                    float height, Material mat, float baseY = 0f)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = name;
+            go.transform.SetParent(roomGo.transform, worldPositionStays: false);
+
+            float centerY = baseY + height * 0.5f;
+            if (axisAlongX)
+            {
+                // Runs along X at z = fixedCoord.
+                go.transform.localPosition = new Vector3(offset, centerY, fixedCoord);
+                go.transform.localScale    = new Vector3(length, height, WallThickness);
+            }
+            else
+            {
+                // Runs along Z at x = fixedCoord.
+                go.transform.localPosition = new Vector3(fixedCoord, centerY, offset);
+                go.transform.localScale    = new Vector3(WallThickness, height, length);
+            }
+
+            if (mat != null)
+                go.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>
+        /// Returns the wall material: the explicit <see cref="wallMaterial"/> if
+        /// assigned, otherwise the material on the room prefab's first renderer
+        /// (e.g. its floor), so walls visually match the room even when the
+        /// inspector slot is left empty.
+        /// </summary>
+        private Material ResolveWallMaterial(GameObject roomGo)
+        {
+            if (wallMaterial != null) return wallMaterial;
+            Renderer r = roomGo.GetComponentInChildren<Renderer>();
+            return r != null ? r.sharedMaterial : null;
         }
 
         private void BuildDoors(ScenarioData scenario)
@@ -274,8 +428,87 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                                                 rot,
                                                 _doorsRoot);
                     go.name = door.id;
+
+                    // Drive the door's initial open/closed/locked state from
+                    // Module 1's generated door data.
+                    GeneratedDoor gd = go.GetComponent<GeneratedDoor>();
+                    if (gd != null) gd.state = door.state;
                 }
             }
+        }
+
+        /// <summary>
+        /// Maps each building entry point to the exterior wall it pierces, so
+        /// BuildWalls can carve an opening there and BuildEntryDoors can place a
+        /// door. Entry points sit exactly on the room's outer wall plane, so the
+        /// wall side is just the dominant axis of (entryPos − roomCentre).
+        /// </summary>
+        private void ComputeEntryOpenings(ScenarioData scenario)
+        {
+            _entryOpenings.Clear();
+
+            List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
+            if (entryPoints == null) return;
+
+            foreach (EntryPointData ep in entryPoints)
+            {
+                if (ep == null || string.IsNullOrEmpty(ep.roomId)) continue;
+
+                RoomData room = scenario.layout.rooms.Find(r => r.id == ep.roomId);
+                if (room == null) continue;
+
+                Vector3 delta = ep.position.ToVector3() - room.position.ToVector3();
+                WallSide side = WallSideFromDelta(delta);
+
+                // If a neighbouring room already sits on this side (interior door
+                // present), the wall is not exterior — skip to avoid two doors
+                // overlapping in the same opening.
+                if (room.doors != null && room.doors.Exists(d => d.wallSide == side))
+                    continue;
+
+                if (!_entryOpenings.TryGetValue(ep.roomId, out List<EntryOpening> list))
+                {
+                    list = new List<EntryOpening>();
+                    _entryOpenings[ep.roomId] = list;
+                }
+                list.Add(new EntryOpening
+                {
+                    side     = side,
+                    position = ep.position.ToVector3(),
+                    id       = ep.id
+                });
+            }
+        }
+
+        /// <summary>
+        /// Places an exterior door at every building entry point. These are the
+        /// breach points into the building; they start closed so the trainee
+        /// opens them on the way in. The interior wall already has the matching
+        /// opening carved by BuildWalls.
+        /// </summary>
+        private void BuildEntryDoors(ScenarioData scenario)
+        {
+            if (doorPrefab == null || _entryOpenings.Count == 0) return;
+
+            foreach (KeyValuePair<string, List<EntryOpening>> kvp in _entryOpenings)
+            {
+                foreach (EntryOpening opening in kvp.Value)
+                {
+                    Quaternion rot = DoorRotation(opening.side);
+                    GameObject go = Instantiate(doorPrefab, opening.position, rot, _doorsRoot);
+                    go.name = $"door_{opening.id}";
+
+                    GeneratedDoor gd = go.GetComponent<GeneratedDoor>();
+                    if (gd != null) gd.state = DoorState.Closed;
+                }
+            }
+        }
+
+        private static WallSide WallSideFromDelta(Vector3 delta)
+        {
+            if (Mathf.Abs(delta.x) >= Mathf.Abs(delta.z))
+                return delta.x > 0 ? WallSide.East : WallSide.West;
+            return delta.z > 0 ? WallSide.North : WallSide.South;
         }
 
         private void PositionTrainee(ScenarioData scenario)
@@ -472,6 +705,13 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             // Without this scope, NavMeshSurface defaults to CollectObjects.All and
             // tries to voxelise every Renderer in the scene (XRI rig, environment,
             // etc.), which can hang the editor for tens of seconds on Start Mission.
+            //
+            // This recursively includes each room's procedurally built wall
+            // segments (so solid walls block pathing) while the 2 m door openings
+            // stay walkable. Doors live under the separate Doors container and are
+            // intentionally excluded from the bake: each door leaf carries a
+            // carving NavMeshObstacle that severs the navmesh across the doorway
+            // only while closed/locked, and GeneratedDoor disables it when open.
             _navMeshSurface.collectObjects = CollectObjects.Children;
 
             try

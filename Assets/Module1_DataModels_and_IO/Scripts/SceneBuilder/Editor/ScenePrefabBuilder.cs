@@ -18,6 +18,8 @@ using TeamSentinels.ScenarioGeneration.Scene;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.AI;
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
 
 namespace TeamSentinels.ScenarioGeneration.EditorTools
 {
@@ -72,7 +74,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
 
                 EnsureGroundPlane(groundMat);
 
-                int wired = WireSceneBuilder(smallPath, medPath, largePath, doorPath);
+                int wired = WireSceneBuilder(smallPath, medPath, largePath, doorPath, wallMat);
 
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
@@ -104,16 +106,17 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
 
         // ── Room prefab construction ─────────────────────────────────────────
 
-        // Builds a square room of the given nominal width (matches Module 1's
-        // room.size). Floor and walls are extended outward by CorridorHalf (1 m)
-        // so adjacent rooms meet exactly in the middle of Module 1's 2 m corridor
-        // gap and doors land flush with wall openings instead of floating in
-        // empty corridor space. Saves to disk as a prefab and returns the path.
+        // Builds a square room floor of the given nominal width (matches Module
+        // 1's room.size). The floor is extended outward by CorridorHalf (1 m) so
+        // adjacent rooms meet exactly in the middle of Module 1's 2 m corridor
+        // gap. Walls are no longer baked into the prefab: SceneBuilder builds them
+        // procedurally at runtime from each room's door data, so a wall is solid
+        // unless a door is defined on it. Saves to disk as a prefab and returns
+        // the path. (wallMat is kept for signature symmetry / future use.)
         private static string BuildRoomPrefab(string name, float nominalSize, Material floorMat, Material wallMat)
         {
             const float CorridorHalf = 1f;                     // half of the 2 m corridor gap Module 1 leaves between rooms
             float outerSize          = nominalSize + 2f * CorridorHalf;
-            float halfSize           = outerSize * 0.5f;
 
             var root = new GameObject(name);
 
@@ -125,45 +128,6 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             floor.transform.localScale    = new Vector3(outerSize, FloorThickness, outerSize);
             floor.GetComponent<Renderer>().sharedMaterial = floorMat;
 
-            // ── Walls: 8 segments (2 per side, around the central 2 m gap) ──
-            // Walls live on the outer (extended) edge so adjacent rooms' walls
-            // meet at the same plane, with the door slotting into the shared
-            // 2 m opening.
-            float seg           = (outerSize - DoorGap) * 0.5f; // length of each segment
-            float segCenterDist = DoorGap * 0.5f + seg * 0.5f;  // distance from room centre to segment centre
-
-            // South wall (z = -halfSize), runs along X
-            AddWall(root, "South_Left",
-                new Vector3(-segCenterDist, WallHeight * 0.5f, -halfSize),
-                new Vector3(seg, WallHeight, WallThickness), wallMat);
-            AddWall(root, "South_Right",
-                new Vector3( segCenterDist, WallHeight * 0.5f, -halfSize),
-                new Vector3(seg, WallHeight, WallThickness), wallMat);
-
-            // North wall (z = +halfSize)
-            AddWall(root, "North_Left",
-                new Vector3(-segCenterDist, WallHeight * 0.5f,  halfSize),
-                new Vector3(seg, WallHeight, WallThickness), wallMat);
-            AddWall(root, "North_Right",
-                new Vector3( segCenterDist, WallHeight * 0.5f,  halfSize),
-                new Vector3(seg, WallHeight, WallThickness), wallMat);
-
-            // East wall (x = +halfSize), runs along Z
-            AddWall(root, "East_Front",
-                new Vector3( halfSize, WallHeight * 0.5f, -segCenterDist),
-                new Vector3(WallThickness, WallHeight, seg), wallMat);
-            AddWall(root, "East_Back",
-                new Vector3( halfSize, WallHeight * 0.5f,  segCenterDist),
-                new Vector3(WallThickness, WallHeight, seg), wallMat);
-
-            // West wall (x = -halfSize)
-            AddWall(root, "West_Front",
-                new Vector3(-halfSize, WallHeight * 0.5f, -segCenterDist),
-                new Vector3(WallThickness, WallHeight, seg), wallMat);
-            AddWall(root, "West_Back",
-                new Vector3(-halfSize, WallHeight * 0.5f,  segCenterDist),
-                new Vector3(WallThickness, WallHeight, seg), wallMat);
-
             string path = $"{PrefabsFolder}/{name}.prefab";
             AssetDatabase.DeleteAsset(path); // idempotent rebuild
             PrefabUtility.SaveAsPrefabAsset(root, path);
@@ -171,8 +135,8 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             return path;
         }
 
-        private static void AddWall(GameObject parent, string name,
-                                    Vector3 localPos, Vector3 localScale, Material mat)
+        private static GameObject AddWall(GameObject parent, string name,
+                                          Vector3 localPos, Vector3 localScale, Material mat)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = name;
@@ -180,14 +144,27 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             go.transform.localPosition = localPos;
             go.transform.localScale    = localScale;
             go.GetComponent<Renderer>().sharedMaterial = mat;
+            return go;
+        }
+
+        // Removes the auto-created BoxCollider from a primitive used as pure
+        // decoration (door frame pieces), so it cannot push the physics leaf.
+        private static void StripCollider(GameObject go)
+        {
+            var col = go.GetComponent<Collider>();
+            if (col != null) Object.DestroyImmediate(col);
         }
 
         // ── Door prefab construction ─────────────────────────────────────────
 
-        // Doorframe (two jambs + lintel) + a wide door panel that fills the
-        // 2 m wall opening Module 1 carves on every wall. Default orientation:
-        // length along X axis, so SceneBuilder's identity rotation maps to N/S
-        // walls and 90deg-Y maps to E/W walls.
+        // Interactive hinged door: doorframe (two decorative jambs + lintel) + a
+        // physics swing leaf the trainee grabs and pushes. The leaf is the only
+        // Rigidbody (no nested rigidbodies — those made the leaf sag and tilt);
+        // NPC proximity is detected by GeneratedDoor via Physics.OverlapBox, so
+        // the root needs no Rigidbody or trigger. The leaf carries a carving
+        // NavMeshObstacle (blocks NPC pathing while shut). Default orientation:
+        // span along X, so SceneBuilder's identity rotation maps to N/S walls and
+        // 90deg-Y maps to E/W walls.
         private static string BuildDoorPrefab(Material doorMat, Material frameMat)
         {
             var root = new GameObject("DoorVisual");
@@ -197,34 +174,84 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             float frameSpan      = DoorGap;             // 2 m - matches wall opening
             float halfFrame      = frameSpan * 0.5f;
             const float panelH   = 2.0f;
-            const float jambH    = 2.2f;
+            const float jambH    = 2.1f;                // = floorClear + panelH; matches wall opening height
             const float jambD    = 0.18f;
             const float jambW    = 0.12f;
+            const float floorClear = 0.1f;              // lift leaf off the floor to avoid penetration
 
-            // Jambs sit at x = ±1 m so they're flush with the edges of the
-            // wall opening (the wall has a 2 m gap centred on its midline).
-            AddWall(root, "JambLeft",
+            // Side jambs only — the wall header (built by SceneBuilder above the
+            // opening) forms the top of the doorway, so no lintel is needed here.
+            // Jambs are decoration; strip their colliders so they never push the
+            // physics leaf (the room wall segments do the real blocking).
+            StripCollider(AddWall(root, "JambLeft",
                 new Vector3(-halfFrame + jambW * 0.5f, jambH * 0.5f, 0f),
-                new Vector3(jambW, jambH, jambD), frameMat);
-            AddWall(root, "JambRight",
+                new Vector3(jambW, jambH, jambD), frameMat));
+            StripCollider(AddWall(root, "JambRight",
                 new Vector3( halfFrame - jambW * 0.5f, jambH * 0.5f, 0f),
-                new Vector3(jambW, jambH, jambD), frameMat);
-            AddWall(root, "Lintel",
-                new Vector3(0f, jambH + 0.05f, 0f),
-                new Vector3(frameSpan, 0.15f, jambD), frameMat);
+                new Vector3(jambW, jambH, jambD), frameMat));
 
-            // Door panel: spans the full opening between the jambs (just inside
-            // them so the jambs are still visible). Trigger collider so the
-            // trainee can walk through, but the panel renders as a solid door.
-            float panelW = frameSpan - jambW * 2f - 0.02f;
-            var panel = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            panel.name = "Panel";
-            panel.transform.SetParent(root.transform, false);
-            panel.transform.localPosition = new Vector3(0f, panelH * 0.5f, 0f);
-            panel.transform.localScale    = new Vector3(panelW, panelH, 0.05f);
-            panel.GetComponent<Renderer>().sharedMaterial = doorMat;
-            var panelCollider = panel.GetComponent<BoxCollider>();
-            if (panelCollider != null) panelCollider.isTrigger = true;
+            // ── Swing leaf: the leaf's PIVOT is placed on the hinge edge (inner
+            //    face of the left jamb) and the mesh/collider is offset across
+            //    the opening from there. This way the leaf rotates about its own
+            //    transform origin = the hinge edge, so the physics hinge and the
+            //    kinematic NPC/test drive both swing about the same line. (If the
+            //    pivot were at the centre, the kinematic drive would spin the
+            //    door about its middle instead of its edge.) ───────────────────
+            float panelW    = frameSpan - jambW * 2f;     // 1.76 m for a 2 m opening
+            float halfPanel = panelW * 0.5f;
+            float leafCY    = floorClear + panelH * 0.5f; // leaf centre height (bottom at floorClear)
+
+            var leaf = new GameObject("Leaf");
+            leaf.transform.SetParent(root.transform, false);
+            leaf.transform.localPosition = new Vector3(-halfPanel, 0f, 0f); // pivot on the hinge edge
+
+            var leafBody = leaf.AddComponent<Rigidbody>();
+            leafBody.useGravity  = false;   // vertical hinge; gravity would only add drift
+            leafBody.isKinematic = false;
+            leafBody.mass        = 10f;
+            leafBody.angularDamping  = 3f;     // damp wobble after a push
+            // Hinge fixes position; freezing X/Z rotation stops any forward/side
+            // tilt so the leaf can only swing about its vertical hinge.
+            leafBody.constraints = RigidbodyConstraints.FreezeRotationX |
+                                   RigidbodyConstraints.FreezeRotationZ;
+            leafBody.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            leafBody.interpolation          = RigidbodyInterpolation.Interpolate;
+
+            var hinge = leaf.AddComponent<HingeJoint>();
+            hinge.anchor    = new Vector3(0f, leafCY, 0f); // at the leaf pivot = hinge edge
+            hinge.axis      = new Vector3(0f, 1f, 0f);     // swing about vertical
+            hinge.useLimits = true;
+            hinge.limits    = new JointLimits { min = 0f, max = 90f };
+
+            var grab = leaf.AddComponent<XRGrabInteractable>();
+            grab.movementType   = XRGrabInteractable.MovementType.VelocityTracking; // keep the joint in charge
+            grab.throwOnDetach  = false;
+            grab.useDynamicAttach = true;   // grab anywhere on the leaf
+
+            var obstacle = leaf.AddComponent<NavMeshObstacle>();
+            obstacle.shape   = NavMeshObstacleShape.Box;
+            obstacle.carving = true;
+            obstacle.center  = new Vector3(halfPanel, leafCY, 0f); // mesh spans from the pivot edge
+            obstacle.size    = new Vector3(panelW, panelH, 0.4f);  // widen carve depth past the thin leaf
+
+            // Visual + solid collider child, offset so it spans from the hinge
+            // edge (the leaf pivot) across the opening.
+            var leafMesh = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            leafMesh.name = "LeafMesh";
+            leafMesh.transform.SetParent(leaf.transform, false);
+            leafMesh.transform.localPosition = new Vector3(halfPanel, leafCY, 0f);
+            leafMesh.transform.localScale    = new Vector3(panelW, panelH, 0.06f);
+            leafMesh.GetComponent<Renderer>().sharedMaterial = doorMat;
+            var leafCollider = leafMesh.GetComponent<BoxCollider>();
+            if (leafCollider != null) leafCollider.isTrigger = false;
+
+            var door = root.AddComponent<GeneratedDoor>();
+            door.leafBody    = leafBody;
+            door.hinge       = hinge;
+            door.grab        = grab;
+            door.navObstacle = obstacle;
+            door.sensorCenter      = new Vector3(0f, leafCY, 0f);
+            door.sensorHalfExtents = new Vector3(halfFrame + 0.4f, panelH * 0.5f, 1.2f);
 
             string path = $"{PrefabsFolder}/DoorVisual.prefab";
             AssetDatabase.DeleteAsset(path);
@@ -250,7 +277,8 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
         // ── SceneBuilder wiring ──────────────────────────────────────────────
 
         private static int WireSceneBuilder(string smallPath, string mediumPath,
-                                            string largePath, string doorPath)
+                                            string largePath, string doorPath,
+                                            Material wallMat)
         {
 #if UNITY_2022_2_OR_NEWER
             var sb = Object.FindFirstObjectByType<SceneBuilder>();
@@ -275,6 +303,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             if (mediumPrefab != null) { sb.roomPrefabMedium = mediumPrefab; wired++; }
             if (largePrefab  != null) { sb.roomPrefabLarge  = largePrefab;  wired++; }
             if (doorPrefab   != null) { sb.doorPrefab       = doorPrefab;   wired++; }
+            if (wallMat      != null) { sb.wallMaterial     = wallMat;            }
 
             EditorUtility.SetDirty(sb);
             return wired;

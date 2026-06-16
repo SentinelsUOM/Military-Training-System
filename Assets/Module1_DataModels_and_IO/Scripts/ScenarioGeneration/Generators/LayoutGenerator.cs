@@ -86,6 +86,9 @@ namespace TeamSentinels.ScenarioGeneration.Generators
             AssignRoomTypes(rooms);
             AssignZoneLabels(rooms);
 
+            // Stage 5b — Door initial state (needs room types from Stage 5)
+            AssignDoorStates(rooms, rand, rng);
+
             // Stage 6 — Entry points
             List<EntryPointData> entryPoints = CreateEntryPoints(rooms, entryType, roomSize, rng);
 
@@ -399,6 +402,64 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                 case WallSide.East:  return WallSide.West;
                 default:             return WallSide.East; // West → East
             }
+        }
+
+        // ── Stage 5b: Door Initial State ─────────────────────────────────────
+
+        /// <summary>
+        /// Assigns each door an initial <see cref="DoorState"/> using a fixed,
+        /// realism-driven policy (no evaluator knob): entry-room doors open as
+        /// breach points, the hostage-room door is locked, and interior doors
+        /// are mostly closed with a seeded fraction left open so corridors are
+        /// not monotonous. Both reciprocal records for an edge receive the same
+        /// state. The open fraction scales with <paramref name="rand"/> so
+        /// low-randomness scenarios stay deterministic and tidy.
+        /// </summary>
+        private static void AssignDoorStates(List<RoomData> rooms, RandomnessLevel rand, System.Random rng)
+        {
+            var roomMap   = rooms.ToDictionary(r => r.id);
+            var processed = new HashSet<string>(StringComparer.Ordinal);
+
+            // Chance an ordinary interior door starts open, by randomness level.
+            double openChance =
+                rand == RandomnessLevel.Low  ? 0.0 :
+                rand == RandomnessLevel.High ? 0.35 : 0.2;
+
+            foreach (RoomData room in rooms.OrderBy(r => r.id, StringComparer.Ordinal))
+            {
+                if (room.doors == null) continue;
+
+                foreach (DoorData door in room.doors)
+                {
+                    // Process each undirected edge once, keyed by shared door id.
+                    if (!processed.Add(door.id)) continue;
+
+                    RoomData neighbour = roomMap[door.connectsToRoomId];
+                    DoorState state = DecideDoorState(room, neighbour, openChance, rng);
+
+                    door.state = state;
+
+                    // Mirror onto the reciprocal record so both ends agree.
+                    DoorData reciprocal = neighbour.doors?
+                        .Find(d => string.Equals(d.id, door.id, StringComparison.Ordinal));
+                    if (reciprocal != null) reciprocal.state = state;
+                }
+            }
+        }
+
+        private static DoorState DecideDoorState(
+            RoomData a, RoomData b, double openChance, System.Random rng)
+        {
+            // Hostage-room doors are locked (sub-objective); takes precedence.
+            if (a.type == RoomType.HostageRoom || b.type == RoomType.HostageRoom)
+                return DoorState.Locked;
+
+            // Entry/breach doors start open.
+            if (a.type == RoomType.Entry || b.type == RoomType.Entry)
+                return DoorState.Open;
+
+            // Ordinary interior doors: mostly closed, occasionally open.
+            return rng.NextDouble() < openChance ? DoorState.Open : DoorState.Closed;
         }
 
         // ── Stage 5: Room Metadata ────────────────────────────────────────────

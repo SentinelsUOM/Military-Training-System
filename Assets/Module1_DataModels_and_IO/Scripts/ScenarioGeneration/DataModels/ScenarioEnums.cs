@@ -192,6 +192,25 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
     }
 
     /// <summary>
+    /// Initial state of a door at scene build time.
+    /// open = leaf swung open (e.g. breach/entry doors);
+    /// closed = shut but openable;
+    /// locked = shut and held until unlocked (e.g. hostage-room door).
+    /// </summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum DoorState
+    {
+        [EnumMember(Value = "open")]
+        Open,
+
+        [EnumMember(Value = "closed")]
+        Closed,
+
+        [EnumMember(Value = "locked")]
+        Locked
+    }
+
+    /// <summary>
     /// Entity actor type used across all modules for stable identification.
     /// </summary>
     [JsonConverter(typeof(StringEnumConverter))]
