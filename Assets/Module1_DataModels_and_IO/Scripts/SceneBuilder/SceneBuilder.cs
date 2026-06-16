@@ -76,6 +76,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "reposition this; we never instantiate a new rig.")]
         public Transform traineeRig;
 
+        [Header("Safe Zone / Extraction")]
+        [Tooltip("Spawn a visible 'safe spot' (extraction zone) at the trainee's start " +
+                 "position. Lead a rescued hostage back into it to complete the mission.")]
+        public bool createSafeZone = true;
+
+        [Tooltip("Radius (metres) of the safe-spot trigger and its floor marker.")]
+        public float safeZoneRadius = 2.5f;
+
+        [Tooltip("Colour of the safe-spot floor marker.")]
+        public Color safeZoneColor = new Color(0.2f, 1f, 0.4f, 1f);
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -115,6 +126,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private readonly HashSet<string> _placedDoorPairs = new HashSet<string>();
 
         private NavMeshSurface _navMeshSurface;
+        private GameObject _safeZone;   // visible extraction point spawned at the trainee start
 
         // ── Public methods ───────────────────────────────────────────────────
 
@@ -177,6 +189,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 BuildRooms(scenario);
                 BuildDoors(scenario);
                 PositionTrainee(scenario);
+                CreateSafeZone(scenario);
                 // Bake BEFORE spawning NPCs: NavMeshAgent attaches to the mesh in
                 // OnEnable, so spawning first throws "Failed to create agent because
                 // it is not close enough to the NavMesh" and leaves agents dead
@@ -210,6 +223,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
+
+            if (_safeZone != null)
+            {
+                if (Application.isPlaying) Destroy(_safeZone); else DestroyImmediate(_safeZone);
+                _safeZone = null;
+            }
 
             _roomObjects.Clear();
             _placedDoorPairs.Clear();
@@ -332,7 +351,65 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
                 EntityRecord record = FindEntity(scenario, sp.entityId);
                 controller.currentState = ParseHostageState(record?.metadata?.initialState);
+
+                // Ensure the hostage can detect the trainee for the escort.
+                // HostageContactZone polls for the player and raises
+                // HostageContactStarted → the hostage enters Follow. Add it here so
+                // rescue works even if the prefab doesn't already carry the component.
+                if (go.GetComponentInChildren<HostageContactZone>() == null)
+                    go.AddComponent<HostageContactZone>();
             }
+        }
+
+        /// <summary>
+        /// Spawns a visible "safe spot" (extraction zone) at the trainee's start
+        /// position. The trainee leads a rescued (Following) hostage back into this
+        /// zone to complete the mission. A flat coloured disc marks it on the floor;
+        /// a trigger SphereCollider + ExtractionZone component do the detection.
+        /// </summary>
+        private void CreateSafeZone(ScenarioData scenario)
+        {
+            if (!createSafeZone) return;
+
+            TraineeSpawnPoint t = scenario.spawnPoints?.trainee;
+            if (t == null) return;
+
+            Vector3 pos = t.position.ToVector3();
+
+            _safeZone = new GameObject("SafeZone_Extraction");
+            _safeZone.transform.position = pos;
+
+            // Trigger volume + detection logic.
+            var sphere = _safeZone.AddComponent<SphereCollider>();
+            sphere.isTrigger = true;
+            sphere.radius = safeZoneRadius;
+            _safeZone.AddComponent<ExtractionZone>();
+
+            // Flat floor disc so the trainee can SEE the safe spot from the start.
+            var marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            marker.name = "Marker";
+            marker.transform.SetParent(_safeZone.transform, worldPositionStays: false);
+            marker.transform.localPosition = new Vector3(0f, 0.02f, 0f);
+            marker.transform.localScale    = new Vector3(safeZoneRadius * 2f, 0.02f, safeZoneRadius * 2f);
+
+            // The marker is purely visual — drop its collider so it can't block movement.
+            var markerCol = marker.GetComponent<Collider>();
+            if (markerCol != null)
+            {
+                if (Application.isPlaying) Destroy(markerCol); else DestroyImmediate(markerCol);
+            }
+
+            // Colour it (URP uses _BaseColor; set both for safety).
+            var rend = marker.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                var mat = rend.material;
+                mat.color = safeZoneColor;
+                if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", safeZoneColor);
+                rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+
+            Debug.Log($"[SceneBuilder] Safe zone created at trainee spawn {pos} (radius {safeZoneRadius}m).");
         }
 
         private void SpawnTerrorists(ScenarioData scenario)

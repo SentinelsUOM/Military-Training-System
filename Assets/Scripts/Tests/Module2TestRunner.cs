@@ -71,6 +71,9 @@ public class Module2TestRunner : MonoBehaviour
         yield return RunTest("Terrorist: low-health hit during Engage → Retreat (once)",
                              TestTerroristRetreat());
 
+        yield return RunTest("Terrorist: Alert with no re-acquire → gives up → Idle",
+                             TestTerroristAlertGiveUp());
+
         yield return RunTest("Hostage: Calm → Panic on close gunshot",
                              TestHostageCalmToPanic());
 
@@ -225,8 +228,11 @@ public class Module2TestRunner : MonoBehaviour
             ScenarioEventType.GunshotHeard, Vector3.forward * 5f));
         yield return WaitFrames(waitFramesBetweenSteps);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.PlayerSeen, Vector3.forward * 5f));
+        // Perception is personal — deliver PlayerSeen via the NPC's own
+        // detection path (HandleDetection), the same call PerceptionController
+        // makes. (It is intentionally NOT routed over the event bus anymore.)
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
         AssertEqual(TerroristState.Alert, t.currentState, "after PlayerSeen");
@@ -239,12 +245,12 @@ public class Module2TestRunner : MonoBehaviour
         var t = SpawnTerrorist("T_AlertEngage", Vector3.zero, NPCRole.Guard);
         yield return WaitFrames(1);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.PlayerSeen, Vector3.forward * 5f));
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f));
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
         AssertEqual(TerroristState.Engage, t.currentState, "after TargetConfirmed");
@@ -270,13 +276,14 @@ public class Module2TestRunner : MonoBehaviour
         var t = SpawnTerrorist("T_Retreat", Vector3.zero, NPCRole.Guard);
         yield return WaitFrames(1);
 
-        // Drive to Engage: PlayerSeen → Alert, TargetConfirmed → Engage
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.PlayerSeen, Vector3.forward * 5f));
+        // Drive to Engage via the NPC's own perception: PlayerSeen → Alert,
+        // TargetConfirmed → Engage.
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f));
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
         AssertEqual(TerroristState.Engage, t.currentState, "pre-condition: Engage");
@@ -293,6 +300,29 @@ public class Module2TestRunner : MonoBehaviour
         yield return WaitFrames(waitFramesBetweenSteps);
         AssertEqual(TerroristState.Retreat, t.currentState,
                     "state after second non-fatal hit (no re-trigger, no Down)");
+
+        Destroy(t.gameObject);
+    }
+
+    IEnumerator TestTerroristAlertGiveUp()
+    {
+        var t = SpawnTerrorist("T_GiveUp", Vector3.zero, NPCRole.Guard);
+        t.alertGiveUpTime = 0.3f;   // short so the test is fast
+        yield return WaitFrames(1);
+
+        // Personal sighting drives Idle → Alert.
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
+        yield return WaitFrames(waitFramesBetweenSteps);
+        AssertEqual(TerroristState.Alert, t.currentState, "after PlayerSeen");
+
+        // No further contact — after alertGiveUpTime it should resume patrol (Idle).
+        // (No NavMeshAgent here, so no search runs; the give-up timer is the path.)
+        float deadline = Time.time + 1.5f;
+        while (Time.time < deadline && t.currentState == TerroristState.Alert)
+            yield return null;
+
+        AssertEqual(TerroristState.Idle, t.currentState, "after give-up timeout");
 
         Destroy(t.gameObject);
     }

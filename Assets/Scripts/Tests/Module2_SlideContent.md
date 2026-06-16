@@ -23,7 +23,7 @@ This reflects what the code ACTUALLY does as of 2026-06-11.
 - **Multi-waypoint patrol routes** — PatrolLine consumes the full ordered waypoints[] from Module 1's navigationContext (loop or ping-pong traversal per the `looping` flag)
 - **Module 1 → Module 2 handoff** — `NotifyScenarioReady()` activates FSMs after NavMesh bake
 - **Telemetry stream stabilised for Module 4** — four JSON streams (StateChanges, Decisions, Snapshots, Directives) + `OnStateChangeLogged` C# event hook
-- **12 integration tests + ablation experiment runner** — `Module2TestRunner` and `AblationExperimentRunner` produce pass/fail and CSV evidence in play mode
+- **13 integration tests + ablation experiment runner** — `Module2TestRunner` and `AblationExperimentRunner` produce pass/fail and CSV evidence in play mode
 
 ---
 
@@ -62,7 +62,7 @@ If asked **"what about leader coordination?"** — say:
 
 # Demo checklist for the live evaluation
 
-1. **Test harness runs green** — open the test scene, attach `Module2TestRunner`, press Play, right-click → "TEST → Run All", show Console with all 12 tests passing
+1. **Test harness runs green** — open the test scene, attach `Module2TestRunner`, press Play, right-click → "TEST → Run All", show Console with all 13 tests passing
 2. **Leader-bias demo** — spawn a Leader + 2 squadmates with the same squadId, fire a test event on the Leader, show squadmates converging in scene view
 3. **Telemetry files exist** — open `Application.persistentDataPath/Telemetry/` and show the four JSON files + the ablation CSV
 4. **Full VR scenario** — Module 1 generates a scenario, SceneBuilder spawns NPCs, you play one mission, hostage panics on gunshot, terrorist investigates and engages, AAR shows the timeline

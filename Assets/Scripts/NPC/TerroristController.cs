@@ -66,6 +66,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Animator on this NPC (used to trigger death animation). Optional.")]
     public Animator animator;
 
+    [Tooltip("Planar movement speed (m/s) that maps to a FULL walk animation. The locomotion " +
+             "blend tree's 'Speed' parameter is set to (actual speed / this), clamped 0-1. " +
+             "Lower it if the legs cycle too slowly for the travel speed (foot-sliding); raise " +
+             "it if they cycle too fast. ~1.3 matches the default NavMeshAgent / PatrolLine speed.")]
+    public float walkAnimReferenceSpeed = 1.3f;
+
     [Tooltip("Vertical offset applied after death to make the body lie flat on the floor.\n" +
              "If the body floats above the floor → set this to a NEGATIVE number (e.g. -0.3).\n" +
              "If the body sinks into the floor → set this to a POSITIVE number (e.g. 0.1).\n" +
@@ -117,6 +123,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Header("Suspicious Timeout")]
     [Tooltip("Seconds in Suspicious state before auto-returning to Idle if nothing escalates.")]
     public float suspiciousTimeout = 6f;
+
+    [Header("Alert Give-Up")]
+    [Tooltip("Seconds an NPC stays in Alert with no re-acquisition / active search before it " +
+             "gives up and resumes its patrol/idle. Prevents NPCs from standing alert forever " +
+             "after the player breaks contact. The last-known-position search (started on " +
+             "PlayerLost) runs independently and also returns the NPC to patrol when it ends.")]
+    public float alertGiveUpTime = 12f;
 
     [Header("Hearing")]
     [Tooltip("Radius within which this NPC can hear a GunshotHeard event.")]
@@ -214,11 +227,22 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // Auditory range check
                 return Vector3.Distance(transform.position, e.Origin) <= hearingRange;
 
-            case ScenarioEventType.RoomBreached:
-            case ScenarioEventType.DoorOpened:
+            // ── Perception is PERSONAL ──────────────────────────────────────
+            // PlayerSeen / TargetConfirmed / PlayerLost are raised by an NPC's
+            // OWN PerceptionController and delivered directly to that NPC via
+            // HandleDetection(). They must NOT be routed over the event bus to
+            // other NPCs — otherwise a terrorist who never saw the player would
+            // receive a squadmate's TargetConfirmed and open fire blindly on the
+            // player's last-known position ("shooting without seeing you").
+            // Other NPCs gain awareness through squad directives + AlertPropagation,
+            // and only Engage once their OWN perception confirms line of sight.
             case ScenarioEventType.PlayerSeen:
             case ScenarioEventType.TargetConfirmed:
             case ScenarioEventType.PlayerLost:
+                return false;
+
+            case ScenarioEventType.RoomBreached:
+            case ScenarioEventType.DoorOpened:
             case ScenarioEventType.AllyDownSeen:
             case ScenarioEventType.TerroristDown:
                 return true;
@@ -372,8 +396,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
             case ScenarioEventType.PlayerSeen:
             {
                 var cam = ResolvePlayerCamera(e);
-                if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); }
-                else             { SetLookTarget(e.Origin); }
+                if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); _lastKnownPlayerPos = cam.position; }
+                else             { SetLookTarget(e.Origin); _lastKnownPlayerPos = e.Origin; }
 
                 if (currentState == TerroristState.Idle ||
                     currentState == TerroristState.Suspicious)
@@ -383,7 +407,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
             case ScenarioEventType.TargetConfirmed:
             {
                 var cam = ResolvePlayerCamera(e);
-                if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); }
+                if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); _lastKnownPlayerPos = cam.position; }
                 _personallyConfirmedPlayer = true; // own eyes confirmed the target
                 if (currentState == TerroristState.Alert ||
                     currentState == TerroristState.Suspicious)
@@ -391,8 +415,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 break;
             }
             case ScenarioEventType.PlayerLost:
+                // Lost sight of the player. Drop out of Engage and actively HUNT:
+                // walk to where they were last seen and run the search routine
+                // (scan + expanding sweep). If the search finds nothing it returns
+                // the NPC to patrol; the Alert give-up timer is the backstop.
                 if (currentState == TerroristState.Engage)
+                {
                     TransitionTo(TerroristState.Alert, e);
+                    InvestigatePosition(_lastKnownPlayerPos);
+                }
                 break;
         }
     }
@@ -406,9 +437,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
     Coroutine _investigateRoutine;
     Coroutine _wanderRoutine;
     Coroutine _retreatRoutine;
+    Coroutine _alertGiveUpRoutine;       // returns NPC to patrol if Alert never re-acquires
     bool      _hasRetreated;   // one retreat per life — reset only on (re)spawn
     bool      _wasFiring;
     bool      _personallyConfirmedPlayer; // true only when own PerceptionController fired TargetConfirmed
+    Vector3   _lastKnownPlayerPos;        // where the player was last actually seen (for search-on-lost)
     CoverPoint _claimedCover;
     Vector3   _spawnPosition;
     Quaternion _spawnRotation;
@@ -416,6 +449,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     bool      _isInvestigating;
     LeaderDirective _activeDirective;   // last directive received from squad Leader; null when none active
     Transform _aimBone;                 // cached chest/spine bone used to aim the upper body at the player
+    Vector3   _lastAnimPos;             // previous-frame position, for velocity-driven locomotion blend
+    static readonly int _animSpeed = Animator.StringToHash("Speed");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -424,6 +459,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         currentHealth = maxHealth;
         _spawnPosition = transform.position;
         _spawnRotation = transform.rotation;
+        _lastAnimPos   = transform.position;
 
         // Reusable world-space anchor so PatrolLine.StopAndLook() always gets a valid target.
         var go = new GameObject($"[LookAnchor] {gameObject.name}");
@@ -441,6 +477,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
             if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.UpperChest);
             if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.Spine);
         }
+
+        // Movement is driven by NavMeshAgent / PatrolLine / transform — NOT by the
+        // animation's root curve. Force root motion off so the walk/aim clips can't
+        // drag the body around independently of where the agent is steering it.
+        if (animator != null) animator.applyRootMotion = false;
 
         NPCRegistry.Register(this);
 
@@ -499,6 +540,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
     void Update()
     {
         if (currentState == TerroristState.Down) return;
+
+        // ── Velocity-driven locomotion blend ─────────────────────────────────
+        // Measure how fast we ACTUALLY moved this frame (covers NavMeshAgent
+        // movement — wander/converge/flank/investigate/retreat — AND PatrolLine,
+        // which drives the transform directly). Feeding real speed into the
+        // animator's "Speed" param blends Aiming (still) ↔ Rifle Walk (moving),
+        // so NPCs never glide in the aim pose while relocating.
+        if (animator != null)
+        {
+            Vector3 d = transform.position - _lastAnimPos;
+            d.y = 0f;
+            float speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
+            float norm  = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
+            // 0.12 s damping smooths the start/stop so legs ease in/out.
+            animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
+        }
+        _lastAnimPos = transform.position;
+
+        // While engaging we have live sight of the player, so keep recording where
+        // they are. The instant we lose them (PlayerLost), this value freezes at the
+        // last-seen spot and becomes the search target.
+        if (currentState == TerroristState.Engage && _lastSeenPlayer != null)
+            _lastKnownPlayerPos = _lastSeenPlayer.position;
 
         // Keep look anchor tracking the player's live position every frame.
         if (_lastSeenPlayer != null && currentState != TerroristState.Idle && _lookAnchor != null)
@@ -639,6 +703,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
             _suspiciousRoutine = null;
         }
 
+        // ── Cancel the Alert give-up timer (re-armed below if entering Alert) ──
+        if (_alertGiveUpRoutine != null)
+        {
+            StopCoroutine(_alertGiveUpRoutine);
+            _alertGiveUpRoutine = null;
+        }
+
         // ── Cancel any active investigation walk ──────────────────────────────
         if (_investigateRoutine != null)
         {
@@ -700,6 +771,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // another Leader exists in the same squad).
                 IssueDirectiveIfLeader(trigger, LeaderDirectiveType.Converge);
                 FollowActiveDirective();
+                // Backstop: if nothing re-acquires us and no search is running,
+                // give up after alertGiveUpTime and resume patrol.
+                _alertGiveUpRoutine = StartCoroutine(AlertGiveUpTimeout());
                 break;
 
             case TerroristState.TakeCover:
@@ -736,6 +810,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 break;
 
             case TerroristState.Idle:
+                // Returning to patrol — drop any stale leader directive so we don't
+                // immediately re-route to an old threat position on the next alert.
+                _activeDirective = null;
                 switch (idleMode)
                 {
                     case IdleMode.Patrol:
@@ -779,6 +856,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         _investigateRoutine = null;
         _suspiciousRoutine = null;
         _retreatRoutine = null;
+        _alertGiveUpRoutine = null;
         _isInvestigating = false;
 
         // Fully disable PatrolLine — StopAndLook only pauses it, the component can still drive movement.
@@ -1111,6 +1189,28 @@ public class TerroristController : MonoBehaviour, INPCResponder
             TransitionTo(TerroristState.Idle, null);
     }
 
+    // ── Alert give-up ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Backstop that stops an NPC standing in Alert forever after the player breaks
+    /// contact. After alertGiveUpTime, if the NPC is still Alert and is NOT actively
+    /// searching (the last-known-position search owns its own return-to-patrol), it
+    /// gives up and resumes its idle/patrol behaviour.
+    /// </summary>
+    IEnumerator AlertGiveUpTimeout()
+    {
+        yield return new WaitForSeconds(alertGiveUpTime);
+
+        // Still alert and not mid-search → no contact regained, stand down.
+        if (currentState == TerroristState.Alert && !_isInvestigating)
+        {
+            Debug.Log($"[TerroristController] {gameObject.name}: lost contact — giving up, resuming patrol.");
+            TransitionTo(TerroristState.Idle, null);
+        }
+
+        _alertGiveUpRoutine = null;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     void SetLookTarget(Vector3 worldPos)
@@ -1301,7 +1401,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
         }
 
         // ── Phase 4: Nothing found — de-escalate ──────────────────────────────
-        if (currentState == startState && startState == TerroristState.Suspicious)
+        // Whether the search began from Suspicious (heard a gunshot) or Alert
+        // (lost sight of the player and hunted their last-known position), if the
+        // sweep completes without re-acquiring, the area is clear → resume patrol.
+        if (currentState == startState &&
+            (startState == TerroristState.Suspicious || startState == TerroristState.Alert))
         {
             Debug.Log($"[TerroristController] {gameObject.name}: area clear, returning to Idle");
             EndInvestigation();

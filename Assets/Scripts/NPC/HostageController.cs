@@ -54,6 +54,13 @@ public class HostageController : MonoBehaviour, INPCResponder
     [Tooltip("Seconds of continuous close-range threat in Panic state before entering Freeze.")]
     public float freezeThreshold = 3f;
 
+    [Header("Animation")]
+    [Tooltip("Planar move speed (m/s) that maps to a full walk animation. The hostage " +
+             "animator's 'Speed' parameter is set to (actual speed / this), clamped 0-1, so " +
+             "the hostage walks while following you and idles when still. ~1.0 suits the " +
+             "default NavMeshAgent speed.")]
+    public float walkAnimReferenceSpeed = 1.0f;
+
     [Header("Debug — read-only in Play mode")]
     public HostageState currentState = HostageState.Calm;
 
@@ -175,15 +182,25 @@ public class HostageController : MonoBehaviour, INPCResponder
 
     float       _lastResponseTime = -99f;
     NavMeshAgent _agent;
+    Animator    _animator;
     Transform   _followTarget;
     Coroutine   _followRoutine;
     Coroutine   _freezeCheckRoutine;
+    Vector3     _lastAnimPos;
+    static readonly int _animSpeed = Animator.StringToHash("Speed");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     void Awake()
     {
         _agent = GetComponent<NavMeshAgent>(); // optional
+        _animator = GetComponentInChildren<Animator>(); // optional — drives walk/idle blend
+        _lastAnimPos = transform.position;
+
+        // Movement comes from the NavMeshAgent, not the animation's root curve —
+        // turn root motion off so the walk clip can't drag the hostage around.
+        if (_animator != null) _animator.applyRootMotion = false;
+
         NPCRegistry.Register(this);
     }
 
@@ -191,6 +208,18 @@ public class HostageController : MonoBehaviour, INPCResponder
 
     void Update()
     {
+        // Velocity-driven locomotion blend: walk while moving (e.g. following the
+        // trainee), idle when still. Measures real movement so it never glides.
+        if (_animator != null)
+        {
+            Vector3 d = transform.position - _lastAnimPos;
+            d.y = 0f;
+            float speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
+            float norm  = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
+            _animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
+        }
+        _lastAnimPos = transform.position;
+
         // Auto-detect when runaway sequence completes → raise HostageFreed
         if (currentState == HostageState.Panic &&
             runawayController != null          &&
