@@ -92,6 +92,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "existing geometry. Tune this live until the gap looks right.")]
         public Vector3 buildOffset = new Vector3(0f, 0f, 20f);
 
+        [Tooltip("Optional staging spawn. When set, the trainee spawns HERE (e.g. " +
+                 "by the briefing table in your template) instead of inside the " +
+                 "generated building, then walks/teleports over to it. Leave empty " +
+                 "to spawn at the generated entry as before.")]
+        public Transform traineeStartPoint;
+
+        [Tooltip("When the trainee spawns at a staging point, start the building's " +
+                 "entry door(s) open so the trainee can walk straight in. Interior " +
+                 "doors keep their generated state.")]
+        public bool entryDoorStartsOpen = true;
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -535,9 +546,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             foreach (KeyValuePair<string, List<EntryOpening>> kvp in _entryOpenings)
             {
+                DoorState entryState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
                 foreach (EntryOpening opening in kvp.Value)
                 {
-                    PlaceDoor($"door_{opening.id}", opening.position, opening.side, DoorState.Closed);
+                    PlaceDoor($"door_{opening.id}", opening.position, opening.side, entryState);
                 }
             }
         }
@@ -692,6 +704,19 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (traineeRig == null)
             {
                 Debug.LogError("[SceneBuilder] traineeRig is not assigned - cannot position player.");
+                return;
+            }
+
+            // Staging spawn: start the trainee at a fixed point (e.g. by the
+            // briefing table) and let them move to the generated building. Use a
+            // yaw-only rotation so the rig never inherits pitch/roll from the
+            // anchor transform.
+            if (traineeStartPoint != null)
+            {
+                Quaternion yaw = Quaternion.Euler(0f, traineeStartPoint.eulerAngles.y, 0f);
+                traineeRig.SetPositionAndRotation(traineeStartPoint.position, yaw);
+                Debug.Log("[SceneBuilder] Trainee spawned at staging point " +
+                          $"'{traineeStartPoint.name}'.");
                 return;
             }
 

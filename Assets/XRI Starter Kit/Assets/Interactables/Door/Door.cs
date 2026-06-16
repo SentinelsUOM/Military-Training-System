@@ -141,9 +141,13 @@ namespace MikeNspired.XRIStarterKit
 
         private async void SetDoorStartingPosition()
         {
-            // Wait until the Rigidbody has settled
-            while (!m_DoorRigidBody.IsSleeping())
+            // Wait until the Rigidbody has settled. Bail out if the door is
+            // destroyed mid-wait (e.g. SceneBuilder regenerating the scene),
+            // otherwise the destroyed Rigidbody throws MissingReferenceException.
+            while (m_DoorRigidBody != null && !m_DoorRigidBody.IsSleeping())
                 await Task.Yield();
+
+            if (this == null || m_DoorJoint == null) return;
 
             // Record local position so we can "snap" the door pivot if drifting
             m_StartingLocalPos = m_DoorJoint.transform.localPosition;

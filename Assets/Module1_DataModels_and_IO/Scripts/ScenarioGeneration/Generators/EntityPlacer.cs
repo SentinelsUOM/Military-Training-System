@@ -186,9 +186,12 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                     break;
                 }
 
-                // Fallback: room centre (always valid) if all attempts failed
+                // Fallback if all attempts failed: the in-bounds point farthest
+                // from already-placed entities (NOT the room centre, which in a
+                // Small room sits on top of the centre-placed hostage and breaks
+                // the clearance constraint).
                 if (!placed)
-                    placedPos = room.position.ToVector3();
+                    placedPos = FarthestValidPosition(room, allPositions);
 
                 allPositions.Add(placedPos);
                 Vector3 facing = CalculateFacingTowardDoor(room, placedPos, rng);
@@ -385,6 +388,48 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                 PlacementZone.Corner,
                 PlacementZone.SightlineBlind
             };
+        }
+
+        /// <summary>
+        /// Last-resort placement when no attempt found a clear spot — common in
+        /// Small rooms at low difficulty, where the Centre/OpenArea zones all
+        /// collide with an entity already at the room centre. Returns the in-bounds
+        /// candidate (corners, edge midpoints, centre) that maximises the distance
+        /// to the nearest already-placed entity, so two entities are never stacked
+        /// when the room geometry can avoid it. In a 4 m room the farthest corner
+        /// is ~1.7 m from a centre-placed hostage, clearing the 1.5 m constraint.
+        /// </summary>
+        private static Vector3 FarthestValidPosition(RoomData room, List<Vector3> existing)
+        {
+            float cx = room.position.x;
+            float cz = room.position.z;
+            float hw = room.size.width * 0.5f - WallMargin;
+            float hd = room.size.depth * 0.5f - WallMargin;
+
+            var centre = new Vector3(cx, 0f, cz);
+            if (hw <= 0f || hd <= 0f || existing == null || existing.Count == 0)
+                return centre;
+
+            float[] xs = { -hw, 0f, hw };
+            float[] zs = { -hd, 0f, hd };
+
+            Vector3 best = centre;
+            float bestMinSq = -1f;
+            foreach (float x in xs)
+                foreach (float z in zs)
+                {
+                    var cand = new Vector3(cx + x, 0f, cz + z);
+                    float minSq = float.MaxValue;
+                    foreach (Vector3 e in existing)
+                    {
+                        float dx = cand.x - e.x;
+                        float dz = cand.z - e.z;
+                        float sq = dx * dx + dz * dz;
+                        if (sq < minSq) minSq = sq;
+                    }
+                    if (minSq > bestMinSq) { bestMinSq = minSq; best = cand; }
+                }
+            return best;
         }
 
         // ── Zone Position Generation ─────────────────────────────────────────
