@@ -14,6 +14,7 @@
 
 #if UNITY_EDITOR
 using System.IO;
+using MikeNspired.XRIStarterKit;
 using TeamSentinels.ScenarioGeneration.Scene;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -34,9 +35,17 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
         // ── Constants ────────────────────────────────────────────────────────
 
         private const string MenuPath        = "Tools/Scenario Generator/Build Scene Prefabs";
+        private const string FinalizeDoorMenuPath = "Tools/Scenario Generator/Finalize Real Door From Selection";
         private const string PrefabsFolder   = "Assets/Prefabs";
         private const string MaterialsFolder = "Assets/Prefabs/Materials";
         private const string GroundPlaneName = "GroundPlane";
+
+        // Hand-built ("realistic") art the generator should reuse. Folder name is
+        // spelled "Metrials" on disk — keep it exact.
+        private const string RealMaterialsFolder = "Assets/Basemap Metrials";
+        private const string RealWallMaterial    = "Assets/Basemap Metrials/Wall_Outside.mat";
+        private const string RealFloorMaterial   = "Assets/Basemap Metrials/Floor_Interier.mat";
+        private const string RealDoorPrefabPath  = "Assets/Prefabs/RealDoor.prefab";
 
         // Geometry constants - match Module 1's room grid (CLAUDE.md "Room Size Constants").
         private const float DoorGap       = 2f;     // 2 m centre gap on every wall
@@ -304,6 +313,249 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             if (largePrefab  != null) { sb.roomPrefabLarge  = largePrefab;  wired++; }
             if (doorPrefab   != null) { sb.doorPrefab       = doorPrefab;   wired++; }
             if (wallMat      != null) { sb.wallMaterial     = wallMat;            }
+
+            EditorUtility.SetDirty(sb);
+            return wired;
+        }
+
+        // ── Finalize a realistic (XRI) door from the current selection ───────
+
+        // Validate: only enabled when a GameObject carrying a MikeNspired Door is
+        // selected (a scene instance or a project prefab).
+        [MenuItem(FinalizeDoorMenuPath, validate = true)]
+        private static bool ValidateFinalizeRealDoor()
+        {
+            GameObject sel = Selection.activeGameObject;
+            return sel != null && sel.GetComponentInChildren<Door>(true) != null;
+        }
+
+        /// <summary>
+        /// Turns a hand-built XRI door into a generator-ready prefab: strips the
+        /// scene-bound NPC-stop trigger, adds an <see cref="NpcDoorAssist"/> plus a
+        /// carving NavMeshObstacle so generated NavMeshAgent NPCs can pass through,
+        /// saves it to <see cref="RealDoorPrefabPath"/>, then wires it (and the real
+        /// wall/floor materials) into the scene's SceneBuilder.
+        /// </summary>
+        [MenuItem(FinalizeDoorMenuPath, priority = 61)]
+        public static void FinalizeRealDoor()
+        {
+            GameObject sel = Selection.activeGameObject;
+            if (sel == null || sel.GetComponentInChildren<Door>(true) == null)
+            {
+                EditorUtility.DisplayDialog("Finalize Real Door",
+                    "Select a door GameObject (one containing a MikeNspired 'Door' component) " +
+                    "in the Hierarchy or Project first.", "OK");
+                return;
+            }
+
+            // Work on a copy so the original scene object / prefab is untouched.
+            GameObject copy = Object.Instantiate(sel);
+            try
+            {
+                copy.name = "RealDoor";
+                copy.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+                copy.transform.localScale = sel.transform.lossyScale;
+
+                int strangers = StripSceneBoundComponents(copy);
+                NavMeshObstacle obstacle = AddDoorwayObstacle(copy);
+                WireDoorAssist(copy, obstacle);
+
+                EnsureFolder(PrefabsFolder);
+                AssetDatabase.DeleteAsset(RealDoorPrefabPath); // idempotent rebuild
+                PrefabUtility.SaveAsPrefabAsset(copy, RealDoorPrefabPath);
+
+                int wired = WireRealDoorIntoScene();
+
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+
+                EditorUtility.DisplayDialog("Finalize Real Door - Success",
+                    "Saved " + RealDoorPrefabPath + "\n\n" +
+                    "  • Stripped " + strangers + " scene-bound component(s) (e.g. StopNpcOnEnter)\n" +
+                    "  • Added NpcDoorAssist + carving NavMeshObstacle\n" +
+                    "  • SceneBuilder slots wired: " + wired + "/4\n" +
+                    (wired < 4
+                        ? "(No SceneBuilder found in scene — drag RealDoor onto its Door Prefab slot manually.)"
+                        : "Door, wall material and floor material are wired. Press Play, " +
+                          "Generate Scenario, Start Mission."),
+                    "OK");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[ScenePrefabBuilder] Finalize Real Door failed: {ex.Message}\n{ex.StackTrace}");
+                EditorUtility.DisplayDialog("Finalize Real Door - Failed",
+                    "Error: " + ex.Message + "\n\nSee the Console for the full stack trace.", "OK");
+            }
+            finally
+            {
+                Object.DestroyImmediate(copy);
+            }
+        }
+
+        // Removes components that reference specific scene NPC instances and would
+        // dangle in a reusable prefab. Matched by type name so we don't take a hard
+        // assembly dependency on the XRI runtime asmdef.
+        private static int StripSceneBoundComponents(GameObject root)
+        {
+            int removed = 0;
+            foreach (MonoBehaviour mb in root.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (mb == null) continue; // missing script
+                if (mb.GetType().Name == "StopNpcOnEnter")
+                {
+                    Object.DestroyImmediate(mb);
+                    removed++;
+                }
+            }
+            return removed;
+        }
+
+        // Adds a carving NavMeshObstacle on the door root, sized to the doorway, so
+        // NPC pathing is severed while the door is shut. NpcDoorAssist toggles it.
+        private static NavMeshObstacle AddDoorwayObstacle(GameObject root)
+        {
+            NavMeshObstacle obstacle = root.GetComponent<NavMeshObstacle>();
+            if (obstacle == null) obstacle = root.AddComponent<NavMeshObstacle>();
+            obstacle.shape   = NavMeshObstacleShape.Box;
+            obstacle.carving = true;
+
+            // Root is at identity/origin here, so renderer world bounds == root-local.
+            if (TryGetRendererBounds(root, out Bounds b))
+            {
+                bool spanX = b.size.x >= b.size.z;
+                obstacle.center = b.center;
+                obstacle.size = spanX
+                    ? new Vector3(b.size.x, b.size.y, 0.4f)
+                    : new Vector3(0.4f, b.size.y, b.size.z);
+            }
+            else
+            {
+                obstacle.center = new Vector3(0f, 1.05f, 0f);
+                obstacle.size   = new Vector3(2f, 2.1f, 0.4f);
+            }
+            return obstacle;
+        }
+
+        private static void WireDoorAssist(GameObject root, NavMeshObstacle obstacle)
+        {
+            NpcDoorAssist assist = root.GetComponent<NpcDoorAssist>();
+            if (assist == null) assist = root.AddComponent<NpcDoorAssist>();
+
+            Door door = root.GetComponentInChildren<Door>(true);
+            HingeJoint leafHinge = FindLeafHinge(root, door);
+
+            assist.door        = door;
+            assist.hinge       = leafHinge;
+            assist.leafBody    = leafHinge != null ? leafHinge.GetComponent<Rigidbody>() : null;
+            assist.knobs       = root.GetComponentsInChildren<XRKnob>(true);
+            assist.navObstacle = obstacle;
+
+            // If the leaf hinge's authored limits describe the open swing, use
+            // them; otherwise leave the sensible 90° default.
+            if (leafHinge != null && leafHinge.useLimits)
+            {
+                float max = Mathf.Max(Mathf.Abs(leafHinge.limits.min),
+                                      Mathf.Abs(leafHinge.limits.max));
+                if (max > 1f) assist.openAngle =
+                    leafHinge.limits.max != 0f ? leafHinge.limits.max : max;
+            }
+
+            // Stop the door's outer (non-leaf) gravity bodies from tumbling once
+            // removed from their original wall context.
+            StabilizeBodies(root, assist.leafBody);
+        }
+
+        // The real swinging leaf is the hinge the XRI Door script controls
+        // (its private m_DoorJoint). A door can contain several hinges/rigidbodies
+        // (e.g. an outer "Door Main" pivot), so we read the script's serialized
+        // reference; failing that, fall back to the most-vertical hinge.
+        private static HingeJoint FindLeafHinge(GameObject root, Door door)
+        {
+            if (door != null)
+            {
+                var so = new SerializedObject(door);
+                SerializedProperty p = so.FindProperty("m_DoorJoint");
+                if (p != null && p.objectReferenceValue is HingeJoint hj) return hj;
+            }
+
+            HingeJoint best = null;
+            float bestVertical = -1f;
+            foreach (HingeJoint h in root.GetComponentsInChildren<HingeJoint>(true))
+            {
+                float v = Mathf.Abs(h.axis.normalized.y);
+                if (v > bestVertical) { bestVertical = v; best = h; }
+            }
+            return best;
+        }
+
+        // Freezes every gravity-driven body that isn't the swinging leaf (e.g. the
+        // door's outer "Door Main" body, which has a free horizontal hinge and
+        // would fall in a generated scene). Gravity-off helper bodies (knobs,
+        // door puller) are left untouched so the trainee interaction still works.
+        private static void StabilizeBodies(GameObject root, Rigidbody leaf)
+        {
+            foreach (Rigidbody rb in root.GetComponentsInChildren<Rigidbody>(true))
+            {
+                if (rb == leaf) continue;
+                if (rb.useGravity) rb.isKinematic = true;
+            }
+        }
+
+        private static bool TryGetRendererBounds(GameObject root, out Bounds bounds)
+        {
+            bounds = new Bounds();
+            bool has = false;
+            foreach (Renderer r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                if (!(r is MeshRenderer) && !(r is SkinnedMeshRenderer)) continue;
+                if (!has) { bounds = r.bounds; has = true; }
+                else      bounds.Encapsulate(r.bounds);
+            }
+            return has;
+        }
+
+        // Wires RealDoor + the real wall/floor materials into the scene SceneBuilder,
+        // rebuilding the room floor prefabs so they use the realistic floor material.
+        private static int WireRealDoorIntoScene()
+        {
+#if UNITY_2022_2_OR_NEWER
+            var sb = Object.FindFirstObjectByType<SceneBuilder>();
+#else
+            var sb = Object.FindObjectOfType<SceneBuilder>();
+#endif
+            if (sb == null)
+            {
+                Debug.LogWarning("[ScenePrefabBuilder] No SceneBuilder in scene; RealDoor saved " +
+                                 "but not auto-wired. Drag it onto the Door Prefab slot manually.");
+                return 0;
+            }
+
+            var realDoor  = AssetDatabase.LoadAssetAtPath<GameObject>(RealDoorPrefabPath);
+            var wallMat   = AssetDatabase.LoadAssetAtPath<Material>(RealWallMaterial);
+            var floorMat  = AssetDatabase.LoadAssetAtPath<Material>(RealFloorMaterial);
+
+            int wired = 0;
+            if (realDoor != null) { sb.doorPrefab   = realDoor; wired++; }
+            if (wallMat  != null) { sb.wallMaterial = wallMat;  wired++; }
+
+            // Rebuild the room floor prefabs with the realistic floor material and
+            // re-wire them, so floors match the hand-built map too.
+            if (floorMat != null)
+            {
+                Material wm = wallMat != null ? wallMat
+                    : CreateOrUpdateMaterial("Wall_M", WallColor);
+                string smallPath = BuildRoomPrefab("RoomSmall",  4f, floorMat, wm);
+                string medPath   = BuildRoomPrefab("RoomMedium", 6f, floorMat, wm);
+                string largePath = BuildRoomPrefab("RoomLarge",  8f, floorMat, wm);
+
+                var smallPrefab  = AssetDatabase.LoadAssetAtPath<GameObject>(smallPath);
+                var mediumPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(medPath);
+                var largePrefab  = AssetDatabase.LoadAssetAtPath<GameObject>(largePath);
+                if (smallPrefab  != null) { sb.roomPrefabSmall  = smallPrefab;  }
+                if (mediumPrefab != null) { sb.roomPrefabMedium = mediumPrefab; }
+                if (largePrefab  != null) { sb.roomPrefabLarge  = largePrefab;  wired++; }
+            }
 
             EditorUtility.SetDirty(sb);
             return wired;

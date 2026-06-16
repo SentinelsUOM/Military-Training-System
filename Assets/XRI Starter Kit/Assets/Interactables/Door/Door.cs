@@ -31,6 +31,14 @@ namespace MikeNspired.XRIStarterKit
         [Tooltip("If true, door starts opened. If false, starts fully closed.")]
         [SerializeField] private bool startOpened = false;
 
+        /// <summary>
+        /// Sets the initial open/closed state. Must be called BEFORE this
+        /// component's Start() runs (e.g. instantiate the door inactive, call this,
+        /// then SetActive(true)). Used by Module 1's SceneBuilder to drive a
+        /// generated door's initial state from its DoorData.
+        /// </summary>
+        public void SetStartOpened(bool value) => startOpened = value;
+
         [Header("Knobs (Both Stay in Sync)")]
         [Tooltip("XRKnob for front handle (0 = handle turned open, 1 = handle closed).")]
         [SerializeField] private XRKnob m_FrontKnob;

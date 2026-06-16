@@ -78,6 +78,20 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "reposition this; we never instantiate a new rig.")]
         public Transform traineeRig;
 
+        [Header("Placement")]
+        [Tooltip("RECOMMENDED. Drop an empty GameObject into the empty area where " +
+                 "you want the scenario, then drag it here. The generated layout's " +
+                 "origin is built at this transform's world position, so you place " +
+                 "the whole scenario visually in the Scene view with no guesswork. " +
+                 "Takes priority over Build Offset.")]
+        public Transform buildAnchor;
+
+        [Tooltip("Fallback when no Build Anchor is set: a world offset applied to " +
+                 "the ENTIRE generated scenario (rooms, doors, NPCs, trainee, " +
+                 "patrol points and the NavMesh bake) so it doesn't overlap " +
+                 "existing geometry. Tune this live until the gap looks right.")]
+        public Vector3 buildOffset = new Vector3(0f, 0f, 20f);
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -114,12 +128,41 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // neighbouring walls meet on a shared plane and the 2 m door opening lands
         // flush in it.
         private const float CorridorGap   = 2f;   // gap Module 1 leaves between rooms
-        private const float DoorGap       = 2f;   // width of the door opening in a wall
+        private const float DoorGap       = 2f;   // fallback door opening width (greybox door)
         private const float WallThickness = 0.12f;
         // Height of the door opening. Above this, a header (transom) fills the
         // wall up to the ceiling so doorways aren't open to the full wall height.
         // Matches the door prefab's leaf top and jamb height (2.1 m).
         private const float DoorOpeningHeight = 2.1f;
+        // Extra width/height carved around the measured door so the real leaf
+        // swings without scraping the jambs.
+        private const float DoorClearance = 0.08f;
+
+        // ── Measured door footprint (filled by MeasureDoorPrefab each build) ──
+        // SceneBuilder now supports realistic doors of any size (e.g. the XRI
+        // hinge door) by measuring the assigned doorPrefab's mesh bounds and
+        // fitting every wall opening to it. _doorBaseRot rotates the prefab so
+        // its widest horizontal axis runs along X; _doorCenterOffset is the
+        // prefab-local horizontal offset from its root to its visual centre, so
+        // the door can be aligned to the opening even when its pivot sits on the
+        // hinge edge rather than the centre.
+        private float      _doorOpeningWidth  = DoorGap;
+        private float      _doorOpeningHeight = DoorOpeningHeight;
+        private Quaternion _doorBaseRot       = Quaternion.identity;
+        private Vector3    _doorCenterOffset  = Vector3.zero;
+        // Prefab-local Y of the door's lowest mesh point. Subtracted at placement
+        // so the door rests on the floor instead of sinking/floating (the XRI
+        // door's geometry sits well below its root origin).
+        private float      _doorBaseY         = 0f;
+
+        // World offset applied to every generated position this build, resolved
+        // from buildAnchor / buildOffset. Lets the scenario sit in empty space
+        // instead of overlapping a hand-built template at the origin.
+        private Vector3    _buildOffset       = Vector3.zero;
+
+        /// <summary>Maps a Module 1 layout position into world space, applying
+        /// the per-build placement offset.</summary>
+        private Vector3 World(Vector3 layoutPos) => layoutPos + _buildOffset;
 
         private Transform _roomsRoot;
         private Transform _doorsRoot;
@@ -201,7 +244,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 EnsureContainers();
 
                 ActiveScenario = scenario;
+                _buildOffset = buildAnchor != null ? buildAnchor.position : buildOffset;
 
+                MeasureDoorPrefab();
                 ComputeEntryOpenings(scenario);
                 BuildRooms(scenario);
                 BuildDoors(scenario);
@@ -275,7 +320,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 }
 
                 GameObject go = Instantiate(prefab,
-                                            room.position.ToVector3(),
+                                            World(room.position.ToVector3()),
                                             Quaternion.identity,
                                             _roomsRoot);
                 go.name = room.id;
@@ -316,17 +361,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
                 foreach (EntryOpening e in openings) doorSides.Add(e.side);
 
+            // Carve openings sized to the measured door so the real leaf fits.
+            float openW = _doorOpeningWidth  + DoorClearance;
+            float openH = _doorOpeningHeight + DoorClearance;
+
             // North / South run along X (span = outerW, thin in Z).
             BuildWallSide(roomGo, "South", doorSides.Contains(WallSide.South),
-                          axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height, mat: mat);
+                          axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height,
+                          openW: openW, openH: openH, mat: mat);
             BuildWallSide(roomGo, "North", doorSides.Contains(WallSide.North),
-                          axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height, mat: mat);
+                          axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height,
+                          openW: openW, openH: openH, mat: mat);
 
             // East / West run along Z (span = outerD, thin in X).
             BuildWallSide(roomGo, "East", doorSides.Contains(WallSide.East),
-                          axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height, mat: mat);
+                          axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height,
+                          openW: openW, openH: openH, mat: mat);
             BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West),
-                          axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height, mat: mat);
+                          axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height,
+                          openW: openW, openH: openH, mat: mat);
         }
 
         /// <summary>
@@ -337,7 +390,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// </summary>
         private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor,
                                    bool axisAlongX, float fixedCoord, float span,
-                                   float height, Material mat)
+                                   float height, float openW, float openH, Material mat)
         {
             if (!hasDoor)
             {
@@ -346,11 +399,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            float segLen = (span - DoorGap) * 0.5f;
+            float segLen = (span - openW) * 0.5f;
             if (segLen <= 0f) return; // opening as wide as the wall — leave it open
 
             // Full-height segments either side of the opening.
-            float segOffset = DoorGap * 0.5f + segLen * 0.5f;
+            float segOffset = openW * 0.5f + segLen * 0.5f;
             AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
                            offset: -segOffset, length: segLen, height: height, mat: mat);
             AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
@@ -358,11 +411,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             // Header (transom) filling the wall above the door opening, so the
             // doorway isn't open all the way to the ceiling.
-            float headerHeight = height - DoorOpeningHeight;
+            float headerHeight = height - openH;
             if (headerHeight > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
-                               offset: 0f, length: DoorGap, height: headerHeight,
-                               mat: mat, baseY: DoorOpeningHeight);
+                               offset: 0f, length: openW, height: headerHeight,
+                               mat: mat, baseY: openH);
         }
 
         private void AddWallSegment(GameObject roomGo, string name, bool axisAlongX,
@@ -422,17 +475,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     if (!_placedDoorPairs.Add(pairKey))
                         continue; // reciprocal already placed
 
-                    Quaternion rot = DoorRotation(door.wallSide);
-                    GameObject go = Instantiate(doorPrefab,
-                                                door.position.ToVector3(),
-                                                rot,
-                                                _doorsRoot);
-                    go.name = door.id;
-
-                    // Drive the door's initial open/closed/locked state from
-                    // Module 1's generated door data.
-                    GeneratedDoor gd = go.GetComponent<GeneratedDoor>();
-                    if (gd != null) gd.state = door.state;
+                    PlaceDoor(door.id, World(door.position.ToVector3()), door.wallSide, door.state);
                 }
             }
         }
@@ -474,7 +517,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 list.Add(new EntryOpening
                 {
                     side     = side,
-                    position = ep.position.ToVector3(),
+                    position = World(ep.position.ToVector3()),
                     id       = ep.id
                 });
             }
@@ -494,12 +537,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 foreach (EntryOpening opening in kvp.Value)
                 {
-                    Quaternion rot = DoorRotation(opening.side);
-                    GameObject go = Instantiate(doorPrefab, opening.position, rot, _doorsRoot);
-                    go.name = $"door_{opening.id}";
-
-                    GeneratedDoor gd = go.GetComponent<GeneratedDoor>();
-                    if (gd != null) gd.state = DoorState.Closed;
+                    PlaceDoor($"door_{opening.id}", opening.position, opening.side, DoorState.Closed);
                 }
             }
         }
@@ -509,6 +547,144 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (Mathf.Abs(delta.x) >= Mathf.Abs(delta.z))
                 return delta.x > 0 ? WallSide.East : WallSide.West;
             return delta.z > 0 ? WallSide.North : WallSide.South;
+        }
+
+        /// <summary>
+        /// Instantiates the door prefab into a wall opening: rotates it so its
+        /// widest horizontal axis runs along the wall, offsets the root so the
+        /// door's measured visual centre lands on <paramref name="openingCenter"/>
+        /// (the XRI door's pivot sits on the hinge edge, not the centre), then
+        /// applies the initial <see cref="DoorState"/>.
+        /// </summary>
+        private void PlaceDoor(string name, Vector3 openingCenter, WallSide side, DoorState state)
+        {
+            Quaternion rot = DoorRotation(side) * _doorBaseRot;
+
+            // Align the measured visual centre to the opening horizontally, and
+            // rest the door's lowest mesh point on the floor (openingCenter.y).
+            Vector3 pos = openingCenter - rot * _doorCenterOffset;
+            pos.y = openingCenter.y - _doorBaseY;
+
+            GameObject go = Instantiate(doorPrefab, pos, rot, _doorsRoot);
+            go.name = name;
+
+            // ApplyDoorState runs the same frame as Instantiate, before any
+            // component's Start(), so the XRI Door reads the right startOpened.
+            ApplyDoorState(go, state);
+        }
+
+        /// <summary>
+        /// Drives a freshly instantiated door's initial state. Prefers the
+        /// realistic-door <see cref="NpcDoorAssist"/>; falls back to the greybox
+        /// <see cref="GeneratedDoor"/> so either door prefab still works.
+        /// </summary>
+        private static void ApplyDoorState(GameObject go, DoorState state)
+        {
+            NpcDoorAssist assist = go.GetComponent<NpcDoorAssist>();
+            if (assist != null)
+            {
+                assist.ApplyState(state);
+                return;
+            }
+
+            GeneratedDoor gd = go.GetComponent<GeneratedDoor>();
+            if (gd != null) gd.state = state;
+        }
+
+        /// <summary>
+        /// Measures the assigned door prefab once per build so wall openings can
+        /// be sized and the door aligned to any door art (greybox or the XRI
+        /// hinge door). Fills <see cref="_doorOpeningWidth"/>,
+        /// <see cref="_doorOpeningHeight"/>, <see cref="_doorBaseRot"/> and
+        /// <see cref="_doorCenterOffset"/>. Falls back to the 2 m greybox defaults
+        /// when no prefab is set or it has no meshes.
+        /// </summary>
+        private void MeasureDoorPrefab()
+        {
+            _doorOpeningWidth  = DoorGap;
+            _doorOpeningHeight = DoorOpeningHeight;
+            _doorBaseRot       = Quaternion.identity;
+            _doorCenterOffset  = Vector3.zero;
+            _doorBaseY         = 0f;
+
+            if (doorPrefab == null) return;
+
+            // Instantiate under an inactive parent so no Awake/Start side effects
+            // fire (XR interactables, door springs); mesh bounds work regardless.
+            var temp = new GameObject("~DoorProbe");
+            temp.hideFlags = HideFlags.HideAndDontSave;
+            temp.SetActive(false);
+            GameObject probe = Instantiate(doorPrefab, temp.transform);
+
+            // Measure only the swinging leaf (the door panel) so frame / threshold
+            // extras that extend well below or beside it don't inflate the opening
+            // size or float the door up off the floor. Fall back to the whole
+            // prefab for doors that have no NpcDoorAssist (e.g. the greybox door).
+            Transform leaf = null;
+            NpcDoorAssist assist = probe.GetComponent<NpcDoorAssist>();
+            if (assist != null)
+                leaf = assist.leafBody != null ? assist.leafBody.transform
+                     : assist.hinge    != null ? assist.hinge.transform
+                     : null;
+            GameObject measureRoot = leaf != null ? leaf.gameObject : probe;
+
+            bool found = ComputeLocalBounds(measureRoot, probe.transform, out Bounds b);
+
+            if (Application.isPlaying) Destroy(temp);
+            else                       DestroyImmediate(temp);
+
+            if (!found) return;
+
+            bool spanAlongX = b.size.x >= b.size.z;
+            _doorOpeningWidth  = Mathf.Max(0.5f, spanAlongX ? b.size.x : b.size.z);
+            _doorOpeningHeight = Mathf.Max(0.5f, b.size.y);
+            _doorBaseRot       = spanAlongX ? Quaternion.identity : Quaternion.Euler(0f, 90f, 0f);
+            _doorCenterOffset  = new Vector3(b.center.x, 0f, b.center.z);
+            _doorBaseY         = b.center.y - b.size.y * 0.5f; // lowest mesh point (root-local)
+        }
+
+        /// <summary>
+        /// Computes the combined mesh bounds of <paramref name="meshRoot"/>'s
+        /// hierarchy, expressed in <paramref name="frame"/>'s local space. Uses
+        /// shared meshes so it works on an inactive instance. Returns false when
+        /// the hierarchy has no meshes.
+        /// </summary>
+        private static bool ComputeLocalBounds(GameObject meshRoot, Transform frame, out Bounds bounds)
+        {
+            bounds = new Bounds();
+            bool has = false;
+            Matrix4x4 toFrame = frame.worldToLocalMatrix;
+
+            foreach (MeshFilter mf in meshRoot.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                EncapsulateMesh(toFrame, mf.transform, mf.sharedMesh.bounds, ref bounds, ref has);
+            }
+            foreach (SkinnedMeshRenderer sm in meshRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (sm.sharedMesh == null) continue;
+                EncapsulateMesh(toFrame, sm.transform, sm.sharedMesh.bounds, ref bounds, ref has);
+            }
+            return has;
+        }
+
+        private static void EncapsulateMesh(Matrix4x4 toRoot, Transform meshTf,
+                                            Bounds meshBounds, ref Bounds acc, ref bool has)
+        {
+            Matrix4x4 m = toRoot * meshTf.localToWorldMatrix;
+            Vector3 c = meshBounds.center;
+            Vector3 e = meshBounds.extents;
+
+            for (int i = 0; i < 8; i++)
+            {
+                var corner = new Vector3(
+                    c.x + (((i & 1) == 0) ? -e.x : e.x),
+                    c.y + (((i & 2) == 0) ? -e.y : e.y),
+                    c.z + (((i & 4) == 0) ? -e.z : e.z));
+                Vector3 p = m.MultiplyPoint3x4(corner);
+                if (!has) { acc = new Bounds(p, Vector3.zero); has = true; }
+                else       acc.Encapsulate(p);
+            }
         }
 
         private void PositionTrainee(ScenarioData scenario)
@@ -526,7 +702,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            traineeRig.position = t.position.ToVector3();
+            traineeRig.position = World(t.position.ToVector3());
             traineeRig.rotation = LookRotation(t.facingDirection);
         }
 
@@ -544,7 +720,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             foreach (NpcSpawnPoint sp in hostages)
             {
                 GameObject go = Instantiate(hostagePrefab,
-                                            sp.position.ToVector3(),
+                                            World(sp.position.ToVector3()),
                                             LookRotation(sp.facingDirection),
                                             _npcsRoot);
                 go.name = sp.entityId;
@@ -576,7 +752,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             foreach (NpcSpawnPoint sp in terrorists)
             {
                 GameObject go = Instantiate(terroristPrefab,
-                                            sp.position.ToVector3(),
+                                            World(sp.position.ToVector3()),
                                             LookRotation(sp.facingDirection),
                                             _npcsRoot);
                 go.name = sp.entityId;
@@ -647,8 +823,8 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             controller.patrolLine = patrol;
 
             // PatrolLine only supports two waypoints; collapse to first/last.
-            Vector3 first = nav.waypoints[0].ToVector3();
-            Vector3 last  = nav.waypoints[nav.waypoints.Count - 1].ToVector3();
+            Vector3 first = World(nav.waypoints[0].ToVector3());
+            Vector3 last  = World(nav.waypoints[nav.waypoints.Count - 1].ToVector3());
 
             patrol.pointA = MakeWaypointStub($"Patrol_A_{controller.gameObject.name}", first);
             patrol.pointB = MakeWaypointStub($"Patrol_B_{controller.gameObject.name}", last);
@@ -877,26 +1053,27 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             if (sp.trainee != null)
                 DrawSpawnGizmo(sp.trainee.position, sp.trainee.facingDirection,
-                               GizmoTrainee, "trainee_01", 0.55f);
+                               GizmoTrainee, "trainee_01", 0.55f, _buildOffset);
 
             if (sp.hostages != null)
                 foreach (var h in sp.hostages)
                     DrawSpawnGizmo(h.position, h.facingDirection,
-                                   GizmoHostage, h.entityId, 0.45f);
+                                   GizmoHostage, h.entityId, 0.45f, _buildOffset);
 
             if (sp.terrorists != null)
                 foreach (var t in sp.terrorists)
                     DrawSpawnGizmo(t.position, t.facingDirection,
-                                   GizmoTerrorist, t.entityId, 0.45f);
+                                   GizmoTerrorist, t.entityId, 0.45f, _buildOffset);
         }
 
         private static void DrawSpawnGizmo(SerializableVector3 pos,
                                            SerializableVector3 facing,
-                                           Color color, string label, float radius)
+                                           Color color, string label, float radius,
+                                           Vector3 offset)
         {
             if (pos == null) return;
 
-            Vector3 p   = pos.ToVector3() + Vector3.up * 0.1f;
+            Vector3 p   = pos.ToVector3() + offset + Vector3.up * 0.1f;
             Vector3 dir = facing != null ? facing.ToVector3() : Vector3.forward;
             dir.y = 0f;
 
