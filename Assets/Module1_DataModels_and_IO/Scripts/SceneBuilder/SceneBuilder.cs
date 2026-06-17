@@ -66,6 +66,26 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "empty, the wall material is borrowed from the room prefab's floor.")]
         public Material wallMaterial;
 
+        [Tooltip("Material applied to the procedurally built room ceiling/roof. If " +
+                 "left empty, the ceiling reuses the wall material so every room is " +
+                 "capped to match the hand-built base map.")]
+        public Material ceilingMaterial;
+
+        [Header("Perimeter Corridor")]
+        [Tooltip("Wrap the generated building in an enclosed corridor ring " +
+                 "(floor + outer wall + roof). The building's exterior entry doors " +
+                 "open into this corridor, and a single outer door lets the trainee " +
+                 "in from the staging area.")]
+        public bool buildPerimeterCorridor = true;
+
+        [Tooltip("Width (metres) of the corridor band between the building's outer " +
+                 "wall and the new outer perimeter wall.")]
+        public float corridorWidth = 3f;
+
+        [Tooltip("Optional floor material for the corridor ring. If left empty, the " +
+                 "corridor reuses the room floor material so it matches the building.")]
+        public Material corridorFloorMaterial;
+
         [Header("NPC Prefabs")]
         [Tooltip("Terrorist prefab. Must have a TerroristController component.")]
         public GameObject terroristPrefab;
@@ -128,9 +148,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         // ── Internal containers ──────────────────────────────────────────────
 
-        private const string ROOMS_ROOT = "Rooms";
-        private const string DOORS_ROOT = "Doors";
-        private const string NPCS_ROOT  = "NPCs";
+        private const string ROOMS_ROOT    = "Rooms";
+        private const string DOORS_ROOT    = "Doors";
+        private const string NPCS_ROOT     = "NPCs";
+        private const string CORRIDOR_ROOT = "PerimeterCorridor";
 
         // ── Wall geometry (mirrors ScenePrefabBuilder so walls, floors and doors
         //    line up exactly) ──────────────────────────────────────────────────
@@ -141,6 +162,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private const float CorridorGap   = 2f;   // gap Module 1 leaves between rooms
         private const float DoorGap       = 2f;   // fallback door opening width (greybox door)
         private const float WallThickness = 0.12f;
+        // Thickness of the flat ceiling/roof cap laid over each room, matching the
+        // base map's "Ceiling" slab (a thin flattened cube resting on the walls).
+        private const float CeilingThickness = 0.2f;
+        // Floor slab thickness for the perimeter corridor (matches the room floor
+        // prefab's 0.08 m so the corridor floor sits flush with the building floor).
+        private const float CorridorFloorThickness = 0.08f;
         // Height of the door opening. Above this, a header (transom) fills the
         // wall up to the ceiling so doorways aren't open to the full wall height.
         // Matches the door prefab's leaf top and jamb height (2.1 m).
@@ -178,6 +205,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private Transform _roomsRoot;
         private Transform _doorsRoot;
         private Transform _npcsRoot;
+        private Transform _corridorRoot;
 
         private readonly Dictionary<string, GameObject> _roomObjects =
             new Dictionary<string, GameObject>();
@@ -262,6 +290,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 BuildRooms(scenario);
                 BuildDoors(scenario);
                 BuildEntryDoors(scenario);
+                BuildPerimeterCorridor(scenario);
                 PositionTrainee(scenario);
                 SpawnHostages(scenario);
                 SpawnTerrorists(scenario);
@@ -292,6 +321,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
+            DestroyChildren(_corridorRoot);
 
             _roomObjects.Clear();
             _placedDoorPairs.Clear();
@@ -310,9 +340,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         private void EnsureContainers()
         {
-            _roomsRoot = GetOrCreateChild(ROOMS_ROOT);
-            _doorsRoot = GetOrCreateChild(DOORS_ROOT);
-            _npcsRoot  = GetOrCreateChild(NPCS_ROOT);
+            _roomsRoot    = GetOrCreateChild(ROOMS_ROOT);
+            _doorsRoot    = GetOrCreateChild(DOORS_ROOT);
+            _npcsRoot     = GetOrCreateChild(NPCS_ROOT);
+            _corridorRoot = GetOrCreateChild(CORRIDOR_ROOT);
         }
 
         private void BuildRooms(ScenarioData scenario)
@@ -391,6 +422,36 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West),
                           axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height,
                           openW: openW, openH: openH, mat: mat);
+
+            // Cap the room with a flat ceiling so it's enclosed top-to-bottom like
+            // the hand-built base map (which uses a thin "Ceiling" slab on top of
+            // the walls). Spans the same outer footprint as the floor and walls so
+            // adjacent rooms' ceilings meet on the shared corridor plane.
+            BuildCeiling(roomGo, outerW, outerD, height, mat);
+        }
+
+        /// <summary>
+        /// Lays a flat ceiling/roof slab across the top of a room, resting on the
+        /// walls at <paramref name="height"/>. Mirrors the prefab floor: a thin
+        /// flattened cube spanning the room's outer footprint. Uses
+        /// <see cref="ceilingMaterial"/> when assigned, otherwise the wall material
+        /// so the cap visually matches the room.
+        /// </summary>
+        private void BuildCeiling(GameObject roomGo, float outerW, float outerD,
+                                  float height, Material wallMat)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "Ceiling";
+            go.transform.SetParent(roomGo.transform, worldPositionStays: false);
+
+            // Bottom face sits on top of the walls (y = height); centre is half the
+            // slab thickness above that.
+            go.transform.localPosition = new Vector3(0f, height + CeilingThickness * 0.5f, 0f);
+            go.transform.localScale    = new Vector3(outerW, CeilingThickness, outerD);
+
+            Material mat = ceilingMaterial != null ? ceilingMaterial : wallMat;
+            if (mat != null)
+                go.GetComponent<Renderer>().sharedMaterial = mat;
         }
 
         /// <summary>
@@ -559,6 +620,393 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (Mathf.Abs(delta.x) >= Mathf.Abs(delta.z))
                 return delta.x > 0 ? WallSide.East : WallSide.West;
             return delta.z > 0 ? WallSide.North : WallSide.South;
+        }
+
+        // ── Perimeter corridor ───────────────────────────────────────────────
+
+        // Grid resolution (metres) the corridor is rasterised at. 1 m divides
+        // every room extent (rooms are even-sized on an even grid), so building
+        // cells tile the room floors exactly and corridor cells abut them flush.
+        private const float CorridorGrid = 1f;
+
+        /// <summary>
+        /// Wraps the finished building in an enclosed corridor that hugs its true
+        /// outline. The building is rasterised onto a grid, dilated outward by the
+        /// corridor width, and the dilated-but-not-building cells become corridor
+        /// (floor + roof + an outer wall on every corridor/outside boundary). This
+        /// follows an L / T / U footprint instead of squaring it off to the
+        /// bounding box. A single opening (with a door) is left on the building's
+        /// entry side. Lives under its own container, kept out of the NavMesh bake
+        /// so interior NPCs stay inside the building.
+        /// </summary>
+        private void BuildPerimeterCorridor(ScenarioData scenario)
+        {
+            if (!buildPerimeterCorridor) return;
+            if (corridorWidth <= 0.01f) return;
+
+            if (!TryComputeFootprint(scenario, out float minX, out float maxX,
+                                     out float minZ, out float maxZ, out float height))
+            {
+                Debug.LogWarning("[SceneBuilder] Perimeter corridor skipped - no rooms to wrap.");
+                return;
+            }
+
+            const float g = CorridorGrid;
+            int cwCells = Mathf.Max(1, Mathf.RoundToInt(corridorWidth / g));
+
+            // Grid spans the footprint plus the corridor band plus a one-cell
+            // "outside" margin, so corridor cells on the very edge still see an
+            // outside neighbour and get an outer wall.
+            float originX = minX - corridorWidth - g;
+            float originZ = minZ - corridorWidth - g;
+            int nx = Mathf.CeilToInt((maxX + corridorWidth + g - originX) / g) + 1;
+            int nz = Mathf.CeilToInt((maxZ + corridorWidth + g - originZ) / g) + 1;
+
+            // building[i,j]: a room floor covers this cell.
+            var building = new bool[nx, nz];
+            foreach (RoomData room in scenario.layout.rooms)
+            {
+                float w = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+                float d = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+                float halfW = (w + CorridorGap) * 0.5f;
+                float halfD = (d + CorridorGap) * 0.5f;
+                Vector3 c = World(room.position.ToVector3());
+
+                int i0 = Mathf.Clamp(Mathf.FloorToInt((c.x - halfW - originX) / g), 0, nx - 1);
+                int i1 = Mathf.Clamp(Mathf.CeilToInt ((c.x + halfW - originX) / g) - 1, 0, nx - 1);
+                int j0 = Mathf.Clamp(Mathf.FloorToInt((c.z - halfD - originZ) / g), 0, nz - 1);
+                int j1 = Mathf.Clamp(Mathf.CeilToInt ((c.z + halfD - originZ) / g) - 1, 0, nz - 1);
+                for (int i = i0; i <= i1; i++)
+                    for (int j = j0; j <= j1; j++) building[i, j] = true;
+            }
+
+            // near[i,j]: within the corridor band of the building (Chebyshev
+            // dilation by cwCells). corridor = near and not building.
+            var near = new bool[nx, nz];
+            for (int i = 0; i < nx; i++)
+                for (int j = 0; j < nz; j++)
+                {
+                    if (!building[i, j]) continue;
+                    for (int di = -cwCells; di <= cwCells; di++)
+                        for (int dj = -cwCells; dj <= cwCells; dj++)
+                        {
+                            int ni = i + di, nj = j + dj;
+                            if (ni >= 0 && ni < nx && nj >= 0 && nj < nz) near[ni, nj] = true;
+                        }
+                }
+
+            var corridor = new bool[nx, nz];
+            for (int i = 0; i < nx; i++)
+                for (int j = 0; j < nz; j++)
+                    corridor[i, j] = near[i, j] && !building[i, j];
+
+            float baseY = _buildOffset.y;
+            Material floorMat = ResolveCorridorFloorMaterial();
+            Material wallMat  = wallMaterial    != null ? wallMaterial    : floorMat;
+            Material roofMat  = ceilingMaterial != null ? ceilingMaterial : wallMat;
+
+            // ── Floor + roof: greedy-merge corridor cells into rectangles.
+            //    Corridor cells never overlap building cells, so the slabs sit
+            //    flush with the room floors / ceilings - no z-fighting, no step.
+            var used = new bool[nx, nz];
+            for (int j = 0; j < nz; j++)
+                for (int i = 0; i < nx; i++)
+                {
+                    if (!corridor[i, j] || used[i, j]) continue;
+
+                    int w = 1;
+                    while (i + w < nx && corridor[i + w, j] && !used[i + w, j]) w++;
+
+                    int h = 1;
+                    bool grow = true;
+                    while (grow && j + h < nz)
+                    {
+                        for (int k = i; k < i + w; k++)
+                            if (!corridor[k, j + h] || used[k, j + h]) { grow = false; break; }
+                        if (grow) h++;
+                    }
+
+                    for (int a = i; a < i + w; a++)
+                        for (int b = j; b < j + h; b++) used[a, b] = true;
+
+                    float x0 = originX + i * g, x1 = originX + (i + w) * g;
+                    float z0 = originZ + j * g, z1 = originZ + (j + h) * g;
+                    BuildCorridorSlab("Floor", x0, x1, z0, z1, baseY, CorridorFloorThickness, floorMat);
+                    BuildCorridorSlab("Roof",  x0, x1, z0, z1, baseY + height, CeilingThickness, roofMat);
+                }
+
+            // ── Outer walls: a segment on every corridor/outside boundary edge.
+            //    Edges inside the entrance opening are skipped and their span is
+            //    accumulated, so we can frame the doorway to the exact door width
+            //    afterwards (the raw grid gap is quantised to whole cells and
+            //    would otherwise be wider than the door, leaving side gaps). ─────
+            GetCorridorEntrance(scenario, minX, maxX, minZ, maxZ,
+                                out WallSide entranceSide, out Rect openingRect);
+
+            bool entranceAlongX = entranceSide == WallSide.North || entranceSide == WallSide.South;
+            float gapMin = float.MaxValue, gapMax = float.MinValue, gapPerp = 0f;
+            bool haveGap = false;
+
+            for (int i = 0; i < nx; i++)
+                for (int j = 0; j < nz; j++)
+                {
+                    if (!corridor[i, j]) continue;
+                    float x0 = originX + i * g, x1 = originX + (i + 1) * g;
+                    float z0 = originZ + j * g, z1 = originZ + (j + 1) * g;
+
+                    TryAddOuterWall(near, i + 1, j, nx, nz, $"Wall_{i}_{j}_E", false, x1, z0, z1,
+                                    baseY, height, wallMat, entranceSide, openingRect,
+                                    ref haveGap, ref gapMin, ref gapMax, ref gapPerp);
+                    TryAddOuterWall(near, i - 1, j, nx, nz, $"Wall_{i}_{j}_W", false, x0, z0, z1,
+                                    baseY, height, wallMat, entranceSide, openingRect,
+                                    ref haveGap, ref gapMin, ref gapMax, ref gapPerp);
+                    TryAddOuterWall(near, i, j + 1, nx, nz, $"Wall_{i}_{j}_N", true, z1, x0, x1,
+                                    baseY, height, wallMat, entranceSide, openingRect,
+                                    ref haveGap, ref gapMin, ref gapMax, ref gapPerp);
+                    TryAddOuterWall(near, i, j - 1, nx, nz, $"Wall_{i}_{j}_S", true, z0, x0, x1,
+                                    baseY, height, wallMat, entranceSide, openingRect,
+                                    ref haveGap, ref gapMin, ref gapMax, ref gapPerp);
+                }
+
+            // ── Frame the entrance to the exact door width + place the door ──
+            if (haveGap)
+            {
+                float openW    = _doorOpeningWidth  + DoorClearance;
+                float openH    = _doorOpeningHeight + DoorClearance;
+                float doorLat  = (gapMin + gapMax) * 0.5f;   // centre the door in the quantised gap
+                float halfOpen = openW * 0.5f;
+
+                // Jambs filling the quantised gap down to the door width; they abut
+                // the neighbouring grid walls (no overlap, so no z-fighting).
+                BuildCorridorWallRun("Wall_Entry_A", entranceAlongX, gapPerp,
+                                     gapMin, doorLat - halfOpen, baseY, height, wallMat);
+                BuildCorridorWallRun("Wall_Entry_B", entranceAlongX, gapPerp,
+                                     doorLat + halfOpen, gapMax, baseY, height, wallMat);
+
+                float headerH = height - openH;
+                if (headerH > 0.01f)
+                    BuildCorridorWallRun("Wall_Entry_Header", entranceAlongX, gapPerp,
+                                         doorLat - halfOpen, doorLat + halfOpen,
+                                         baseY + openH, headerH, wallMat);
+
+                if (doorPrefab != null)
+                {
+                    Vector3 doorPos = entranceAlongX
+                        ? new Vector3(doorLat, baseY, gapPerp)
+                        : new Vector3(gapPerp, baseY, doorLat);
+                    DoorState outerState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
+                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, outerState);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds an outer-wall segment for a corridor cell face when the neighbour
+        /// is outside. Faces inside the entrance opening (matched by orientation +
+        /// the opening rect) are skipped, and their span/plane is accumulated so
+        /// the caller can frame the doorway precisely.
+        /// </summary>
+        private void TryAddOuterWall(bool[,] near, int ni, int nj, int nx, int nz,
+                                     string name, bool axisAlongX, float fixedCoord,
+                                     float runMin, float runMax, float baseY, float height,
+                                     Material mat, WallSide entranceSide, Rect openingRect,
+                                     ref bool haveGap, ref float gapMin, ref float gapMax,
+                                     ref float gapPerp)
+        {
+            if (!IsOutsideCell(near, ni, nj, nx, nz)) return; // neighbour is building/corridor
+
+            float runCentre = (runMin + runMax) * 0.5f;
+            Vector2 mid = axisAlongX ? new Vector2(runCentre, fixedCoord)
+                                     : new Vector2(fixedCoord, runCentre);
+            bool sideMatches = axisAlongX
+                ? entranceSide == WallSide.North || entranceSide == WallSide.South
+                : entranceSide == WallSide.East  || entranceSide == WallSide.West;
+
+            if (sideMatches && openingRect.Contains(mid))
+            {
+                gapMin  = Mathf.Min(gapMin, runMin);
+                gapMax  = Mathf.Max(gapMax, runMax);
+                gapPerp = fixedCoord;
+                haveGap = true;
+                return;
+            }
+
+            BuildCorridorWallRun(name, axisAlongX, fixedCoord, runMin, runMax, baseY, height, mat);
+        }
+
+        /// <summary>A grid cell counts as "outside" (gets an outer wall) when it
+        /// is off the grid or neither building nor corridor.</summary>
+        private static bool IsOutsideCell(bool[,] near, int i, int j, int nx, int nz)
+        {
+            if (i < 0 || i >= nx || j < 0 || j >= nz) return true;
+            return !near[i, j];
+        }
+
+        /// <summary>
+        /// Computes the building's outer footprint (the union of every room's
+        /// outer wall extents, which sit half the corridor gap beyond each room's
+        /// nominal size) and the wall height to match. Returns false if there are
+        /// no rooms.
+        /// </summary>
+        private bool TryComputeFootprint(ScenarioData scenario, out float minX, out float maxX,
+                                         out float minZ, out float maxZ, out float height)
+        {
+            minX = minZ = float.MaxValue;
+            maxX = maxZ = float.MinValue;
+            height = 3f;
+            bool any = false;
+
+            foreach (RoomData room in scenario.layout.rooms)
+            {
+                float w = room.size != null && room.size.width  > 0f ? room.size.width  : 6f;
+                float d = room.size != null && room.size.depth  > 0f ? room.size.depth  : 6f;
+                float h = room.size != null && room.size.height > 0f ? room.size.height : 3f;
+
+                float halfW = (w + CorridorGap) * 0.5f;
+                float halfD = (d + CorridorGap) * 0.5f;
+
+                Vector3 c = World(room.position.ToVector3());
+                minX = Mathf.Min(minX, c.x - halfW); maxX = Mathf.Max(maxX, c.x + halfW);
+                minZ = Mathf.Min(minZ, c.z - halfD); maxZ = Mathf.Max(maxZ, c.z + halfD);
+                height = Mathf.Max(height, h);
+                any = true;
+            }
+            return any;
+        }
+
+        /// <summary>
+        /// Resolves the corridor entrance: the outer wall side facing the
+        /// building's primary entry point and an opening rectangle (in the X/Z
+        /// plane) where outer-wall segments are suppressed. The opening lines up
+        /// with the building's entry so the trainee walks a straight line staging →
+        /// outer door → building entry. Falls back to the south side at the
+        /// footprint midpoint when the layout defines no entry points. The exact
+        /// door position is derived later from the suppressed wall span.
+        /// </summary>
+        private void GetCorridorEntrance(ScenarioData scenario,
+                                         float minX, float maxX, float minZ, float maxZ,
+                                         out WallSide side, out Rect openingRect)
+        {
+            float openW = _doorOpeningWidth + DoorClearance;
+            float cw    = corridorWidth;
+            float g     = CorridorGrid;
+
+            float lateralX, lateralZ;
+            List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
+            if (entryPoints != null && entryPoints.Count > 0)
+            {
+                Vector3 ep = World(entryPoints[0].position.ToVector3());
+                var centre = new Vector3((minX + maxX) * 0.5f, ep.y, (minZ + maxZ) * 0.5f);
+                side = WallSideFromDelta(ep - centre);
+                lateralX = ep.x;
+                lateralZ = ep.z;
+            }
+            else
+            {
+                side = WallSide.South;
+                lateralX = (minX + maxX) * 0.5f;
+                lateralZ = minZ;
+            }
+
+            // The opening rect spans the door width laterally and reaches from the
+            // building edge out past the corridor's outer wall, so every outer-wall
+            // segment in front of the entry is suppressed.
+            switch (side)
+            {
+                case WallSide.North:
+                    openingRect = Rect.MinMaxRect(lateralX - openW * 0.5f, lateralZ,
+                                                  lateralX + openW * 0.5f, lateralZ + cw + g);
+                    break;
+                case WallSide.South:
+                    openingRect = Rect.MinMaxRect(lateralX - openW * 0.5f, lateralZ - cw - g,
+                                                  lateralX + openW * 0.5f, lateralZ);
+                    break;
+                case WallSide.East:
+                    openingRect = Rect.MinMaxRect(lateralX, lateralZ - openW * 0.5f,
+                                                  lateralX + cw + g, lateralZ + openW * 0.5f);
+                    break;
+                default: // West
+                    openingRect = Rect.MinMaxRect(lateralX - cw - g, lateralZ - openW * 0.5f,
+                                                  lateralX, lateralZ + openW * 0.5f);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Lays a flat axis-aligned slab (floor or roof strip) spanning
+        /// [xMin,xMax] × [zMin,zMax] with its bottom face at <paramref name="baseY"/>.
+        /// </summary>
+        private void BuildCorridorSlab(string name, float xMin, float xMax,
+                                       float zMin, float zMax, float baseY,
+                                       float thickness, Material mat)
+        {
+            float sizeX = xMax - xMin;
+            float sizeZ = zMax - zMin;
+            if (sizeX <= 0.001f || sizeZ <= 0.001f) return;
+
+            var centre = new Vector3((xMin + xMax) * 0.5f,
+                                     baseY + thickness * 0.5f,
+                                     (zMin + zMax) * 0.5f);
+            AddCorridorBox(name, centre, new Vector3(sizeX, thickness, sizeZ), mat);
+        }
+
+        /// <summary>
+        /// Adds a single solid wall cube running between <paramref name="runMin"/>
+        /// and <paramref name="runMax"/> along the wall's axis, at world plane
+        /// <paramref name="fixedCoord"/>, rising <paramref name="height"/> from
+        /// <paramref name="yBase"/>. <paramref name="axisAlongX"/> selects whether
+        /// the wall runs along X (north/south face) or Z (east/west face).
+        /// </summary>
+        private void BuildCorridorWallRun(string name, bool axisAlongX, float fixedCoord,
+                                          float runMin, float runMax, float yBase,
+                                          float height, Material mat)
+        {
+            float length = runMax - runMin;
+            if (length <= 0.001f) return;
+
+            float runCentre = (runMin + runMax) * 0.5f;
+            float cy = yBase + height * 0.5f;
+            Vector3 centre = axisAlongX
+                ? new Vector3(runCentre, cy, fixedCoord)
+                : new Vector3(fixedCoord, cy, runCentre);
+            Vector3 size = axisAlongX
+                ? new Vector3(length, height, WallThickness)
+                : new Vector3(WallThickness, height, length);
+
+            AddCorridorBox(name, centre, size, mat);
+        }
+
+        /// <summary>
+        /// Instantiates a primitive cube at a world centre/size under the corridor
+        /// container. Assumes the SceneBuilder transform is unscaled (as the room
+        /// roots are), matching how rooms are placed in world space.
+        /// </summary>
+        private void AddCorridorBox(string name, Vector3 worldCentre, Vector3 size, Material mat)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = name;
+            go.transform.SetParent(_corridorRoot, worldPositionStays: true);
+            go.transform.position   = worldCentre;
+            go.transform.localScale = size;
+
+            if (mat != null)
+                go.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>
+        /// Corridor floor material: the explicit <see cref="corridorFloorMaterial"/>
+        /// if set, otherwise the material on the first built room's floor so the
+        /// corridor floor matches the building.
+        /// </summary>
+        private Material ResolveCorridorFloorMaterial()
+        {
+            if (corridorFloorMaterial != null) return corridorFloorMaterial;
+            foreach (KeyValuePair<string, GameObject> kvp in _roomObjects)
+            {
+                Renderer r = kvp.Value != null ? kvp.Value.GetComponentInChildren<Renderer>() : null;
+                if (r != null) return r.sharedMaterial;
+            }
+            return wallMaterial;
         }
 
         /// <summary>
