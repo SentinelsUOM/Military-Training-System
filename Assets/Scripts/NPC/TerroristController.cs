@@ -53,6 +53,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "Static  — stands at spawn position (Leader)")]
     public IdleMode idleMode = IdleMode.Patrol;
 
+    [Tooltip("Base NavMesh move speed (m/s) for walking (patrol/converge/flank/investigate). " +
+             "Kept modest so foot motion matches the walk clip instead of sliding. Retreat " +
+             "multiplies this by Retreat Speed Multiplier.")]
+    public float moveSpeed = 1.5f;
+
     [Tooltip("Wander only — max distance from spawn that the NPC will wander.")]
     public float wanderRadius = 12f;
 
@@ -70,7 +75,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "blend tree's 'Speed' parameter is set to (actual speed / this), clamped 0-1. " +
              "Lower it if the legs cycle too slowly for the travel speed (foot-sliding); raise " +
              "it if they cycle too fast. ~1.3 matches the default NavMeshAgent / PatrolLine speed.")]
-    public float walkAnimReferenceSpeed = 1.3f;
+    public float walkAnimReferenceSpeed = 1.5f;
 
     [Tooltip("Vertical offset applied after death to make the body lie flat on the floor.\n" +
              "If the body floats above the floor → set this to a NEGATIVE number (e.g. -0.3).\n" +
@@ -85,6 +90,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Squad identifier assigned from Scenario JSON at spawn time. Leave blank = no squad.")]
     public string squadId = "";
 
+    [Tooltip("Hostage guardian: stays on the hostage and NEVER leaves to investigate, " +
+             "converge or flank. It only engages what it personally sees, then keeps " +
+             "guarding. Set automatically by SceneBuilder for the HostageGuardian role.")]
+    public bool isHostageGuardian = false;
+
     [Header("Health")]
     public float maxHealth = 100f;
 
@@ -96,8 +106,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("How far (metres) the NPC tries to fall back from the threat.")]
     public float retreatDistance = 10f;
 
-    [Tooltip("NavMeshAgent speed multiplier while retreating (1 = normal walk).")]
-    public float retreatSpeedMultiplier = 1.5f;
+    [Tooltip("NavMeshAgent speed multiplier while retreating (1 = normal walk). ~1.7 reads as a " +
+             "jog without badly outrunning the run clip.")]
+    public float retreatSpeedMultiplier = 1.7f;
 
     [Tooltip("Seconds to hold at the fallback point (or in place when no NavMeshAgent " +
              "is available) before returning to Alert.")]
@@ -189,6 +200,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         // Terminal — no response ever
         if (currentState == TerroristState.Down) return false;
+
+        // Hostage guardian holds its post: it ignores squad stimuli (gunshots,
+        // ally-down, room breaches) that would pull it off the hostage. It reacts
+        // ONLY through its own perception (PlayerSeen/TargetConfirmed via
+        // HandleDetection, which bypasses CanRespond).
+        if (isHostageGuardian) return false;
 
         // Don't respond to own weapon fire
         if (e.Instigator == gameObject &&
@@ -422,7 +439,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 if (currentState == TerroristState.Engage)
                 {
                     TransitionTo(TerroristState.Alert, e);
-                    InvestigatePosition(_lastKnownPlayerPos);
+                    // Guardian holds its post — it does NOT chase/search; it keeps
+                    // guarding the hostage and re-engages only if the player returns.
+                    if (!isHostageGuardian)
+                        InvestigatePosition(_lastKnownPlayerPos);
                 }
                 break;
         }
@@ -442,6 +462,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     bool      _wasFiring;
     bool      _personallyConfirmedPlayer; // true only when own PerceptionController fired TargetConfirmed
     Vector3   _lastKnownPlayerPos;        // where the player was last actually seen (for search-on-lost)
+    bool      _pendingEscalation;         // this investigation may call for squad backup if it finds nothing
     CoverPoint _claimedCover;
     Vector3   _spawnPosition;
     Quaternion _spawnRotation;
@@ -450,7 +471,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
     LeaderDirective _activeDirective;   // last directive received from squad Leader; null when none active
     Transform _aimBone;                 // cached chest/spine bone used to aim the upper body at the player
     Vector3   _lastAnimPos;             // previous-frame position, for velocity-driven locomotion blend
-    static readonly int _animSpeed = Animator.StringToHash("Speed");
+    static readonly int _animSpeed  = Animator.StringToHash("Speed");
+    static readonly int _animFiring = Animator.StringToHash("Firing");
+    static readonly int _animCrouch = Animator.StringToHash("Crouch");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -465,7 +488,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
         var go = new GameObject($"[LookAnchor] {gameObject.name}");
         _lookAnchor = go.transform;
 
-        if (agent != null) _originalAgentSpeed = agent.speed;
+        // Enforce a sane walk speed regardless of the prefab's NavMeshAgent default
+        // (Unity defaults agents to 3.5 m/s, which badly outruns the walk/run clip
+        // cadence → foot-sliding). This keeps travel speed matched to the animation.
+        if (agent != null)
+        {
+            agent.speed = moveSpeed;
+            _originalAgentSpeed = moveSpeed;
+        }
 
         // Cache the aim bone (Chest by default) so LateUpdate can rotate it without per-frame lookup.
         // Falls back through UpperChest → Chest → Spine in case the rig is missing some bones.
@@ -552,9 +582,16 @@ public class TerroristController : MonoBehaviour, INPCResponder
             Vector3 d = transform.position - _lastAnimPos;
             d.y = 0f;
             float speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
-            float norm  = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
+            // 0 = idle/aim, 1 = walk pace, 2 = run pace (retreat). Clamp to the
+            // blend's 0-2 range so fast movement reaches the rifle-run clip.
+            float norm  = Mathf.Clamp(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed), 0f, 2f);
             // 0.12 s damping smooths the start/stop so legs ease in/out.
             animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
+
+            // Firing clip plays whenever the shooter is actually firing (Engage).
+            animator.SetBool(_animFiring, shooter != null && shooter.IsFiring);
+            // Crouch clip while moving to / holding cover.
+            animator.SetBool(_animCrouch, currentState == TerroristState.TakeCover);
         }
         _lastAnimPos = transform.position;
 
@@ -637,8 +674,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
             if (toPlayer.sqrMagnitude > 0.001f)
             {
                 Quaternion target = Quaternion.LookRotation(toPlayer);
+                // Snap to face the player much faster while actually shooting so the
+                // body clearly turns to look at you (not stuck side-on).
+                float faceRate = currentState == TerroristState.Engage
+                    ? Mathf.Max(aimRotationSpeed, 14f)
+                    : aimRotationSpeed;
                 transform.rotation = Quaternion.Slerp(
-                    transform.rotation, target, Time.deltaTime * aimRotationSpeed);
+                    transform.rotation, target, Time.deltaTime * faceRate);
             }
         }
 
@@ -663,8 +705,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 Quaternion delta = Quaternion.FromToRotation(currentForward, desiredForward);
 
                 // Clamp magnitude so an awkward player position can't cause an extreme
-                // spine twist that breaks the silhouette.
-                delta = Quaternion.RotateTowards(Quaternion.identity, delta, maxAimAngle);
+                // spine twist. Allow at least 70° so the gun can be brought onto the
+                // player even from a held-across-chest firing pose (GunplayShooting).
+                delta = Quaternion.RotateTowards(Quaternion.identity, delta,
+                                                 Mathf.Max(maxAimAngle, 70f));
 
                 // Apply additively to the chest's animator-driven rotation.
                 _aimBone.rotation = delta * _aimBone.rotation;
@@ -1185,7 +1229,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
     IEnumerator SuspiciousTimeout()
     {
         yield return new WaitForSeconds(suspiciousTimeout);
-        if (currentState == TerroristState.Suspicious)
+        // Don't time out while actively investigating — the investigation owns the
+        // return-to-Idle when its search completes. This only catches a Suspicious
+        // NPC that merely looked toward a sound and was never sent to search.
+        if (currentState == TerroristState.Suspicious && !_isInvestigating)
             TransitionTo(TerroristState.Idle, null);
     }
 
@@ -1273,6 +1320,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
     // ── Investigate ───────────────────────────────────────────────────────────
 
     [Header("Investigation Tuning")]
+    [Tooltip("On hearing a gunshot, the investigator first turns to face the sound and scans " +
+             "for this many seconds BEFORE walking over. If it spots the player in that window " +
+             "it engages instead of investigating.")]
+    public float lookBeforeInvestigateTime = 1.5f;
+
     [Tooltip("Walk speed while approaching the gunshot location (normal speed is used otherwise).")]
     public float investigateSpeed = 1.5f;
 
@@ -1306,14 +1358,34 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// Walk to soundPos and scan. Called by EventManager on the selected responder.
     /// Only acts if the NPC has a NavMeshAgent and is currently Suspicious.
     /// </summary>
-    public void InvestigatePosition(Vector3 soundPos)
+    public void InvestigatePosition(Vector3 soundPos, bool allowEscalation = false)
     {
+        // Guardian never leaves the hostage to investigate.
+        if (isHostageGuardian) return;
         if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
         // Allow both Suspicious (gunshot) and Alert (squad-member down) investigations
         if (currentState != TerroristState.Suspicious && currentState != TerroristState.Alert) return;
 
+        _pendingEscalation = allowEscalation;
         if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
         _investigateRoutine = StartCoroutine(InvestigateRoutine(soundPos));
+    }
+
+    /// <summary>
+    /// Squad-backup entry point: a non-guardian member dispatched to sweep an area
+    /// after the first investigator turned up nothing. Forces it into a searching
+    /// state and runs the investigation (without re-escalating again).
+    /// </summary>
+    public void DispatchToInvestigate(Vector3 area)
+    {
+        if (isHostageGuardian) return;
+        if (currentState == TerroristState.Down || currentState == TerroristState.Engage) return;
+        if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
+
+        SetLookTarget(area);
+        if (currentState != TerroristState.Alert)
+            TransitionTo(TerroristState.Alert, null);
+        InvestigatePosition(area, allowEscalation: false);
     }
 
     IEnumerator InvestigateRoutine(Vector3 soundPos)
@@ -1321,8 +1393,30 @@ public class TerroristController : MonoBehaviour, INPCResponder
         Debug.Log($"[TerroristController] {gameObject.name}: investigating position at {soundPos}");
 
         var startState = currentState;
+        bool escalate  = _pendingEscalation; // capture; a later call may overwrite the field
         _isInvestigating = true;
         animator?.SetBool("Investigating", true);
+
+        // ── Phase 0: Look first — turn to face the sound and scan in place ────
+        // The NPC hears a shot but hasn't moved yet: face the origin, hold, and
+        // let perception work. If the player is spotted in this window the state
+        // leaves startState (→ Engage) and we abort the walk entirely.
+        SetLookTarget(soundPos);
+        animator?.SetBool("Alert", true);
+        {
+            float looked = 0f;
+            while (looked < lookBeforeInvestigateTime && currentState == startState)
+            {
+                // Rotate to face the sound while scanning.
+                Vector3 dir = soundPos - transform.position; dir.y = 0f;
+                if (dir.sqrMagnitude > 0.01f)
+                    transform.rotation = Quaternion.Slerp(transform.rotation,
+                        Quaternion.LookRotation(dir), Time.deltaTime * 6f);
+                looked += Time.deltaTime;
+                yield return null;
+            }
+        }
+        if (currentState != startState) { EndInvestigation(); yield break; }
 
         // ── Phase 1: Cautious walk toward the location (no gun) ───────────────
         // They only know a gunshot came from there. Normal walk, weapon lowered.
@@ -1408,6 +1502,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
             (startState == TerroristState.Suspicious || startState == TerroristState.Alert))
         {
             Debug.Log($"[TerroristController] {gameObject.name}: area clear, returning to Idle");
+
+            // First investigator turned up nothing → call the rest of the squad to
+            // sweep the same area (second wave). Backups don't escalate again, so
+            // this is bounded to one extra wave.
+            if (escalate && !string.IsNullOrEmpty(squadId))
+                Squad.Get(squadId)?.EscalateInvestigation(soundPos, this);
+
             EndInvestigation();
             TransitionTo(TerroristState.Idle, null);
             yield break;
@@ -1475,6 +1576,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         if (directive == null) return;
         if (currentState == TerroristState.Down || currentState == TerroristState.Engage) return;
+        // Guardian never leaves the hostage to follow Converge/Flank orders.
+        if (isHostageGuardian) return;
 
         _activeDirective = directive;
         SetLookTarget(directive.TargetPosition);

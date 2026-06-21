@@ -109,7 +109,8 @@ public class EventManager : MonoBehaviour
                 var investigator = NPCSelector.SelectBest(terrorists, e, false);
                 if (investigator is TerroristController tc)
                 {
-                    tc.InvestigatePosition(e.Origin);
+                    // allowEscalation: if this scout finds nothing, the squad sweeps next.
+                    tc.InvestigatePosition(e.Origin, allowEscalation: true);
                     if (logEvents)
                         Debug.Log($"[EventManager] GunshotHeard investigator → {tc.NPCId}");
                 }
@@ -127,7 +128,7 @@ public class EventManager : MonoBehaviour
                     var investigator = NPCSelector.SelectBest(searchers, e, false);
                     if (investigator is TerroristController tc)
                     {
-                        tc.InvestigatePosition(e.Origin);
+                        tc.InvestigatePosition(e.Origin, allowEscalation: true);
                         Debug.Log($"[EventManager] TerroristDown investigator → {tc.NPCId}");
                     }
                 }

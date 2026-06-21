@@ -358,6 +358,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 // rescue works even if the prefab doesn't already carry the component.
                 if (go.GetComponentInChildren<HostageContactZone>() == null)
                     go.AddComponent<HostageContactZone>();
+
+                // Make the hostage shootable (trainee friendly-fire → injured/dead).
+                if (go.GetComponent<HostageHitBox>() == null)
+                    go.AddComponent<HostageHitBox>();
             }
         }
 
@@ -385,29 +389,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             sphere.radius = safeZoneRadius;
             _safeZone.AddComponent<ExtractionZone>();
 
-            // Flat floor disc so the trainee can SEE the safe spot from the start.
-            var marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            marker.name = "Marker";
-            marker.transform.SetParent(_safeZone.transform, worldPositionStays: false);
-            marker.transform.localPosition = new Vector3(0f, 0.02f, 0f);
-            marker.transform.localScale    = new Vector3(safeZoneRadius * 2f, 0.02f, safeZoneRadius * 2f);
-
-            // The marker is purely visual — drop its collider so it can't block movement.
-            var markerCol = marker.GetComponent<Collider>();
-            if (markerCol != null)
-            {
-                if (Application.isPlaying) Destroy(markerCol); else DestroyImmediate(markerCol);
-            }
-
-            // Colour it (URP uses _BaseColor; set both for safety).
-            var rend = marker.GetComponent<Renderer>();
-            if (rend != null)
-            {
-                var mat = rend.material;
-                mat.color = safeZoneColor;
-                if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", safeZoneColor);
-                rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            }
+            // Game-visible beacon (bright unlit pad + light beam + floating label).
+            // The beacon builds its visuals in Start() from these fields.
+            var beacon = _safeZone.AddComponent<SafeZoneBeacon>();
+            beacon.radius = safeZoneRadius;
+            beacon.color  = safeZoneColor;
 
             Debug.Log($"[SceneBuilder] Safe zone created at trainee spawn {pos} (radius {safeZoneRadius}m).");
         }
@@ -422,6 +408,8 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             List<NpcSpawnPoint> terrorists = scenario.spawnPoints?.terrorists;
             if (terrorists == null) return;
+
+            var spawned = new List<TerroristController>();
 
             foreach (NpcSpawnPoint sp in terrorists)
             {
@@ -443,6 +431,24 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 NavigationContextEntry nav = FindNavigationContext(scenario, role);
 
                 ConfigureTerrorist(controller, role, nav, scenario);
+                spawned.Add(controller);
+            }
+
+            // Elect ONE squad Leader from the non-guardian terrorists. The guardian
+            // never leads (it must stay on the hostage). Prefer a mobile Roamer so
+            // the leader can actually move up to coordinate; fall back to any
+            // non-guardian. If every terrorist is a guardian, there's simply no
+            // leader and the squad just defends.
+            TerroristController leader = null;
+            foreach (var t in spawned)
+                if (t != null && !t.isHostageGuardian && t.role == NPCRole.Roamer) { leader = t; break; }
+            if (leader == null)
+                foreach (var t in spawned)
+                    if (t != null && !t.isHostageGuardian) { leader = t; break; }
+            if (leader != null)
+            {
+                leader.role = NPCRole.Leader;
+                Debug.Log($"[SceneBuilder] Squad leader elected: {leader.NPCId}.");
             }
         }
 
@@ -482,18 +488,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             }
 
             // ── Module 2 combat role + squad (Module 2's territory per HANDOFF §4) ──
-            // Without this, generated missions have no squads and no Leader, so
-            // Ring-1 alert propagation and Converge/Flank directives never fire.
-            // Mapping rationale:
-            //   HostageGuardian → Leader (mission-critical, commands the squad)
-            //   StationaryGuard → Guard  (role bonus on RoomBreached)
-            //   Patrol / RoamingGuard → Roamer (mobile; role bonus on GunshotHeard)
-            // All terrorists in a scenario share one squad so coordination spans
-            // the whole site.
+            // All terrorists share one squad so coordination spans the whole site.
+            // The HostageGuardian is special: it STAYS on the hostage and never
+            // joins the squad's roaming/investigation/flanking — it only engages
+            // what it personally sees (set isHostageGuardian = true). The squad
+            // Leader is elected separately from a NON-guardian (see SpawnTerrorists)
+            // so the guardian never gets pulled off post by leading directives.
+            controller.isHostageGuardian = role.role == NpcRole.HostageGuardian;
+
             NPCRole combatRole = role.role switch
             {
-                NpcRole.HostageGuardian => NPCRole.Leader,
                 NpcRole.StationaryGuard => NPCRole.Guard,
+                NpcRole.HostageGuardian => NPCRole.Guard,
                 NpcRole.Patrol          => NPCRole.Roamer,
                 NpcRole.RoamingGuard    => NPCRole.Roamer,
                 _                       => NPCRole.Guard,
