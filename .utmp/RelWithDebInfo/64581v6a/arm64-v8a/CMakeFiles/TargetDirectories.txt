@@ -1,0 +1,5 @@
+/Volumes/ManushaSSD/FYP/Military-Training-System/.utmp/RelWithDebInfo/64581v6a/arm64-v8a/CMakeFiles/edit_cache.dir
+/Volumes/ManushaSSD/FYP/Military-Training-System/.utmp/RelWithDebInfo/64581v6a/arm64-v8a/CMakeFiles/rebuild_cache.dir
+/Volumes/ManushaSSD/FYP/Military-Training-System/.utmp/RelWithDebInfo/64581v6a/arm64-v8a/GameActivity/CMakeFiles/game.dir
+/Volumes/ManushaSSD/FYP/Military-Training-System/.utmp/RelWithDebInfo/64581v6a/arm64-v8a/GameActivity/CMakeFiles/edit_cache.dir
+/Volumes/ManushaSSD/FYP/Military-Training-System/.utmp/RelWithDebInfo/64581v6a/arm64-v8a/GameActivity/CMakeFiles/rebuild_cache.dir
