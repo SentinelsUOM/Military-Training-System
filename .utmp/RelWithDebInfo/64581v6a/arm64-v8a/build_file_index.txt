@@ -1,0 +1,2 @@
+/Volumes/ManushaSSD/FYP/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/CMakeLists.txt
+/Volumes/ManushaSSD/FYP/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/GameActivity/CMakeLists.txt
