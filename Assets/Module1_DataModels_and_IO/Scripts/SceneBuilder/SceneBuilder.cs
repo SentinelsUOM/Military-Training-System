@@ -76,6 +76,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "reposition this; we never instantiate a new rig.")]
         public Transform traineeRig;
 
+        [Header("Safe Zone / Extraction")]
+        [Tooltip("Spawn a visible 'safe spot' (extraction zone) at the trainee's start " +
+                 "position. Lead a rescued hostage back into it to complete the mission.")]
+        public bool createSafeZone = true;
+
+        [Tooltip("Radius (metres) of the safe-spot trigger and its floor marker.")]
+        public float safeZoneRadius = 2.5f;
+
+        [Tooltip("Colour of the safe-spot floor marker.")]
+        public Color safeZoneColor = new Color(0.2f, 1f, 0.4f, 1f);
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -115,6 +126,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private readonly HashSet<string> _placedDoorPairs = new HashSet<string>();
 
         private NavMeshSurface _navMeshSurface;
+        private GameObject _safeZone;   // visible extraction point spawned at the trainee start
 
         // ── Public methods ───────────────────────────────────────────────────
 
@@ -177,6 +189,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 BuildRooms(scenario);
                 BuildDoors(scenario);
                 PositionTrainee(scenario);
+                CreateSafeZone(scenario);
                 // Bake BEFORE spawning NPCs: NavMeshAgent attaches to the mesh in
                 // OnEnable, so spawning first throws "Failed to create agent because
                 // it is not close enough to the NavMesh" and leaves agents dead
@@ -210,6 +223,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
+
+            if (_safeZone != null)
+            {
+                if (Application.isPlaying) Destroy(_safeZone); else DestroyImmediate(_safeZone);
+                _safeZone = null;
+            }
 
             _roomObjects.Clear();
             _placedDoorPairs.Clear();
@@ -332,7 +351,51 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
                 EntityRecord record = FindEntity(scenario, sp.entityId);
                 controller.currentState = ParseHostageState(record?.metadata?.initialState);
+
+                // Ensure the hostage can detect the trainee for the escort.
+                // HostageContactZone polls for the player and raises
+                // HostageContactStarted → the hostage enters Follow. Add it here so
+                // rescue works even if the prefab doesn't already carry the component.
+                if (go.GetComponentInChildren<HostageContactZone>() == null)
+                    go.AddComponent<HostageContactZone>();
+
+                // Make the hostage shootable (trainee friendly-fire → injured/dead).
+                if (go.GetComponent<HostageHitBox>() == null)
+                    go.AddComponent<HostageHitBox>();
             }
+        }
+
+        /// <summary>
+        /// Spawns a visible "safe spot" (extraction zone) at the trainee's start
+        /// position. The trainee leads a rescued (Following) hostage back into this
+        /// zone to complete the mission. A flat coloured disc marks it on the floor;
+        /// a trigger SphereCollider + ExtractionZone component do the detection.
+        /// </summary>
+        private void CreateSafeZone(ScenarioData scenario)
+        {
+            if (!createSafeZone) return;
+
+            TraineeSpawnPoint t = scenario.spawnPoints?.trainee;
+            if (t == null) return;
+
+            Vector3 pos = t.position.ToVector3();
+
+            _safeZone = new GameObject("SafeZone_Extraction");
+            _safeZone.transform.position = pos;
+
+            // Trigger volume + detection logic.
+            var sphere = _safeZone.AddComponent<SphereCollider>();
+            sphere.isTrigger = true;
+            sphere.radius = safeZoneRadius;
+            _safeZone.AddComponent<ExtractionZone>();
+
+            // Game-visible beacon (bright unlit pad + light beam + floating label).
+            // The beacon builds its visuals in Start() from these fields.
+            var beacon = _safeZone.AddComponent<SafeZoneBeacon>();
+            beacon.radius = safeZoneRadius;
+            beacon.color  = safeZoneColor;
+
+            Debug.Log($"[SceneBuilder] Safe zone created at trainee spawn {pos} (radius {safeZoneRadius}m).");
         }
 
         private void SpawnTerrorists(ScenarioData scenario)
@@ -345,6 +408,8 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             List<NpcSpawnPoint> terrorists = scenario.spawnPoints?.terrorists;
             if (terrorists == null) return;
+
+            var spawned = new List<TerroristController>();
 
             foreach (NpcSpawnPoint sp in terrorists)
             {
@@ -366,6 +431,24 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 NavigationContextEntry nav = FindNavigationContext(scenario, role);
 
                 ConfigureTerrorist(controller, role, nav, scenario);
+                spawned.Add(controller);
+            }
+
+            // Elect ONE squad Leader from the non-guardian terrorists. The guardian
+            // never leads (it must stay on the hostage). Prefer a mobile Roamer so
+            // the leader can actually move up to coordinate; fall back to any
+            // non-guardian. If every terrorist is a guardian, there's simply no
+            // leader and the squad just defends.
+            TerroristController leader = null;
+            foreach (var t in spawned)
+                if (t != null && !t.isHostageGuardian && t.role == NPCRole.Roamer) { leader = t; break; }
+            if (leader == null)
+                foreach (var t in spawned)
+                    if (t != null && !t.isHostageGuardian) { leader = t; break; }
+            if (leader != null)
+            {
+                leader.role = NPCRole.Leader;
+                Debug.Log($"[SceneBuilder] Squad leader elected: {leader.NPCId}.");
             }
         }
 
@@ -405,18 +488,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             }
 
             // ── Module 2 combat role + squad (Module 2's territory per HANDOFF §4) ──
-            // Without this, generated missions have no squads and no Leader, so
-            // Ring-1 alert propagation and Converge/Flank directives never fire.
-            // Mapping rationale:
-            //   HostageGuardian → Leader (mission-critical, commands the squad)
-            //   StationaryGuard → Guard  (role bonus on RoomBreached)
-            //   Patrol / RoamingGuard → Roamer (mobile; role bonus on GunshotHeard)
-            // All terrorists in a scenario share one squad so coordination spans
-            // the whole site.
+            // All terrorists share one squad so coordination spans the whole site.
+            // The HostageGuardian is special: it STAYS on the hostage and never
+            // joins the squad's roaming/investigation/flanking — it only engages
+            // what it personally sees (set isHostageGuardian = true). The squad
+            // Leader is elected separately from a NON-guardian (see SpawnTerrorists)
+            // so the guardian never gets pulled off post by leading directives.
+            controller.isHostageGuardian = role.role == NpcRole.HostageGuardian;
+
             NPCRole combatRole = role.role switch
             {
-                NpcRole.HostageGuardian => NPCRole.Leader,
                 NpcRole.StationaryGuard => NPCRole.Guard,
+                NpcRole.HostageGuardian => NPCRole.Guard,
                 NpcRole.Patrol          => NPCRole.Roamer,
                 NpcRole.RoamingGuard    => NPCRole.Roamer,
                 _                       => NPCRole.Guard,

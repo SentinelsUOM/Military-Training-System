@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using UnityEngine;
 
 /// <summary>
 /// Runtime squad record — created at scenario load time from the Scenario JSON
@@ -94,4 +95,24 @@ public class Squad
 
     /// Clear the active directive (call at scenario reset or when the leader dies).
     public void ClearDirective() => CurrentDirective = null;
+
+    // ── Investigation escalation (second wave) ────────────────────────────────
+
+    /// <summary>
+    /// Called when the first investigator searched an area and found nothing.
+    /// Dispatches every AVAILABLE squad member to sweep the same area — a second
+    /// wave. The hostage guardian is skipped (it must stay on the hostage), as are
+    /// the requester, downed/engaged members, and anyone already searching.
+    /// </summary>
+    public void EscalateInvestigation(Vector3 area, TerroristController requester)
+    {
+        foreach (var member in _members)
+        {
+            if (member == null || member == requester) continue;
+            if (member.isHostageGuardian)              continue; // guards the hostage
+            if (member.currentState == TerroristState.Down)   continue;
+            if (member.currentState == TerroristState.Engage) continue;
+            member.DispatchToInvestigate(area);
+        }
+    }
 }
