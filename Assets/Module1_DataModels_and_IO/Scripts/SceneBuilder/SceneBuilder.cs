@@ -71,6 +71,16 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "capped to match the hand-built base map.")]
         public Material ceilingMaterial;
 
+        [Header("Windows")]
+        [Tooltip("Punch a glazed window into every solid exterior room wall (one " +
+                 "with no door and no adjacent room) to make the building read as a " +
+                 "real structure rather than a sealed box.")]
+        public bool addWindows = true;
+
+        [Tooltip("Optional glass material for window panes. If left empty, a " +
+                 "best-effort translucent material is generated at runtime.")]
+        public Material windowMaterial;
+
         [Header("Perimeter Corridor")]
         [Tooltip("Wrap the generated building in an enclosed corridor ring " +
                  "(floor + outer wall + roof). The building's exterior entry doors " +
@@ -168,6 +178,13 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Floor slab thickness for the perimeter corridor (matches the room floor
         // prefab's 0.08 m so the corridor floor sits flush with the building floor).
         private const float CorridorFloorThickness = 0.08f;
+
+        // ── Window geometry (carved into solid exterior walls) ────────────────
+        private const float WindowWidth      = 1.0f;   // opening width along the wall
+        private const float WindowHeight     = 0.9f;   // opening height
+        private const float WindowSillHeight = 1.1f;   // floor → bottom of opening
+        private const float WindowSideMargin = 0.4f;   // min solid wall each side of the opening
+        private const float WindowPaneThickness = 0.04f;
         // Height of the door opening. Above this, a header (transom) fills the
         // wall up to the ceiling so doorways aren't open to the full wall height.
         // Matches the door prefab's leaf top and jamb height (2.1 m).
@@ -368,7 +385,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 go.name = room.id;
                 _roomObjects[room.id] = go;
 
-                BuildWalls(room, go);
+                BuildWalls(room, go, scenario.layout.rooms);
             }
         }
 
@@ -379,7 +396,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// match connectivity exactly — no more open holes on unconnected walls,
         /// and the building perimeter is fully enclosed.
         /// </summary>
-        private void BuildWalls(RoomData room, GameObject roomGo)
+        private void BuildWalls(RoomData room, GameObject roomGo, List<RoomData> allRooms)
         {
             Material mat = ResolveWallMaterial(roomGo);
 
@@ -407,19 +424,24 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             float openW = _doorOpeningWidth  + DoorClearance;
             float openH = _doorOpeningHeight + DoorClearance;
 
+            // A solid wall gets a window when it faces the outside (no adjacent
+            // room) - interior partitions between rooms stay solid.
+            bool WindowOn(WallSide side) =>
+                addWindows && !doorSides.Contains(side) && IsExteriorWall(room, side, allRooms);
+
             // North / South run along X (span = outerW, thin in Z).
-            BuildWallSide(roomGo, "South", doorSides.Contains(WallSide.South),
+            BuildWallSide(roomGo, "South", doorSides.Contains(WallSide.South), WindowOn(WallSide.South),
                           axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height,
                           openW: openW, openH: openH, mat: mat);
-            BuildWallSide(roomGo, "North", doorSides.Contains(WallSide.North),
+            BuildWallSide(roomGo, "North", doorSides.Contains(WallSide.North), WindowOn(WallSide.North),
                           axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height,
                           openW: openW, openH: openH, mat: mat);
 
             // East / West run along Z (span = outerD, thin in X).
-            BuildWallSide(roomGo, "East", doorSides.Contains(WallSide.East),
+            BuildWallSide(roomGo, "East", doorSides.Contains(WallSide.East), WindowOn(WallSide.East),
                           axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height,
                           openW: openW, openH: openH, mat: mat);
-            BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West),
+            BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West), WindowOn(WallSide.West),
                           axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height,
                           openW: openW, openH: openH, mat: mat);
 
@@ -455,19 +477,22 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         }
 
         /// <summary>
-        /// Builds one side of a room: either a single solid wall, or two segments
-        /// framing a centred <see cref="DoorGap"/>-wide opening when a door is
-        /// present. <paramref name="axisAlongX"/> selects whether the wall runs
-        /// along X (north/south) or Z (east/west).
+        /// Builds one side of a room: a solid wall, two segments framing a door
+        /// opening, or a wall with a glazed window punched into it.
+        /// <paramref name="axisAlongX"/> selects whether the wall runs along X
+        /// (north/south) or Z (east/west). A door takes priority over a window.
         /// </summary>
-        private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor,
+        private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor, bool hasWindow,
                                    bool axisAlongX, float fixedCoord, float span,
                                    float height, float openW, float openH, Material mat)
         {
             if (!hasDoor)
             {
-                AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
-                               offset: 0f, length: span, height: height, mat: mat);
+                if (hasWindow)
+                    BuildWindowWall(roomGo, sideName, axisAlongX, fixedCoord, span, height, mat);
+                else
+                    AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
+                                   offset: 0f, length: span, height: height, mat: mat);
                 return;
             }
 
@@ -527,6 +552,115 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             if (wallMaterial != null) return wallMaterial;
             Renderer r = roomGo.GetComponentInChildren<Renderer>();
             return r != null ? r.sharedMaterial : null;
+        }
+
+        /// <summary>
+        /// Builds a solid wall with a centred window opening: a solid sill below,
+        /// jambs either side, a header above, and (when <see cref="windowMaterial"/>
+        /// is assigned) a thin pane filling the opening. Falls back to a plain solid
+        /// wall when the opening can't fit the span or the room is too short.
+        /// </summary>
+        private void BuildWindowWall(GameObject roomGo, string sideName, bool axisAlongX,
+                                     float fixedCoord, float span, float height, Material mat)
+        {
+            float winW   = Mathf.Min(WindowWidth, span - 2f * WindowSideMargin);
+            float winTop = WindowSillHeight + WindowHeight;
+
+            if (winW < 0.5f || winTop > height - 0.1f)
+            {
+                AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
+                               offset: 0f, length: span, height: height, mat: mat);
+                return;
+            }
+
+            float segLen    = (span - winW) * 0.5f;
+            float segOffset = winW * 0.5f + segLen * 0.5f;
+
+            // Solid sill below the opening (full span).
+            AddWallSegment(roomGo, $"Wall_{sideName}_Sill", axisAlongX, fixedCoord,
+                           offset: 0f, length: span, height: WindowSillHeight, mat: mat);
+
+            // Header above the opening (full span).
+            float headerH = height - winTop;
+            if (headerH > 0.01f)
+                AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
+                               offset: 0f, length: span, height: headerH, mat: mat, baseY: winTop);
+
+            // Jambs either side of the opening.
+            AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
+                           offset: -segOffset, length: segLen, height: WindowHeight,
+                           mat: mat, baseY: WindowSillHeight);
+            AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
+                           offset:  segOffset, length: segLen, height: WindowHeight,
+                           mat: mat, baseY: WindowSillHeight);
+
+            // Glass pane in the opening, only when a material is supplied.
+            if (windowMaterial != null)
+                AddWindowPane(roomGo, $"Window_{sideName}", axisAlongX, fixedCoord, winW);
+        }
+
+        /// <summary>
+        /// Drops a thin pane into a window opening, centred on the wall span at
+        /// sill height. Keeps its box collider so the trainee can't reach through.
+        /// </summary>
+        private void AddWindowPane(GameObject roomGo, string name, bool axisAlongX,
+                                   float fixedCoord, float width)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = name;
+            go.transform.SetParent(roomGo.transform, worldPositionStays: false);
+
+            float cy = WindowSillHeight + WindowHeight * 0.5f;
+            if (axisAlongX)
+            {
+                go.transform.localPosition = new Vector3(0f, cy, fixedCoord);
+                go.transform.localScale    = new Vector3(width, WindowHeight, WindowPaneThickness);
+            }
+            else
+            {
+                go.transform.localPosition = new Vector3(fixedCoord, cy, 0f);
+                go.transform.localScale    = new Vector3(WindowPaneThickness, WindowHeight, width);
+            }
+
+            go.GetComponent<Renderer>().sharedMaterial = windowMaterial;
+        }
+
+        /// <summary>
+        /// True when the given wall side faces the outside - no other room sits
+        /// directly beyond it. Probes a point just past the wall and tests it
+        /// against every other room's footprint. Works in layout coordinates; the
+        /// per-build offset cancels because all rooms share it.
+        /// </summary>
+        private static bool IsExteriorWall(RoomData room, WallSide side, List<RoomData> allRooms)
+        {
+            Vector3 c = room.position.ToVector3();
+            float w = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float d = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float halfW = (w + CorridorGap) * 0.5f;
+            float halfD = (d + CorridorGap) * 0.5f;
+
+            Vector3 probe = c;
+            switch (side)
+            {
+                case WallSide.North: probe.z += halfD + 0.5f; break;
+                case WallSide.South: probe.z -= halfD + 0.5f; break;
+                case WallSide.East:  probe.x += halfW + 0.5f; break;
+                default:             probe.x -= halfW + 0.5f; break;
+            }
+
+            if (allRooms == null) return true;
+            foreach (RoomData other in allRooms)
+            {
+                if (other == null || other.id == room.id) continue;
+                Vector3 oc = other.position.ToVector3();
+                float ow = other.size != null && other.size.width > 0f ? other.size.width : 6f;
+                float od = other.size != null && other.size.depth > 0f ? other.size.depth : 6f;
+                float ohW = (ow + CorridorGap) * 0.5f;
+                float ohD = (od + CorridorGap) * 0.5f;
+                if (Mathf.Abs(probe.x - oc.x) <= ohW && Mathf.Abs(probe.z - oc.z) <= ohD)
+                    return false; // another room sits beyond this wall → interior
+            }
+            return true;
         }
 
         private void BuildDoors(ScenarioData scenario)

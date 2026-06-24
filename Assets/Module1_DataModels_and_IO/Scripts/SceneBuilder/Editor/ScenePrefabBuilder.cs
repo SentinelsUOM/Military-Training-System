@@ -59,6 +59,9 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
         private static readonly Color DoorColor   = new Color(0.42f, 0.28f, 0.18f);
         private static readonly Color FrameColor  = new Color(0.20f, 0.16f, 0.12f);
         private static readonly Color GroundColor = new Color(0.16f, 0.18f, 0.20f);
+        // Frosted-glass pane: light and glassy-looking but fully opaque, so the
+        // trainee can't see room contents through the window.
+        private static readonly Color GlassColor  = new Color(0.80f, 0.86f, 0.90f);
 
         // ── Menu entry ───────────────────────────────────────────────────────
 
@@ -75,6 +78,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
                 Material doorMat   = CreateOrUpdateMaterial("Door_M",      DoorColor);
                 Material frameMat  = CreateOrUpdateMaterial("DoorFrame_M", FrameColor);
                 Material groundMat = CreateOrUpdateMaterial("Ground_M",    GroundColor);
+                Material glassMat  = CreateGlassMaterial();
 
                 string smallPath = BuildRoomPrefab("RoomSmall",  4f, floorMat, wallMat);
                 string medPath   = BuildRoomPrefab("RoomMedium", 6f, floorMat, wallMat);
@@ -83,7 +87,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
 
                 EnsureGroundPlane(groundMat);
 
-                int wired = WireSceneBuilder(smallPath, medPath, largePath, doorPath, wallMat);
+                int wired = WireSceneBuilder(smallPath, medPath, largePath, doorPath, wallMat, glassMat);
 
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
@@ -94,7 +98,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
                     "Created prefabs in " + PrefabsFolder + "/:\n" +
                     "    RoomSmall, RoomMedium, RoomLarge, DoorVisual\n\n" +
                     "Materials in " + MaterialsFolder + "/:\n" +
-                    "    Floor_M, Wall_M, Door_M, DoorFrame_M, Ground_M\n\n" +
+                    "    Floor_M, Wall_M, Door_M, DoorFrame_M, Ground_M, Glass_M\n\n" +
                     "Ground plane added to scene: " + GroundPlaneName + "\n\n" +
                     "SceneBuilder slots auto-wired: " + wired + "/4\n" +
                     (wired < 4
@@ -287,7 +291,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
 
         private static int WireSceneBuilder(string smallPath, string mediumPath,
                                             string largePath, string doorPath,
-                                            Material wallMat)
+                                            Material wallMat, Material glassMat)
         {
 #if UNITY_2022_2_OR_NEWER
             var sb = Object.FindFirstObjectByType<SceneBuilder>();
@@ -313,6 +317,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             if (largePrefab  != null) { sb.roomPrefabLarge  = largePrefab;  wired++; }
             if (doorPrefab   != null) { sb.doorPrefab       = doorPrefab;   wired++; }
             if (wallMat      != null) { sb.wallMaterial     = wallMat;            }
+            if (glassMat     != null) { sb.windowMaterial   = glassMat;          }
 
             EditorUtility.SetDirty(sb);
             return wired;
@@ -539,6 +544,10 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             if (realDoor != null) { sb.doorPrefab   = realDoor; wired++; }
             if (wallMat  != null) { sb.wallMaterial = wallMat;  wired++; }
 
+            // Frosted window glass so the realistic path gets glazed windows too.
+            Material glassMat = CreateGlassMaterial();
+            if (glassMat != null) { sb.windowMaterial = glassMat; }
+
             // Rebuild the room floor prefabs with the realistic floor material and
             // re-wire them, so floors match the hand-built map too.
             if (floorMat != null)
@@ -584,6 +593,18 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             var mat = new Material(shader);
             SetColor(mat, color);
             AssetDatabase.CreateAsset(mat, path);
+            return mat;
+        }
+
+        // Frosted window pane material: an opaque, smooth, light-blue material so
+        // windows read as glazed glass while still hiding the room behind them.
+        private static Material CreateGlassMaterial()
+        {
+            Material mat = CreateOrUpdateMaterial("Glass_M", GlassColor);
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.8f);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.8f);
+            if (mat.HasProperty("_Metallic"))   mat.SetFloat("_Metallic",   0.0f);
+            EditorUtility.SetDirty(mat);
             return mat;
         }
 
