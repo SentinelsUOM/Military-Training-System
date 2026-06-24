@@ -32,8 +32,10 @@ public class HostageContactZone : MonoBehaviour
     [Tooltip("Polling interval in seconds. 0.25s feels instant and is cheap.")]
     [SerializeField] private float checkInterval = 0.25f;
 
-    [Tooltip("If true, contact fires only once per session.")]
-    [SerializeField] private bool fireOnce = true;
+    [Tooltip("If true, contact fires only once per session. Default false so the escort " +
+             "re-establishes if the hostage is scared off (regresses to Fearful) and you " +
+             "approach again. The hostage's own response cooldown prevents spam.")]
+    [SerializeField] private bool fireOnce = false;
 
     [Tooltip("Print contact events to the Console.")]
     [SerializeField] private bool echoToConsole = true;
@@ -81,6 +83,12 @@ public class HostageContactZone : MonoBehaviour
 
         float dist = Vector3.Distance(transform.position, playerPos);
         if (dist > radius) return;
+
+        // Already escorting (or rescued)? Don't re-fire — avoids per-tick event spam.
+        // (If the hostage regresses to Fearful from a gunshot, this allows re-contact.)
+        if (hostage.currentState == HostageState.Follow ||
+            hostage.currentState == HostageState.Freed)
+            return;
 
         // Trainee is within range — fire the contact event.
         if (EventManager.Instance == null)
