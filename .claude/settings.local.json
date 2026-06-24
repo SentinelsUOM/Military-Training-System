@@ -16,7 +16,10 @@
       "Bash(rmdir .claude)",
       "Bash(git commit -m ' *)",
       "Bash(if [ -d .claude.LOCAL_BACKUP ]; then mv .claude.LOCAL_BACKUP .claude; echo \"restored .claude\"; fi)",
-      "Bash(rm -rf \".claude/.claude.LOCAL_BACKUP\" 2>&1; echo \"---\"; ls -la .claude/; echo \"---\"; git status --short)"
+      "Bash(rm -rf \".claude/.claude.LOCAL_BACKUP\" 2>&1; echo \"---\"; ls -la .claude/; echo \"---\"; git status --short)",
+      "Bash(cat .env.local.example)",
+      "Bash(rm -f \"Assets/Module4Integration/Editor/Module4ManagerSetup.cs\" \"Assets/Module4Integration/Editor/Module4ManagerSetup.cs.meta\")",
+      "Bash(rmdir \"Assets/Module4Integration/Editor\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\Navindu\\Documents\\GitHub\\Military-Training-System\\.claude",

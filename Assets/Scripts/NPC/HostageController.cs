@@ -59,7 +59,11 @@ public class HostageController : MonoBehaviour, INPCResponder
              "animator's 'Speed' parameter is set to (actual speed / this), clamped 0-1, so " +
              "the hostage walks while following you and idles when still. ~1.0 suits the " +
              "default NavMeshAgent speed.")]
-    public float walkAnimReferenceSpeed = 1.0f;
+    public float walkAnimReferenceSpeed = 1.6f;
+
+    [Tooltip("NavMesh move speed while following the trainee. Fast enough to keep up " +
+             "with a walking player. Overrides the agent's 3.5 m/s default.")]
+    public float followSpeed = 2.2f;
 
     [Header("Health (the hostage can be shot)")]
     [Tooltip("Hostage starting health. Friendly-fire from the trainee damages this.")]
@@ -170,11 +174,16 @@ public class HostageController : MonoBehaviour, INPCResponder
 
             // ── Trainee contact ───────────────────────────────────────────────
             case ScenarioEventType.HostageContactStarted:
+                // The rescuer reached the hostage — follow from any non-terminal,
+                // non-already-following state (incl. Panic: the rescuer's arrival
+                // calms them enough to be led out).
                 if (currentState == HostageState.Calm ||
                     currentState == HostageState.Fearful ||
-                    currentState == HostageState.Freeze)
+                    currentState == HostageState.Freeze ||
+                    currentState == HostageState.Panic)
                 {
-                    // e.Instigator is the trainee GameObject — capture for follow target
+                    // e.Instigator is the trainee GameObject — captured as a fallback
+                    // follow target (FollowRoutine prefers the live Camera.main).
                     _followTarget = e.Instigator != null ? e.Instigator.transform : null;
                     TransitionTo(HostageState.Follow, e);
                 }
@@ -223,6 +232,8 @@ public class HostageController : MonoBehaviour, INPCResponder
     Vector3     _lastAnimPos;
     float       _currentHealth;
     bool        _injured;
+    bool        _hasSpeedParam;
+    bool        _hasInjuredParam;
     static readonly int _animSpeed   = Animator.StringToHash("Speed");
     static readonly int _animInjured = Animator.StringToHash("Injured");
 
@@ -237,7 +248,27 @@ public class HostageController : MonoBehaviour, INPCResponder
 
         // Movement comes from the NavMeshAgent, not the animation's root curve —
         // turn root motion off so the walk clip can't drag the hostage around.
-        if (_animator != null) _animator.applyRootMotion = false;
+        if (_animator != null)
+        {
+            _animator.applyRootMotion = false;
+
+            // Only drive parameters the assigned controller actually has — otherwise
+            // SetFloat/SetBool spam "parameter does not exist" every frame (e.g. if a
+            // hostage's Animator Controller isn't the rebuilt HostageAnimator).
+            foreach (var p in _animator.parameters)
+            {
+                if (p.nameHash == _animSpeed)   _hasSpeedParam   = true;
+                if (p.nameHash == _animInjured) _hasInjuredParam = true;
+            }
+            if (!_hasSpeedParam)
+                Debug.LogWarning($"[HostageController] {NPCId}: Animator has no 'Speed' param — " +
+                                 "its Animator Controller is probably not HostageAnimator. " +
+                                 "Walk animation won't blend until that's fixed.");
+        }
+
+        // Keep-up speed: fast enough to follow a walking trainee, not so fast it
+        // slides badly. Overrides the NavMeshAgent's 3.5 m/s default.
+        if (_agent != null) _agent.speed = followSpeed;
 
         NPCRegistry.Register(this);
     }
@@ -254,8 +285,8 @@ public class HostageController : MonoBehaviour, INPCResponder
             d.y = 0f;
             float speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
             float norm  = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
-            _animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
-            _animator.SetBool(_animInjured, _injured);
+            if (_hasSpeedParam)   _animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
+            if (_hasInjuredParam) _animator.SetBool(_animInjured, _injured);
         }
         _lastAnimPos = transform.position;
 
@@ -378,16 +409,23 @@ public class HostageController : MonoBehaviour, INPCResponder
 
         while (currentState == HostageState.Follow)
         {
-            if (_followTarget != null)
+            // Follow the player's ACTUAL position. In VR the head/camera moves with
+            // the player while the rig root often stays at the world origin — so we
+            // track Camera.main (the head) when available, and only fall back to the
+            // stored instigator transform if there's no main camera. This is the fix
+            // for "the hostage walks off instead of following me."
+            Transform tgt = Camera.main != null ? Camera.main.transform : _followTarget;
+            if (tgt != null)
             {
-                Vector3 targetPos = _followTarget.position;
-                if (Vector3.Distance(targetPos, lastDestination) > 1.0f)
+                Vector3 targetPos = tgt.position;
+                // Re-path whenever you've moved ~0.5 m so it keeps up closely.
+                if (Vector3.Distance(targetPos, lastDestination) > 0.5f)
                 {
                     _agent.SetDestination(targetPos);
                     lastDestination = targetPos;
                 }
             }
-            yield return new WaitForSeconds(0.3f);
+            yield return new WaitForSeconds(0.2f);
         }
 
         if (_agent.isActiveAndEnabled) _agent.ResetPath();
