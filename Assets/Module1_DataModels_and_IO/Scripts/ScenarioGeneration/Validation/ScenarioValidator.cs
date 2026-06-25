@@ -184,8 +184,11 @@ namespace TeamSentinels.ScenarioGeneration.Validation
 
         /// <summary>
         /// Checks that every door's <c>connectsToRoomId</c> targets a room that
-        /// exists in <c>layout.rooms</c>, and that the targeted room contains a
-        /// reciprocal door pointing back. Door IDs must match across both ends.
+        /// exists in <c>layout.rooms</c>, that the targeted room contains a
+        /// reciprocal door pointing back (matching IDs), and that both reciprocal
+        /// records share the same <see cref="DoorState"/>. Also checks that every
+        /// room has at least one door, so no room is sealed off with open holes
+        /// or unreachable behind solid walls.
         /// </summary>
         private static (bool passed, string message) CheckDoorConsistency(ScenarioData scenario)
         {
@@ -197,7 +200,8 @@ namespace TeamSentinels.ScenarioGeneration.Validation
 
             foreach (RoomData room in scenario.layout.rooms)
             {
-                if (room.doors == null) continue;
+                if (room.doors == null || room.doors.Count == 0)
+                    return (false, $"room {room.id} has no doors (would be sealed off)");
 
                 foreach (DoorData door in room.doors)
                 {
@@ -210,17 +214,22 @@ namespace TeamSentinels.ScenarioGeneration.Validation
                             $"door {door.id} in room {room.id} references unknown room " +
                             $"'{door.connectsToRoomId}'");
 
-                    bool reciprocalFound = neighbour.doors != null && neighbour.doors.Any(d =>
+                    DoorData reciprocal = neighbour.doors?.FirstOrDefault(d =>
                         d.connectsToRoomId == room.id &&
                         string.Equals(d.id, door.id, StringComparison.Ordinal));
 
-                    if (!reciprocalFound)
+                    if (reciprocal == null)
                         return (false,
                             $"door {door.id} from {room.id} → {neighbour.id} has no reciprocal " +
                             $"door pointing back from {neighbour.id} → {room.id}");
+
+                    if (reciprocal.state != door.state)
+                        return (false,
+                            $"door {door.id} state disagrees across ends: " +
+                            $"{room.id} says {door.state}, {neighbour.id} says {reciprocal.state}");
                 }
             }
-            return (true, $"{doorEdges} door endpoints are consistent and reciprocal");
+            return (true, $"{doorEdges} door endpoints are consistent, reciprocal, and state-aligned");
         }
 
         // ── Tier 1.4: EntityMetadataCheck ────────────────────────────────────

@@ -69,6 +69,12 @@ namespace TeamSentinels.ScenarioGeneration.Tests
             RunTest(nameof(VerifyAllRoomsReachable),   VerifyAllRoomsReachable);
             RunTest(nameof(VerifySeedReproducibility), VerifySeedReproducibility);
 
+            // Door realism
+            RunTest(nameof(VerifyEveryRoomHasDoor),        VerifyEveryRoomHasDoor);
+            RunTest(nameof(VerifyDoorStatePolicy),         VerifyDoorStatePolicy);
+            RunTest(nameof(VerifyDoorStatesReciprocalAndDeterministic),
+                    VerifyDoorStatesReciprocalAndDeterministic);
+
             // Entity Placement
             RunTest(nameof(VerifyEntityCounts),           VerifyEntityCounts);
             RunTest(nameof(VerifyNoEntityOverlap),        VerifyNoEntityOverlap);
@@ -279,6 +285,111 @@ namespace TeamSentinels.ScenarioGeneration.Tests
                         $"({ra.position.x:F4},{ra.position.z:F4}) vs ({rb.position.x:F4},{rb.position.z:F4})");
                 if (!ra.connectedRoomIds.SequenceEqual(rb.connectedRoomIds))
                     throw new Exception($"room {ra.id} connections differ");
+            }
+        }
+
+        // ── Door realism ─────────────────────────────────────────────────────
+
+        private void VerifyEveryRoomHasDoor()
+        {
+            (LayoutType type, int rooms)[] cases =
+            {
+                (LayoutType.Linear,      5),
+                (LayoutType.Branching,   6),
+                (LayoutType.HubAndSpoke, 7),
+                (LayoutType.Loop,        5)
+            };
+
+            foreach ((LayoutType type, int rooms) in cases)
+            {
+                ScenarioConfig cfg = MakeConfig(type, rooms: rooms, seed: 1, RandomnessLevel.Low);
+                LayoutData layout  = new LayoutGenerator().Generate(cfg, new System.Random(1));
+
+                foreach (RoomData r in layout.rooms)
+                {
+                    if (r.doors == null || r.doors.Count == 0)
+                        throw new Exception($"{type}: room {r.id} has no doors (would be sealed off)");
+
+                    // Every door must sit on a wall side and target a real room.
+                    foreach (DoorData d in r.doors)
+                        if (string.IsNullOrEmpty(d.connectsToRoomId))
+                            throw new Exception($"{type}: room {r.id} door {d.id} has no target room");
+                }
+            }
+        }
+
+        private void VerifyDoorStatePolicy()
+        {
+            // Low randomness => deterministic: entry doors open, hostage-room
+            // door locked, all other interior doors closed.
+            ScenarioConfig cfg = MakeConfig(LayoutType.Linear, rooms: 6, seed: 1, RandomnessLevel.Low);
+            LayoutData layout  = new LayoutGenerator().Generate(cfg, new System.Random(1));
+            Dictionary<string, RoomData> roomMap = layout.rooms.ToDictionary(r => r.id);
+
+            foreach (RoomData room in layout.rooms)
+            {
+                foreach (DoorData door in room.doors)
+                {
+                    RoomData neighbour = roomMap[door.connectsToRoomId];
+                    bool touchesHostage = room.type == RoomType.HostageRoom
+                                       || neighbour.type == RoomType.HostageRoom;
+                    bool touchesEntry   = room.type == RoomType.Entry
+                                       || neighbour.type == RoomType.Entry;
+
+                    if (touchesHostage)
+                    {
+                        if (door.state != DoorState.Locked)
+                            throw new Exception(
+                                $"hostage-room door {door.id} is {door.state}, expected Locked");
+                    }
+                    else if (touchesEntry)
+                    {
+                        if (door.state != DoorState.Open)
+                            throw new Exception(
+                                $"entry door {door.id} is {door.state}, expected Open");
+                    }
+                    else if (door.state != DoorState.Closed)
+                    {
+                        throw new Exception(
+                            $"interior door {door.id} is {door.state}, expected Closed at low randomness");
+                    }
+                }
+            }
+        }
+
+        private void VerifyDoorStatesReciprocalAndDeterministic()
+        {
+            ScenarioConfig cfg = MakeConfig(LayoutType.Branching, rooms: 7, seed: 99, RandomnessLevel.High);
+            LayoutData a = new LayoutGenerator().Generate(cfg, new System.Random(99));
+            LayoutData b = new LayoutGenerator().Generate(cfg, new System.Random(99));
+
+            // Reciprocal door records within one layout must agree on state.
+            Dictionary<string, RoomData> mapA = a.rooms.ToDictionary(r => r.id);
+            foreach (RoomData room in a.rooms)
+            {
+                foreach (DoorData door in room.doors)
+                {
+                    RoomData neighbour = mapA[door.connectsToRoomId];
+                    DoorData reciprocal = neighbour.doors.First(d => d.id == door.id);
+                    if (reciprocal.state != door.state)
+                        throw new Exception(
+                            $"door {door.id} state disagrees across ends: " +
+                            $"{door.state} vs {reciprocal.state}");
+                }
+            }
+
+            // Same seed must reproduce identical door states.
+            var statesA = a.rooms.SelectMany(r => r.doors)
+                                 .GroupBy(d => d.id).ToDictionary(g => g.Key, g => g.First().state);
+            var statesB = b.rooms.SelectMany(r => r.doors)
+                                 .GroupBy(d => d.id).ToDictionary(g => g.Key, g => g.First().state);
+
+            if (statesA.Count != statesB.Count)
+                throw new Exception($"door count differs across runs: {statesA.Count} vs {statesB.Count}");
+            foreach (KeyValuePair<string, DoorState> kvp in statesA)
+            {
+                if (!statesB.TryGetValue(kvp.Key, out DoorState other) || other != kvp.Value)
+                    throw new Exception($"door {kvp.Key} state not reproducible: {kvp.Value} vs {other}");
             }
         }
 

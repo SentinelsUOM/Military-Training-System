@@ -42,6 +42,24 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
         /// <summary>Wall on which the door is placed (north/south/east/west).</summary>
         [JsonProperty("wallSide")]
         public WallSide wallSide;
+
+        /// <summary>
+        /// Initial state of the door at scene build time (open/closed/locked).
+        /// Derived during layout generation from room type and seed. Both
+        /// reciprocal door records for an edge always share the same state.
+        /// Consumed by <c>SceneBuilder</c> to configure the interactive door
+        /// prefab and by Module 2 for door-aware NPC navigation.
+        /// </summary>
+        [JsonProperty("state")]
+        public DoorState state = DoorState.Closed;
+
+        /// <summary>
+        /// True if this door sits on the building's exterior shell rather than
+        /// between two interior rooms. Reserved for future breach-point logic;
+        /// interior connecting doors (the common case) are false.
+        /// </summary>
+        [JsonProperty("isExterior")]
+        public bool isExterior;
     }
 
     // =========================================================================

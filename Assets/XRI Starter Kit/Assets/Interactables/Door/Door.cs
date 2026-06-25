@@ -31,6 +31,14 @@ namespace MikeNspired.XRIStarterKit
         [Tooltip("If true, door starts opened. If false, starts fully closed.")]
         [SerializeField] private bool startOpened = false;
 
+        /// <summary>
+        /// Sets the initial open/closed state. Must be called BEFORE this
+        /// component's Start() runs (e.g. instantiate the door inactive, call this,
+        /// then SetActive(true)). Used by Module 1's SceneBuilder to drive a
+        /// generated door's initial state from its DoorData.
+        /// </summary>
+        public void SetStartOpened(bool value) => startOpened = value;
+
         [Header("Knobs (Both Stay in Sync)")]
         [Tooltip("XRKnob for front handle (0 = handle turned open, 1 = handle closed).")]
         [SerializeField] private XRKnob m_FrontKnob;
@@ -133,9 +141,13 @@ namespace MikeNspired.XRIStarterKit
 
         private async void SetDoorStartingPosition()
         {
-            // Wait until the Rigidbody has settled
-            while (!m_DoorRigidBody.IsSleeping())
+            // Wait until the Rigidbody has settled. Bail out if the door is
+            // destroyed mid-wait (e.g. SceneBuilder regenerating the scene),
+            // otherwise the destroyed Rigidbody throws MissingReferenceException.
+            while (m_DoorRigidBody != null && !m_DoorRigidBody.IsSleeping())
                 await Task.Yield();
+
+            if (this == null || m_DoorJoint == null) return;
 
             // Record local position so we can "snap" the door pivot if drifting
             m_StartingLocalPos = m_DoorJoint.transform.localPosition;

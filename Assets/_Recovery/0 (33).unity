@@ -97538,7 +97538,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1139998432}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.3844581
+  m_Size: 0.38445807
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -139960,6 +139960,30 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 8052351381406782112, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
       insertIndex: -1
       addedObject: {fileID: 454288312}
+    - targetCorrespondingSourceObject: {fileID: 7690899332379457668, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899332075842102, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899333045377077, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899332301028705, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899332108314839, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899331341600849, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899333046310050, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
+    - targetCorrespondingSourceObject: {fileID: 7690899332290693397, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 0}
   m_SourcePrefab: {fileID: 100100000, guid: b320365e561ef60468118d89b6abd6c5, type: 3}
 --- !u!4 &8085482687418508325 stripped
 Transform:
