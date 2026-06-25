@@ -42,7 +42,13 @@ public class PerceptionController : MonoBehaviour
     [Tooltip("Maximum detection range in metres.")]
     public float detectionRange = 20f;
 
-    [Tooltip("Half-angle of the NPC's field of view in degrees.")]
+    [Tooltip("Half-angle of the NPC's field of view in degrees. Default 60° → a 120° total " +
+             "horizontal cone, which corresponds to the human BINOCULAR visual field (the " +
+             "overlap region of both eyes, ~114–120° in vision-science literature). Beyond this " +
+             "lies monocular peripheral vision (~200° total), but that is motion-only and not " +
+             "modelled here. 120° is the realistic upper bound for reliable target detection; " +
+             "lower it (90–110°) if you want easier stealth/flanking gameplay.")]
+    [Range(30f, 110f)]
     public float fovHalfAngle = 60f;
 
     [Tooltip("Seconds of sustained LOS before TargetConfirmed is raised.")]
@@ -52,8 +58,15 @@ public class PerceptionController : MonoBehaviour
     public float lostSightDelay = 1.5f;
 
     [Header("Obstruction")]
-    [Tooltip("Physics layers that block line of sight (walls, doors, obstacles).")]
+    [Tooltip("OPTIONAL override of which physics layers block line of sight. Leave as " +
+             "'Nothing' (the default) to block on EVERYTHING solid — walls, doors, props — " +
+             "which is the robust choice and needs no per-scene layer setup. Only set this " +
+             "if you have a dedicated 'Walls' layer and want to ignore everything else.")]
     public LayerMask obstacleLayers;
+
+    [Tooltip("The line-of-sight ray stops this many metres short of the player so the player's " +
+             "own body never counts as an obstacle that blocks sight of themselves.")]
+    public float playerClearance = 0.5f;
 
     [Header("Telemetry")]
     [Tooltip("Emit a BehaviorSnapshot every N seconds (0 = disable).")]
@@ -67,6 +80,8 @@ public class PerceptionController : MonoBehaviour
     float _continuousLosTime;     // seconds of unbroken LOS — for TargetConfirmed
     float _lostSightTimer;        // counts up when LOS is broken — for PlayerLost
     bool  _targetConfirmedRaised; // true once TargetConfirmed has fired this engagement
+
+    readonly RaycastHit[] _losHits = new RaycastHit[16]; // reused LOS raycast buffer
 
     const float PerceptionTickRate = 0.2f;
 
@@ -99,6 +114,19 @@ public class PerceptionController : MonoBehaviour
     {
         CancelInvoke(nameof(PerceptionTick));
         CancelInvoke(nameof(EmitSnapshot));
+    }
+
+    /// <summary>
+    /// Re-arms TargetConfirmed so it can fire again WITHOUT requiring LOS to break
+    /// first. Called by TerroristController when a retreat ends: if the player kept
+    /// the NPC in continuous view through the whole retreat, the original confirm
+    /// flag is still set and the NPC would otherwise never re-escalate to Engage.
+    /// The confirm timer restarts, so re-engage still takes targetConfirmTime.
+    /// </summary>
+    public void RearmTargetConfirmation()
+    {
+        _targetConfirmedRaised = false;
+        _continuousLosTime     = 0f;
     }
 
     // ── Perception tick ───────────────────────────────────────────────────────
@@ -183,7 +211,10 @@ public class PerceptionController : MonoBehaviour
     {
         if (playerTarget == null) return false;
 
-        Vector3 eye    = eyePosition != null ? eyePosition.position : transform.position;
+        // Eye origin: use the assigned eye transform, else estimate head height
+        // (~1.6 m) so the LOS ray runs at eye level rather than from the feet.
+        Vector3 eye    = eyePosition != null ? eyePosition.position
+                                             : transform.position + Vector3.up * 1.6f;
         Vector3 target = playerTarget.position;
         Vector3 dir    = target - eye;
         float   dist   = dir.magnitude;
@@ -195,11 +226,37 @@ public class PerceptionController : MonoBehaviour
         float dot = Vector3.Dot(transform.forward, dir.normalized);
         if (dot < Mathf.Cos(fovHalfAngle * Mathf.Deg2Rad)) return false;
 
-        // 3. Raycast (from eye to player chest — slightly below camera)
-        Vector3 chest = target + Vector3.down * 0.2f;
-        if (Physics.Raycast(eye, (chest - eye).normalized, dist, obstacleLayers,
-                            QueryTriggerInteraction.Ignore))
-            return false;
+        // 3. Line of sight — is anything SOLID between the eye and the player?
+        //
+        // Cast toward the player's chest (slightly below the camera). We stop the
+        // ray 'playerClearance' metres short so the player's own body never counts
+        // as a blocker, and we skip any collider that belongs to THIS NPC (its own
+        // body/weapon at the muzzle of the ray). If anything else is hit — a wall,
+        // a door, a prop, another NPC — sight is blocked.
+        //
+        // The mask defaults to Everything (~0) when obstacleLayers is left unset,
+        // so walls block sight WITHOUT needing a hand-configured layer per scene.
+        // This is what stops NPCs "seeing"/shooting through walls.
+        int mask = obstacleLayers.value != 0 ? obstacleLayers.value : ~0;
+
+        Vector3 chest    = target + Vector3.down * 0.2f;
+        Vector3 toChest  = chest - eye;
+        float   losDist  = toChest.magnitude;
+        Vector3 losDir   = toChest / Mathf.Max(0.0001f, losDist);
+        float   checkLen = losDist - playerClearance;
+
+        if (checkLen > 0f)
+        {
+            int n = Physics.RaycastNonAlloc(eye, losDir, _losHits, checkLen, mask,
+                                            QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n; i++)
+            {
+                Collider col = _losHits[i].collider;
+                if (col == null) continue;
+                if (col.transform.IsChildOf(transform)) continue; // our own body/weapon
+                return false;                                      // something is in the way
+            }
+        }
 
         return true;
     }

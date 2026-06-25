@@ -18,11 +18,17 @@ using UnityEngine;
 /// </summary>
 public enum LeaderDirectiveType
 {
-    /// Move toward TargetPosition and hold there (default leader response).
+    /// Move toward TargetPosition and hold there (default leader response — issued on Alert).
     Converge,
 
     /// Stop in place and stand ready (used when leader wants to set up overlapping fire).
     Hold,
+
+    /// Approach TargetPosition from the side instead of head-on (issued when the
+    /// Leader enters Engage — the leader holds the front while members spread to
+    /// the threat's flanks). Each member picks its own side; see
+    /// TerroristController.ComputeFlankPoint.
+    Flank,
 }
 
 public class LeaderDirective

@@ -16,4 +16,5 @@ public enum HostageState
     Panic,
     Follow,
     Freed,
+    Down,     // Terminal: hostage was shot dead (training failure)
 }

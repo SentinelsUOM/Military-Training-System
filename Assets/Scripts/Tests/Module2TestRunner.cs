@@ -17,8 +17,11 @@ using UnityEngine;
 ///
 /// What the tests cover:
 ///   • Terrorist FSM transitions (Idle→Suspicious→Alert→Engage→Down)
+///   • Terrorist Retreat — low-health hit during Engage falls back (once per life)
 ///   • Hostage FSM transitions (Calm→Fearful→Panic, Fearful→Freeze)
-///   • Squad coordination — Leader-Alert triggers a directive
+///   • Squad coordination — Leader-Alert triggers a Converge directive
+///   • Squad coordination — Leader-Engage triggers a Flank directive
+///   • PatrolLine multi-waypoint — route traversal + loop wrap-around
 ///   • NPCSelector LOS term — clear-LOS NPC outscores blocked-LOS NPC
 ///   • NPCSelector ablation — disabling distance still returns a valid winner
 ///
@@ -65,6 +68,12 @@ public class Module2TestRunner : MonoBehaviour
         yield return RunTest("Terrorist: fatal hit → Down",
                              TestTerroristTakeHitDown());
 
+        yield return RunTest("Terrorist: low-health hit during Engage → Retreat (once)",
+                             TestTerroristRetreat());
+
+        yield return RunTest("Terrorist: Alert with no re-acquire → gives up → Idle",
+                             TestTerroristAlertGiveUp());
+
         yield return RunTest("Hostage: Calm → Panic on close gunshot",
                              TestHostageCalmToPanic());
 
@@ -73,6 +82,12 @@ public class Module2TestRunner : MonoBehaviour
 
         yield return RunTest("Squad: Leader Alert → squad receives Converge directive",
                              TestLeaderDirectiveIssued());
+
+        yield return RunTest("Squad: Leader Engage → squad receives Flank directive",
+                             TestLeaderFlankDirective());
+
+        yield return RunTest("PatrolLine: multi-waypoint route traversal + loop wrap",
+                             TestPatrolLineMultiWaypoint());
 
         yield return RunTest("NPCSelector: clear LOS wins over blocked LOS",
                              TestNPCSelectorLOS());
@@ -213,8 +228,11 @@ public class Module2TestRunner : MonoBehaviour
             ScenarioEventType.GunshotHeard, Vector3.forward * 5f));
         yield return WaitFrames(waitFramesBetweenSteps);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.PlayerSeen, Vector3.forward * 5f));
+        // Perception is personal — deliver PlayerSeen via the NPC's own
+        // detection path (HandleDetection), the same call PerceptionController
+        // makes. (It is intentionally NOT routed over the event bus anymore.)
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
         AssertEqual(TerroristState.Alert, t.currentState, "after PlayerSeen");
@@ -227,12 +245,12 @@ public class Module2TestRunner : MonoBehaviour
         var t = SpawnTerrorist("T_AlertEngage", Vector3.zero, NPCRole.Guard);
         yield return WaitFrames(1);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.PlayerSeen, Vector3.forward * 5f));
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
-        EventManager.Instance.Raise(new ScenarioEvent(
-            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f));
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f, t.gameObject));
         yield return WaitFrames(waitFramesBetweenSteps);
 
         AssertEqual(TerroristState.Engage, t.currentState, "after TargetConfirmed");
@@ -249,6 +267,62 @@ public class Module2TestRunner : MonoBehaviour
         yield return WaitFrames(waitFramesBetweenSteps);
 
         AssertEqual(TerroristState.Down, t.currentState, "after fatal TakeHit");
+
+        Destroy(t.gameObject);
+    }
+
+    IEnumerator TestTerroristRetreat()
+    {
+        var t = SpawnTerrorist("T_Retreat", Vector3.zero, NPCRole.Guard);
+        yield return WaitFrames(1);
+
+        // Drive to Engage via the NPC's own perception: PlayerSeen → Alert,
+        // TargetConfirmed → Engage.
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
+        yield return WaitFrames(waitFramesBetweenSteps);
+
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.TargetConfirmed, Vector3.forward * 5f, t.gameObject));
+        yield return WaitFrames(waitFramesBetweenSteps);
+
+        AssertEqual(TerroristState.Engage, t.currentState, "pre-condition: Engage");
+
+        // Wounding hit: 100 → 30 — at/below retreatHealthThreshold (40), above Down (20)
+        t.TakeHit(70f);
+        yield return WaitFrames(waitFramesBetweenSteps);
+
+        AssertEqual(TerroristState.Retreat, t.currentState, "after low-health hit");
+
+        // Second wounding hit must NOT re-trigger Retreat (one per life) and
+        // 30 → 25 is still above the Down threshold, so the state is unchanged.
+        t.TakeHit(5f);
+        yield return WaitFrames(waitFramesBetweenSteps);
+        AssertEqual(TerroristState.Retreat, t.currentState,
+                    "state after second non-fatal hit (no re-trigger, no Down)");
+
+        Destroy(t.gameObject);
+    }
+
+    IEnumerator TestTerroristAlertGiveUp()
+    {
+        var t = SpawnTerrorist("T_GiveUp", Vector3.zero, NPCRole.Guard);
+        t.alertGiveUpTime = 0.3f;   // short so the test is fast
+        yield return WaitFrames(1);
+
+        // Personal sighting drives Idle → Alert.
+        t.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 5f, t.gameObject));
+        yield return WaitFrames(waitFramesBetweenSteps);
+        AssertEqual(TerroristState.Alert, t.currentState, "after PlayerSeen");
+
+        // No further contact — after alertGiveUpTime it should resume patrol (Idle).
+        // (No NavMeshAgent here, so no search runs; the give-up timer is the path.)
+        float deadline = Time.time + 1.5f;
+        while (Time.time < deadline && t.currentState == TerroristState.Alert)
+            yield return null;
+
+        AssertEqual(TerroristState.Idle, t.currentState, "after give-up timeout");
 
         Destroy(t.gameObject);
     }
@@ -304,10 +378,18 @@ public class Module2TestRunner : MonoBehaviour
         AssertTrue(Squad.Get("alpha")?.CurrentDirective == null,
                    "Squad should have no directive before Leader is alerted");
 
-        // RoomBreached → Leader's CanRespond returns true → goes Alert → issues directive
+        // RoomBreached is a TARGETED event — NPCSelector may pick a Guard member
+        // (role bonus 3.0) rather than the Leader. The Leader is then alerted via
+        // AlertPropagator Ring 1, which has a 0.3 s delay — so wait until the
+        // Leader escalates (up to ~2 s) instead of a fixed 2 frames.
         EventManager.Instance.Raise(new ScenarioEvent(
             ScenarioEventType.RoomBreached, Vector3.forward * 3f));
-        yield return WaitFrames(waitFramesBetweenSteps);
+
+        float deadline = Time.time + 2f;
+        while (Time.time < deadline &&
+               leader.currentState != TerroristState.Alert &&
+               leader.currentState != TerroristState.Engage)
+            yield return null;
 
         AssertTrue(leader.currentState == TerroristState.Alert ||
                    leader.currentState == TerroristState.Engage,
@@ -326,6 +408,77 @@ public class Module2TestRunner : MonoBehaviour
         }
 
         Destroy(leader.gameObject, m1.gameObject, m2.gameObject);
+    }
+
+    IEnumerator TestLeaderFlankDirective()
+    {
+        var leader = SpawnTerrorist("LeaderBravo", Vector3.zero,       NPCRole.Leader, "bravo");
+        var member = SpawnTerrorist("MemberC",     Vector3.right * 5f, NPCRole.Guard,  "bravo");
+        yield return WaitFrames(1);
+
+        // Drive the Leader's OWN perception (HandleDetection bypasses NPCSelector,
+        // so this test is deterministic — no routing or Ring-1 delays involved).
+        // PlayerSeen: Idle → Alert (issues Converge).
+        leader.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.PlayerSeen, Vector3.forward * 3f));
+        yield return WaitFrames(waitFramesBetweenSteps);
+
+        AssertEqual(TerroristState.Alert, leader.currentState, "Leader after PlayerSeen");
+
+        // TargetConfirmed: Alert → Engage → Flank directive replaces Converge.
+        leader.HandleDetection(new ScenarioEvent(
+            ScenarioEventType.TargetConfirmed, Vector3.forward * 3f));
+        yield return WaitFrames(waitFramesBetweenSteps);
+
+        AssertEqual(TerroristState.Engage, leader.currentState, "Leader state");
+
+        var squad = Squad.Get("bravo");
+        AssertTrue(squad?.CurrentDirective != null,
+                   "Squad should hold a directive after Leader entered Engage");
+
+        if (squad?.CurrentDirective != null)
+        {
+            AssertEqual("Flank", squad.CurrentDirective.Type.ToString(),
+                        "directive type after Leader Engage");
+            AssertTrue(squad.CurrentDirective.Source == leader,
+                       "directive source should be the Leader");
+        }
+
+        Destroy(leader.gameObject, member.gameObject);
+    }
+
+    // ── PatrolLine tests ──────────────────────────────────────────────────
+
+    IEnumerator TestPatrolLineMultiWaypoint()
+    {
+        var npc = new GameObject("P_MultiWaypoint");
+        npc.transform.position = Vector3.zero;
+        var patrol = npc.AddComponent<PatrolLine>();
+        patrol.moveSpeed    = 10f;   // fast so the test completes in a few frames
+        patrol.stopDistance = 0.3f;
+
+        var w0 = new GameObject("wp0").transform; w0.position = Vector3.zero;
+        var w1 = new GameObject("wp1").transform; w1.position = new Vector3(0f, 0f, 1.5f);
+        var w2 = new GameObject("wp2").transform; w2.position = new Vector3(1.5f, 0f, 1.5f);
+
+        patrol.SetWaypoints(new[] { w0, w1, w2 }, looping: true);
+
+        AssertEqual(3, patrol.RouteLength, "route length");
+        AssertEqual(1, patrol.CurrentTargetIndex, "initial target index");
+
+        // Walk: should reach wp1 and advance to wp2…
+        int frames = 0;
+        while (patrol.CurrentTargetIndex != 2 && frames++ < 300) yield return null;
+        AssertTrue(patrol.CurrentTargetIndex == 2,
+                   $"route should advance to waypoint 2, index={patrol.CurrentTargetIndex}");
+
+        // …then loop mode should wrap back to wp0 after reaching wp2.
+        frames = 0;
+        while (patrol.CurrentTargetIndex != 0 && frames++ < 300) yield return null;
+        AssertTrue(patrol.CurrentTargetIndex == 0,
+                   $"looping route should wrap to waypoint 0, index={patrol.CurrentTargetIndex}");
+
+        Destroy(npc, w0.gameObject, w1.gameObject, w2.gameObject);
     }
 
     // ── NPCSelector tests ─────────────────────────────────────────────────

@@ -54,6 +54,25 @@ public class HostageController : MonoBehaviour, INPCResponder
     [Tooltip("Seconds of continuous close-range threat in Panic state before entering Freeze.")]
     public float freezeThreshold = 3f;
 
+    [Header("Animation")]
+    [Tooltip("Planar move speed (m/s) that maps to a full walk animation. The hostage " +
+             "animator's 'Speed' parameter is set to (actual speed / this), clamped 0-1, so " +
+             "the hostage walks while following you and idles when still. ~1.0 suits the " +
+             "default NavMeshAgent speed.")]
+    public float walkAnimReferenceSpeed = 1.6f;
+
+    [Tooltip("NavMesh move speed while following the trainee. Fast enough to keep up " +
+             "with a walking player. Overrides the agent's 3.5 m/s default.")]
+    public float followSpeed = 2.2f;
+
+    [Header("Health (the hostage can be shot)")]
+    [Tooltip("Hostage starting health. Friendly-fire from the trainee damages this.")]
+    public float maxHealth = 100f;
+
+    [Tooltip("At/below this health (but above 0) the hostage is 'injured' — it switches to a " +
+             "limping/injured escort walk instead of the normal scared walk.")]
+    public float injuredThreshold = 50f;
+
     [Header("Debug — read-only in Play mode")]
     public HostageState currentState = HostageState.Calm;
 
@@ -80,6 +99,7 @@ public class HostageController : MonoBehaviour, INPCResponder
     {
         // Terminal states — no further reactions
         if (currentState == HostageState.Freed) return false;
+        if (currentState == HostageState.Down)  return false;
 
         switch (e.Type)
         {
@@ -154,11 +174,16 @@ public class HostageController : MonoBehaviour, INPCResponder
 
             // ── Trainee contact ───────────────────────────────────────────────
             case ScenarioEventType.HostageContactStarted:
+                // The rescuer reached the hostage — follow from any non-terminal,
+                // non-already-following state (incl. Panic: the rescuer's arrival
+                // calms them enough to be led out).
                 if (currentState == HostageState.Calm ||
                     currentState == HostageState.Fearful ||
-                    currentState == HostageState.Freeze)
+                    currentState == HostageState.Freeze ||
+                    currentState == HostageState.Panic)
                 {
-                    // e.Instigator is the trainee GameObject — capture for follow target
+                    // e.Instigator is the trainee GameObject — captured as a fallback
+                    // follow target (FollowRoutine prefers the live Camera.main).
                     _followTarget = e.Instigator != null ? e.Instigator.transform : null;
                     TransitionTo(HostageState.Follow, e);
                 }
@@ -171,19 +196,80 @@ public class HostageController : MonoBehaviour, INPCResponder
         }
     }
 
+    // ── Damage / death ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Apply damage to the hostage (e.g. trainee friendly-fire). Below
+    /// injuredThreshold the hostage limps (injured escort walk); at 0 it dies.
+    /// Called by HostageHitBox when a bullet hits.
+    /// </summary>
+    public void TakeHit(float damage)
+    {
+        if (currentState == HostageState.Down || currentState == HostageState.Freed) return;
+
+        _currentHealth = Mathf.Max(0f, _currentHealth - damage);
+        Debug.LogWarning($"[HostageController] {NPCId} HIT — HP {_currentHealth:F0} " +
+                         $"(friendly fire is a training failure).");
+
+        if (_currentHealth <= 0f)
+        {
+            TransitionTo(HostageState.Down, null);
+            return;
+        }
+
+        if (_currentHealth <= injuredThreshold)
+            _injured = true; // Update() pushes this to the animator → injured walk
+    }
+
     // ── Private state ─────────────────────────────────────────────────────────
 
     float       _lastResponseTime = -99f;
     NavMeshAgent _agent;
+    Animator    _animator;
     Transform   _followTarget;
     Coroutine   _followRoutine;
     Coroutine   _freezeCheckRoutine;
+    Vector3     _lastAnimPos;
+    float       _currentHealth;
+    bool        _injured;
+    bool        _hasSpeedParam;
+    bool        _hasInjuredParam;
+    static readonly int _animSpeed   = Animator.StringToHash("Speed");
+    static readonly int _animInjured = Animator.StringToHash("Injured");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     void Awake()
     {
         _agent = GetComponent<NavMeshAgent>(); // optional
+        _animator = GetComponentInChildren<Animator>(); // optional — drives walk/idle blend
+        _lastAnimPos = transform.position;
+        _currentHealth = maxHealth;
+
+        // Movement comes from the NavMeshAgent, not the animation's root curve —
+        // turn root motion off so the walk clip can't drag the hostage around.
+        if (_animator != null)
+        {
+            _animator.applyRootMotion = false;
+
+            // Only drive parameters the assigned controller actually has — otherwise
+            // SetFloat/SetBool spam "parameter does not exist" every frame (e.g. if a
+            // hostage's Animator Controller isn't the rebuilt HostageAnimator).
+            foreach (var p in _animator.parameters)
+            {
+                if (p.nameHash == _animSpeed)   _hasSpeedParam   = true;
+                if (p.nameHash == _animInjured) _hasInjuredParam = true;
+            }
+            if (!_hasSpeedParam)
+                Debug.LogWarning($"[HostageController] {NPCId}: Animator has no 'Speed' param — " +
+                                 "its Animator Controller is probably not HostageAnimator. " +
+                                 "Walk animation won't blend until that's fixed.");
+        }
+
+        // Keep-up speed: fast enough to follow a walking trainee, not so fast it
+        // slides badly. Overrides the NavMeshAgent's 3.5 m/s default.
+        if (_agent != null) _agent.speed = followSpeed;
+
         NPCRegistry.Register(this);
     }
 
@@ -191,6 +277,19 @@ public class HostageController : MonoBehaviour, INPCResponder
 
     void Update()
     {
+        // Velocity-driven locomotion blend: walk while moving (e.g. following the
+        // trainee), idle when still. Measures real movement so it never glides.
+        if (_animator != null)
+        {
+            Vector3 d = transform.position - _lastAnimPos;
+            d.y = 0f;
+            float speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
+            float norm  = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
+            if (_hasSpeedParam)   _animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
+            if (_hasInjuredParam) _animator.SetBool(_animInjured, _injured);
+        }
+        _lastAnimPos = transform.position;
+
         // Auto-detect when runaway sequence completes → raise HostageFreed
         if (currentState == HostageState.Panic &&
             runawayController != null          &&
@@ -267,6 +366,22 @@ public class HostageController : MonoBehaviour, INPCResponder
             case HostageState.Freed:
                 // Runaway controller has already settled at the hiding spot.
                 break;
+
+            case HostageState.Down:
+                // Shot dead (training failure). Stop everything, play death, and
+                // turn the body into a non-blocking corpse.
+                scareController?.SetScared(false);
+                if (_freezeCheckRoutine != null) { StopCoroutine(_freezeCheckRoutine); _freezeCheckRoutine = null; }
+                if (_agent != null && _agent.isActiveAndEnabled)
+                {
+                    _agent.isStopped = true;
+                    _agent.ResetPath();
+                    _agent.enabled = false;
+                }
+                _animator?.SetTrigger("Death");
+                foreach (var col in GetComponentsInChildren<Collider>())
+                    if (col != null && !col.isTrigger) col.enabled = false;
+                break;
         }
     }
 
@@ -294,16 +409,23 @@ public class HostageController : MonoBehaviour, INPCResponder
 
         while (currentState == HostageState.Follow)
         {
-            if (_followTarget != null)
+            // Follow the player's ACTUAL position. In VR the head/camera moves with
+            // the player while the rig root often stays at the world origin — so we
+            // track Camera.main (the head) when available, and only fall back to the
+            // stored instigator transform if there's no main camera. This is the fix
+            // for "the hostage walks off instead of following me."
+            Transform tgt = Camera.main != null ? Camera.main.transform : _followTarget;
+            if (tgt != null)
             {
-                Vector3 targetPos = _followTarget.position;
-                if (Vector3.Distance(targetPos, lastDestination) > 1.0f)
+                Vector3 targetPos = tgt.position;
+                // Re-path whenever you've moved ~0.5 m so it keeps up closely.
+                if (Vector3.Distance(targetPos, lastDestination) > 0.5f)
                 {
                     _agent.SetDestination(targetPos);
                     lastDestination = targetPos;
                 }
             }
-            yield return new WaitForSeconds(0.3f);
+            yield return new WaitForSeconds(0.2f);
         }
 
         if (_agent.isActiveAndEnabled) _agent.ResetPath();

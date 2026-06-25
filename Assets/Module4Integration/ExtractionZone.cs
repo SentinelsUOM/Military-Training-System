@@ -52,34 +52,40 @@ public class ExtractionZone : MonoBehaviour
             Debug.LogWarning($"[ExtractionZone] {name}: collider is not set to isTrigger.");
     }
 
-    private void OnTriggerEnter(Collider other)
-    {
-        var ph = other.GetComponentInParent<PlayerHealth>();
-        if (ph != null)
-        {
-            _playerInside = true;
-            if (echoToConsole) Debug.Log($"[ExtractionZone] Trainee entered safe zone.");
-            EvaluateRescue();
-        }
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        var ph = other.GetComponentInParent<PlayerHealth>();
-        if (ph != null)
-        {
-            _playerInside = false;
-            if (echoToConsole) Debug.Log($"[ExtractionZone] Trainee left safe zone.");
-        }
-    }
+    private PlayerHealth _cachedPlayer;
 
     private void Update()
     {
         if (Time.time < _nextPoll) return;
         _nextPoll = Time.time + pollInterval;
 
-        if (!_playerInside) return;
-        EvaluateRescue();
+        // Determine "player inside" by POLLING the player's position — VR rig
+        // trigger callbacks (OnTriggerEnter/Exit) are unreliable, so we test the
+        // actual head/rig position against the zone bounds every tick instead.
+        bool wasInside = _playerInside;
+        _playerInside = IsInsideZone(GetPlayerPosition());
+
+        if (echoToConsole && _playerInside != wasInside)
+            Debug.Log($"[ExtractionZone] Trainee {(_playerInside ? "entered" : "left")} safe zone.");
+
+        if (_playerInside) EvaluateRescue();
+    }
+
+    /// <summary>Player position: head camera first (always moves in VR), else the PlayerHealth rig.</summary>
+    private Vector3? GetPlayerPosition()
+    {
+        if (Camera.main != null) return Camera.main.transform.position;
+        if (_cachedPlayer == null) _cachedPlayer = FindFirstObjectByType<PlayerHealth>();
+        return _cachedPlayer != null ? _cachedPlayer.transform.position : (Vector3?)null;
+    }
+
+    /// <summary>True if a world point lies within the zone bounds (Y flattened to the zone centre).</summary>
+    private bool IsInsideZone(Vector3? worldPos)
+    {
+        if (worldPos == null || _zoneCollider == null) return false;
+        Vector3 p = worldPos.Value;
+        p.y = _zoneCollider.bounds.center.y; // ignore height — the head is ~1.6 m up
+        return (_zoneCollider.ClosestPoint(p) - p).sqrMagnitude < 0.0001f;
     }
 
     private void EvaluateRescue()
@@ -100,10 +106,8 @@ public class ExtractionZone : MonoBehaviour
             // Only escorted (Following) hostages count.
             if (hc.currentState != HostageState.Follow) continue;
 
-            // Robust proximity: does the zone collider's closest-point match the hostage position?
-            Vector3 closest = _zoneCollider.ClosestPoint(hc.transform.position);
-            if (Vector3.SqrMagnitude(closest - hc.transform.position) > 0.0001f)
-                continue; // hostage is outside the zone bounds
+            // Hostage must be standing inside the zone bounds (Y-flattened).
+            if (!IsInsideZone(hc.transform.position)) continue;
 
             EventManager.Instance.Raise(new ScenarioEvent(
                 ScenarioEventType.HostageFreed,

@@ -18,9 +18,10 @@ using UnityEngine;
 ///   - Inspector context menu "Start Session"
 ///
 /// Session end triggers (whichever fires first)
-///   - All hostages reach HostageState.Freed                     → MissionEnd:hostages_rescued
-///   - PlayerHealth.health drops to 0                            → MissionEnd:player_down
-///   - missionTimeoutSeconds elapses without another end trigger → MissionEnd:timeout
+///   - All hostages reach HostageState.Freed                     → MissionEnd:hostages_rescued (PASS)
+///   - PlayerHealth.health drops to 0                            → MissionEnd:player_down (FAIL)
+///   - Any hostage is shot dead (HostageState.Down)              → MissionEnd:hostage_killed (FAIL)
+///   - missionTimeoutSeconds elapses without another end trigger → MissionEnd:timeout (FAIL)
 ///   - Inspector context menu "End Session"                       → manual
 ///
 /// Setup
@@ -47,6 +48,11 @@ public class Module4SessionController : MonoBehaviour
     [Tooltip("End the session as soon as the player health component reports 0 HP. " +
              "Drag the player rig's PlayerHealth component here.")]
     [SerializeField] private PlayerHealth playerHealth;
+
+    [Header("Auto-End: Hostage Killed (FAIL)")]
+    [Tooltip("End the session the moment any registered hostage is shot dead " +
+             "(enters HostageState.Down). Killing a hostage is an instant mission failure.")]
+    [SerializeField] private bool endWhenHostageKilled = true;
 
     [Header("Auto-End: Timeout (FAIL safety net)")]
     [Tooltip("Maximum allowed mission duration in seconds. The session ends as a timeout " +
@@ -139,6 +145,14 @@ public class Module4SessionController : MonoBehaviour
         if (playerHealth != null && playerHealth.health <= 0)
         {
             EndSession("player_down");
+            return;
+        }
+
+        // Hostage killed check — poll the registry for any hostage that has died
+        // (HostageController.TakeHit drives it to Down at 0 HP, but raises no event).
+        if (endWhenHostageKilled && AnyHostageKilled())
+        {
+            EndSession("hostage_killed");
             return;
         }
 
@@ -304,6 +318,17 @@ public class Module4SessionController : MonoBehaviour
             case HostageController   hc: return hc.currentState.ToString();
             default:                     return "Unknown";
         }
+    }
+
+    private bool AnyHostageKilled()
+    {
+        var all = NPCRegistry.GetAll();
+        foreach (var npc in all)
+        {
+            if (npc is HostageController hc && hc.currentState == HostageState.Down)
+                return true;
+        }
+        return false;
     }
 
     private bool AllHostagesFreed()
