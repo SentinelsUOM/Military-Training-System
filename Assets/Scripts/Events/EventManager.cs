@@ -72,6 +72,8 @@ public class EventManager : MonoBehaviour
         // Derived events
         if (e.Type == ScenarioEventType.ShotFired)
         {
+            if (logEvents)
+                Debug.Log($"[EventManager] ShotFired (E{e.EventId}) → deriving GunshotHeard broadcast at {e.Origin:F1}.");
             Raise(new ScenarioEvent(ScenarioEventType.GunshotHeard, e.Origin, e.Instigator,
                                     e.RoomId, e.TargetActorId));
             TrackShotAndCheckSpike(e);
@@ -99,13 +101,22 @@ public class EventManager : MonoBehaviour
             }
 
             if (logEvents && responders.Count == 0)
-                Debug.Log($"[EventManager] Broadcast {e.Type} → 0 / {registry.Count} responded");
+                Debug.Log($"[EventManager] Broadcast {e.Type} → 0 / {registry.Count} responded " +
+                          "(nobody in range / eligible — for GunshotHeard check hearingRange & responseCooldown).");
+            else if (logEvents)
+                Debug.Log($"[EventManager] Broadcast {e.Type} → {responders.Count} / {registry.Count} responded: " +
+                          $"[{string.Join(", ", responders.ConvertAll(r => r.NPCId))}]");
 
             // GunshotHeard: best-scored TERRORIST walks to investigate (never a hostage)
             if (e.Type == ScenarioEventType.GunshotHeard && responders.Count > 0)
             {
                 var terrorists = responders.FindAll(r => r is TerroristController);
-                if (terrorists.Count == 0) return;
+                if (terrorists.Count == 0)
+                {
+                    if (logEvents)
+                        Debug.Log("[EventManager] GunshotHeard → responders present but none are terrorists; no investigator dispatched.");
+                    return;
+                }
                 var investigator = NPCSelector.SelectBest(terrorists, e, false);
                 if (investigator is TerroristController tc)
                 {

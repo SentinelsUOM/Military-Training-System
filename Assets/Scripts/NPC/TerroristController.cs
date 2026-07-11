@@ -56,7 +56,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Base NavMesh move speed (m/s) for walking (patrol/converge/flank/investigate). " +
              "Kept modest so foot motion matches the walk clip instead of sliding. Retreat " +
              "multiplies this by Retreat Speed Multiplier.")]
-    public float moveSpeed = 1.5f;
+    public float moveSpeed = 1.0f;
 
     [Tooltip("Wander only — max distance from spawn that the NPC will wander.")]
     public float wanderRadius = 12f;
@@ -75,7 +75,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "blend tree's 'Speed' parameter is set to (actual speed / this), clamped 0-1. " +
              "Lower it if the legs cycle too slowly for the travel speed (foot-sliding); raise " +
              "it if they cycle too fast. ~1.3 matches the default NavMeshAgent / PatrolLine speed.")]
-    public float walkAnimReferenceSpeed = 1.5f;
+    public float walkAnimReferenceSpeed = 1.0f;
 
     [Tooltip("Vertical offset applied after death to make the body lie flat on the floor.\n" +
              "If the body floats above the floor → set this to a NEGATIVE number (e.g. -0.3).\n" +
@@ -94,6 +94,41 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "converge or flank. It only engages what it personally sees, then keeps " +
              "guarding. Set automatically by SceneBuilder for the HostageGuardian role.")]
     public bool isHostageGuardian = false;
+
+    [Tooltip("The specific hostage this guardian seizes as leverage when it detects the trainee. " +
+             "Set by SceneBuilder for the HostageGuardian role; if left null, a guardian auto-binds " +
+             "to the nearest hostage at spawn.")]
+    public HostageController guardedHostage;
+
+    [Header("Hostage Leverage (guardian only)")]
+    [Tooltip("Backstop: seconds of sustained standoff (guardian holding the hostage while it sees the " +
+             "trainee) before it EXECUTES. Neutralise the guardian before this elapses to save the hostage.")]
+    public float executionCountdown = 15f;
+
+    [Tooltip("Once holding the hostage, if the trainee closes within this distance (m) the guardian turns " +
+             "and AIMS AT THE HOSTAGE as a visible warning ('back off!'). Back away and it de-escalates.")]
+    public float warningRange = 3.5f;
+
+    [Tooltip("If the trainee keeps pushing in past the warning to within this distance (m) of the hostage, " +
+             "the guardian shoots it. Set below warningRange so the warning always shows first.")]
+    public float executeRange = 1.5f;
+
+    [Tooltip("How far (m) behind the hostage — from the trainee's viewpoint — the guardian holds while " +
+             "using it as a human shield.")]
+    public float shieldStandoff = 1.0f;
+
+    [Tooltip("The guardian only resorts to the human shield when the SITUATION is high-pressure: its " +
+             "posture has escalated to CoverAndPeek, OR its health is at/below the retreat threshold, OR " +
+             "the trainee closes within this range (m) of the hostage. Otherwise it just fights normally.")]
+    public float shieldTriggerRange = 6f;
+
+    [Tooltip("Relaxed guard-patrol radius (m) around the hostage while idle — the guardian wanders " +
+             "gently within this of the hostage, then holds and watches.")]
+    public float guardPatrolRadius = 2.5f;
+
+    [Tooltip("Leash (m): the farthest the guardian may stray from the hostage while searching " +
+             "suspiciously (after a gunshot / ally-down). It NEVER exceeds this — it never leaves the hostage.")]
+    public float guardLeashRadius = 6f;
 
     [Header("Health")]
     public float maxHealth = 100f;
@@ -127,6 +162,40 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("PlayerSeen events closer than this escalate directly to Engage. 0 = disabled.")]
     public float engageDistance = 5f;
 
+    [Header("Standoff (combat spacing)")]
+    [Tooltip("Hard minimum distance (m) the terrorist keeps between itself and the player while " +
+             "fighting. It never paths closer than this and steps back if the player closes in. " +
+             "Grounded in the Tueller 'reactionary gap' idea; ~3 m suits tight indoor rooms.")]
+    public float minStandoffDistance = 3f;
+
+    [Tooltip("Preferred firing distance (m). When closing on the player the terrorist stops on this " +
+             "ring instead of walking onto you. Should be >= minStandoffDistance.")]
+    public float preferredStandoffDistance = 3.5f;
+
+    [Header("Combat Escalation (posture)")]
+    [Tooltip("Current squad-member behaviour. Starts at HoldAndShoot (stand at range and fire). As the " +
+             "firefight escalates — allies killed, stress spikes, taking hits, time in combat — it flips " +
+             "to CoverAndPeek (use cover, peek and fire). Read-only at runtime; mirrors real morale decay.")]
+    public CombatPosture posture = CombatPosture.HoldAndShoot;
+
+    [Tooltip("Escalation points needed to switch from HoldAndShoot to CoverAndPeek.")]
+    public float escalationThreshold = 3f;
+
+    [Tooltip("Escalation points added when this NPC sees / is told an ally went down (strongest cue).")]
+    public float escalationPerAllyDown = 2f;
+
+    [Tooltip("Escalation points added per StressSpike (rapid player gunfire nearby).")]
+    public float escalationPerStressSpike = 1f;
+
+    [Tooltip("Escalation points added each time the player hits this NPC.")]
+    public float escalationPerHit = 1f;
+
+    [Tooltip("Every this many seconds of continuous combat, escalation rises by 1 (sustained-fight caution).")]
+    public float escalationCombatInterval = 8f;
+
+    [Tooltip("While in CoverAndPeek, seconds spent firing from one cover spot before repositioning to new cover.")]
+    public float coverHoldTime = 3.5f;
+
     [Tooltip("XR Main Camera — used as shoot target when Engage is triggered by PlayerSeen.\n" +
              "If left empty the event instigator's Camera is used instead.")]
     public Transform playerCamera;
@@ -147,6 +216,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
     public float hearingRange = 20f;
 
     [Header("Aim (Engage state)")]
+    [Tooltip("When ON, procedurally twists the spine so the barrel points exactly at the player. " +
+             "This makes the SHOT land on target but visibly rolls/twists the two-handed pose and " +
+             "can pull the support hand off the gun. When OFF (default), the terrorist just turns to " +
+             "FACE the player and lets the clean 'firing rifle' clip pose the weapon — natural pose, " +
+             "both hands on the gun; the shot still goes where the clip's barrel points (≈ forward).")]
+    public bool useProceduralAim = false;
+
     [Tooltip("Optional. Drag the gun mesh (or its parent transform) here. Used to read the gun's " +
              "current barrel direction so the chest bone can be rotated to make the gun point at " +
              "the player. If left blank, falls back to shooter.firePoint automatically.")]
@@ -162,6 +238,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
     [Tooltip("Which humanoid bone to rotate for aim. Chest gives the cleanest 'rifle stock' aim. " +
              "UpperChest is more subtle; Spine swings the hips too. Leave on Chest for most rigs.")]
     public HumanBodyBones aimBoneType = HumanBodyBones.Chest;
+
+    [Tooltip("Head LookAt IK strength (0-1) — how strongly the NPC turns its head/eyes to look at " +
+             "the player while alerted/engaged. Needs 'IK Pass' on the animator base layer (already set). " +
+             "1 = fully tracks you.")]
+    [Range(0f, 1f)] public float headLookWeight = 1f;
+
+    [Tooltip("How much the upper body leans into the head LookAt (0-1). Small values keep it to the " +
+             "head/neck; larger values turn the torso too. ~0.3 reads natural.")]
+    [Range(0f, 1f)] public float headLookBodyWeight = 0.35f;
 
     [Header("Death / Cleanup")]
     [Tooltip("If true, automatically positions the body so the mesh bottom sits on the floor " +
@@ -201,11 +286,20 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Terminal — no response ever
         if (currentState == TerroristState.Down) return false;
 
-        // Hostage guardian holds its post: it ignores squad stimuli (gunshots,
-        // ally-down, room breaches) that would pull it off the hostage. It reacts
-        // ONLY through its own perception (PlayerSeen/TargetConfirmed via
-        // HandleDetection, which bypasses CanRespond).
-        if (isHostageGuardian) return false;
+        // Hostage guardian: it REACTS to danger cues (gunshots, ally-down, breaches) by
+        // getting Suspicious/Alert and searching around the hostage (GuardianRoamRoutine),
+        // but it never relocates to investigate/converge/flank — those paths are separately
+        // skipped for guardians — so it never leaves the hostage. It ignores vision events
+        // here because those reach it through its own perception (HandleDetection).
+        if (isHostageGuardian)
+        {
+            return e.Type == ScenarioEventType.GunshotHeard  ||
+                   e.Type == ScenarioEventType.TerroristDown ||
+                   e.Type == ScenarioEventType.AllyDownSeen  ||
+                   e.Type == ScenarioEventType.StressSpike   ||
+                   e.Type == ScenarioEventType.RoomBreached  ||
+                   e.Type == ScenarioEventType.DoorOpened;
+        }
 
         // Don't respond to own weapon fire
         if (e.Instigator == gameObject &&
@@ -241,8 +335,21 @@ public class TerroristController : MonoBehaviour, INPCResponder
         switch (e.Type)
         {
             case ScenarioEventType.GunshotHeard:
+            {
                 // Auditory range check
-                return Vector3.Distance(transform.position, e.Origin) <= hearingRange;
+                float d = Vector3.Distance(transform.position, e.Origin);
+                bool heard = d <= hearingRange;
+                // Throttle: auto-fire raises one GunshotHeard per bullet, so log this
+                // per-NPC check at most ~once/second to keep the trace readable.
+                if (Time.time - _lastHearingLogTime >= 1f)
+                {
+                    _lastHearingLogTime = Time.time;
+                    Debug.Log($"[TerroristController] {gameObject.name}: GunshotHeard range check — " +
+                              $"dist={d:F1}m vs hearingRange={hearingRange:F1}m → {(heard ? "HEARD" : "too far, ignored")} " +
+                              $"(state={currentState})");
+                }
+                return heard;
+            }
 
             // ── Perception is PERSONAL ──────────────────────────────────────
             // PlayerSeen / TargetConfirmed / PlayerLost are raised by an NPC's
@@ -262,6 +369,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
             case ScenarioEventType.DoorOpened:
             case ScenarioEventType.AllyDownSeen:
             case ScenarioEventType.TerroristDown:
+            case ScenarioEventType.StressSpike: // rate-limited by the cooldown above; only escalates posture
                 return true;
 
             default:
@@ -277,6 +385,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             // ── Auditory ──────────────────────────────────────────────────────
             case ScenarioEventType.GunshotHeard:
+                Debug.Log($"[TerroristController] {gameObject.name}: RespondTo GunshotHeard at {e.Origin:F1} " +
+                          $"(state={currentState}) — turning to face sound" +
+                          (currentState == TerroristState.Idle ? " → Suspicious" :
+                           currentState != TerroristState.Engage ? " → Alert" : " (Engaged, holding)"));
                 SetLookTarget(e.Origin);
                 if (currentState == TerroristState.Idle)
                     TransitionTo(TerroristState.Suspicious, e);
@@ -332,8 +444,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
                     TransitionTo(TerroristState.Alert, e);
                 break;
 
+            case ScenarioEventType.StressSpike:
+                // Rapid player gunfire nearby — no state change, but it rattles them.
+                AddEscalation(escalationPerStressSpike);
+                break;
+
             case ScenarioEventType.TerroristDown:
                 if (currentState == TerroristState.Down) break;
+                // Learning a squad-mate is dead is the strongest cue to start using cover.
+                AddEscalation(escalationPerAllyDown);
                 Debug.Log($"[TerroristController] {gameObject.name} received TerroristDown | " +
                           $"currentState={currentState} | personallyConfirmed={_personallyConfirmedPlayer}");
                 // Squadmate down — go to Alert and investigate. Do NOT auto-engage:
@@ -367,9 +486,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Wounded but not down — fall back from the threat. One retreat per life,
         // and only from combat-adjacent states (a patrolling NPC who somehow takes
         // a non-fatal hit shouldn't sprint away from nothing).
+        // Guardians NEVER retreat — they never leave the hostage; when wounded they
+        // reach for the hostage as a shield instead (handled in GuardianPressureTick).
         if (retreatHealthThreshold > 0f &&
             currentHealth <= retreatHealthThreshold &&
             !_hasRetreated &&
+            !isHostageGuardian &&
             (currentState == TerroristState.Engage ||
              currentState == TerroristState.Alert  ||
              currentState == TerroristState.TakeCover))
@@ -377,6 +499,154 @@ public class TerroristController : MonoBehaviour, INPCResponder
             _hasRetreated = true;
             TransitionTo(TerroristState.Retreat, null);
         }
+
+        // Taking fire raises caution — feeds the posture escalation.
+        if (currentState == TerroristState.Engage ||
+            currentState == TerroristState.Alert  ||
+            currentState == TerroristState.TakeCover)
+            AddEscalation(escalationPerHit);
+    }
+
+    // ── Combat escalation (morale model) ───────────────────────────────────────
+
+    /// <summary>
+    /// Raises this NPC's combat-stress score and, once it crosses escalationThreshold,
+    /// flips posture from HoldAndShoot to CoverAndPeek. Models mounting caution as
+    /// casualties, stress and time accumulate — first contact is disciplined standoff
+    /// fire; a grinding firefight pushes survivors into cover. Escalation only rises.
+    /// </summary>
+    void AddEscalation(float amount)
+    {
+        if (amount <= 0f) return;
+        if (posture == CombatPosture.CoverAndPeek) return; // already at the cautious posture
+
+        _escalation += amount;
+        if (_escalation >= escalationThreshold)
+        {
+            posture = CombatPosture.CoverAndPeek;
+            Debug.Log($"[TerroristController] {gameObject.name}: posture → CoverAndPeek " +
+                      $"(escalation {_escalation:F1} ≥ {escalationThreshold}) — switching to cover & peek.");
+            // If already in the fight, restart positioning so it adopts cover immediately.
+            if (currentState == TerroristState.Engage) StartCombatPositioning();
+        }
+    }
+
+    // ── Combat positioning (standoff hold / cover-peek) ────────────────────────
+
+    void StartCombatPositioning()
+    {
+        StopCombatPositioning();
+        if (isHostageGuardian) return; // guardian holds its post by the hostage, never repositions
+        if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
+        _combatPosRoutine = StartCoroutine(CombatPositionRoutine());
+    }
+
+    void StopCombatPositioning()
+    {
+        if (_combatPosRoutine != null) { StopCoroutine(_combatPosRoutine); _combatPosRoutine = null; }
+    }
+
+    /// <summary>
+    /// Steers the agent WHILE it fires, per posture:
+    ///   HoldAndShoot — stand and fire; only move to restore the standoff gap if the
+    ///                  player closes inside minStandoffDistance.
+    ///   CoverAndPeek — relocate to cover that shields from the player, fire from there
+    ///                  for coverHoldTime, then bound to fresh cover (peek & fire).
+    /// Firing is driven by the shooter component; this only governs footing.
+    /// </summary>
+    IEnumerator CombatPositionRoutine()
+    {
+        while (currentState == TerroristState.Engage)
+        {
+            Vector3 threat = _lastSeenPlayer != null ? _lastSeenPlayer.position : _lastKnownPlayerPos;
+
+            if (posture == CombatPosture.CoverAndPeek)
+            {
+                // Move to cover that shields from the threat, but never inside the standoff ring.
+                var cover = CoverPoint.SelectBest(transform.position, threat - transform.position);
+                if (cover != null)
+                {
+                    _claimedCover?.Release();
+                    cover.Claim();
+                    _claimedCover = cover;
+                    agent.SetDestination(EnforceStandoff(cover.transform.position, threat));
+                }
+                else
+                {
+                    agent.SetDestination(StandoffPoint(threat)); // no cover available → just hold standoff
+                }
+
+                // Fire from here for a beat (peek), then loop to pick fresh cover (reposition).
+                float held = 0f;
+                while (held < coverHoldTime && currentState == TerroristState.Engage)
+                {
+                    MaintainStandoff(threat);
+                    held += Time.deltaTime;
+                    yield return null;
+                }
+            }
+            else // HoldAndShoot
+            {
+                MaintainStandoff(threat);
+                yield return null;
+            }
+        }
+        _combatPosRoutine = null;
+    }
+
+    /// <summary>Per-frame spacing keeper: back off to the standoff ring if the player crowds
+    /// in; otherwise (HoldAndShoot) stop and plant so the NPC fires from where it stands.</summary>
+    void MaintainStandoff(Vector3 threat)
+    {
+        if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
+
+        float dist = Vector3.Distance(transform.position, threat);
+        if (dist < minStandoffDistance - 0.05f)
+        {
+            agent.SetDestination(StandoffPoint(threat)); // too close — step back
+        }
+        else if (posture == CombatPosture.HoldAndShoot &&
+                 !agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.1f)
+        {
+            agent.ResetPath(); // at a safe gap and not already moving — plant and fire
+        }
+    }
+
+    /// <summary>A NavMesh point preferredStandoffDistance straight back from the threat.</summary>
+    Vector3 StandoffPoint(Vector3 threat)
+    {
+        Vector3 away = transform.position - threat; away.y = 0f;
+        if (away.sqrMagnitude < 0.01f) away = -transform.forward;
+        away.Normalize();
+        Vector3 target = threat + away * preferredStandoffDistance;
+        return NavMesh.SamplePosition(target, out NavMeshHit hit, 2f, NavMesh.AllAreas)
+            ? hit.position : transform.position;
+    }
+
+    /// <summary>Pushes a candidate destination out of the standoff ring if it sits inside it.</summary>
+    Vector3 EnforceStandoff(Vector3 point, Vector3 threat)
+    {
+        Vector3 flat = point; flat.y = threat.y;
+        if (Vector3.Distance(flat, threat) >= minStandoffDistance) return point;
+
+        Vector3 dir = point - threat; dir.y = 0f;
+        if (dir.sqrMagnitude < 0.01f) dir = transform.position - threat;
+        dir.y = 0f; dir.Normalize();
+        Vector3 pushed = threat + dir * minStandoffDistance;
+        return NavMesh.SamplePosition(pushed, out NavMeshHit hit, 2f, NavMesh.AllAreas)
+            ? hit.position : point;
+    }
+
+    /// <summary>Approach destination on the standoff ring around a target (so squad members
+    /// closing in stop at a firing distance instead of walking onto the player).</summary>
+    Vector3 ApproachRingPoint(Vector3 target)
+    {
+        Vector3 from = transform.position - target; from.y = 0f;
+        if (from.sqrMagnitude < 0.01f) from = -transform.forward;
+        from.Normalize();
+        Vector3 dest = target + from * preferredStandoffDistance;
+        return NavMesh.SamplePosition(dest, out NavMeshHit hit, preferredStandoffDistance, NavMesh.AllAreas)
+            ? hit.position : dest;
     }
 
     /// <summary>
@@ -415,6 +685,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 var cam = ResolvePlayerCamera(e);
                 if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); _lastKnownPlayerPos = cam.position; }
                 else             { SetLookTarget(e.Origin); _lastKnownPlayerPos = e.Origin; }
+                _playerVisible = true; // currently has eyes on the player
 
                 if (currentState == TerroristState.Idle ||
                     currentState == TerroristState.Suspicious)
@@ -426,19 +697,27 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 var cam = ResolvePlayerCamera(e);
                 if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); _lastKnownPlayerPos = cam.position; }
                 _personallyConfirmedPlayer = true; // own eyes confirmed the target
+                _playerVisible = true;             // currently has eyes on the player
                 if (currentState == TerroristState.Alert ||
                     currentState == TerroristState.Suspicious)
                     TransitionTo(TerroristState.Engage, e);
                 break;
             }
             case ScenarioEventType.PlayerLost:
-                // Lost sight of the player. Drop out of Engage and actively HUNT:
-                // walk to where they were last seen and run the search routine
-                // (scan + expanding sweep). If the search finds nothing it returns
-                // the NPC to patrol; the Alert give-up timer is the backstop.
-                if (currentState == TerroristState.Engage)
+                _playerVisible = false; // no current line of sight
+                // Lost sight of the player — actively HUNT: walk to where they were
+                // last seen and run the search routine (scan + expanding sweep).
+                // This now fires whether the NPC had fully committed (Engage) OR had
+                // only just spotted the player (Alert): a guard who glimpses someone
+                // and then loses them should still go check the last-known spot, not
+                // stand in place and give up. PerceptionController only raises
+                // PlayerLost for an NPC that PERSONALLY had eyes on the player, so
+                // squad-alerted NPCs that never actually saw you are unaffected.
+                if (currentState == TerroristState.Engage ||
+                    currentState == TerroristState.Alert)
                 {
-                    TransitionTo(TerroristState.Alert, e);
+                    if (currentState == TerroristState.Engage)
+                        TransitionTo(TerroristState.Alert, e);
                     // Guardian holds its post — it does NOT chase/search; it keeps
                     // guarding the hostage and re-engages only if the player returns.
                     if (!isHostageGuardian)
@@ -451,6 +730,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     // ── Private state ─────────────────────────────────────────────────────────
 
     float     _lastResponseTime = -99f;
+    float     _lastHearingLogTime = -99f;  // throttles the per-bullet GunshotHeard range-check log
+    float     _stuckTimer;                 // accumulates time an agent wants to move but isn't (stuck diagnostic)
     Transform _lookAnchor;
     Transform _lastSeenPlayer;
     Coroutine _suspiciousRoutine;
@@ -470,10 +751,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
     bool      _isInvestigating;
     LeaderDirective _activeDirective;   // last directive received from squad Leader; null when none active
     Transform _aimBone;                 // cached chest/spine bone used to aim the upper body at the player
+    Transform[] _spineChain;            // Spine→Chest→UpperChest, used to spread the aim rotation naturally
+    Transform _leftUpperArm, _leftForeArm, _leftHand; // support-hand IK chain — keeps the left hand on the gun
+    float     _escalation;              // accumulated combat-stress score; flips posture at escalationThreshold
+    float     _nextCombatTickTime;      // next time the sustained-combat escalation tick may fire
+    Coroutine _combatPosRoutine;        // active combat-positioning loop (standoff hold / cover-peek)
+    Coroutine _leverageRoutine;         // active hostage-leverage loop (guardian only)
+    Coroutine _guardRoamRoutine;        // leashed patrol/search loop around the hostage (guardian only)
+    bool      _hostageWarning;          // guardian is in the WARNING beat: aiming AT the hostage to warn the trainee off
+    bool      _playerVisible;           // TRUE only while this NPC currently has LOS on the player
+                                        // (set on PlayerSeen/TargetConfirmed, cleared on PlayerLost).
+                                        // NOTE: _lastSeenPlayer is the camera transform, so its .position
+                                        // is always live — use _playerVisible for "can I see them NOW?".
     Vector3   _lastAnimPos;             // previous-frame position, for velocity-driven locomotion blend
     static readonly int _animSpeed  = Animator.StringToHash("Speed");
     static readonly int _animFiring = Animator.StringToHash("Firing");
     static readonly int _animCrouch = Animator.StringToHash("Crouch");
+    static readonly int _animAlert  = Animator.StringToHash("Alert");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -506,6 +800,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
             if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.Chest);
             if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.UpperChest);
             if (_aimBone == null) _aimBone = animator.GetBoneTransform(HumanBodyBones.Spine);
+
+            // Spine chain (low → high) used to AIM the weapon at the player. The
+            // rotation needed to bring the gun onto the target is spread across
+            // these bones so the torso bends naturally, instead of one bone
+            // snapping ~90° (which tore the two-handed grip and pitched the head).
+            _spineChain = new Transform[]
+            {
+                animator.GetBoneTransform(HumanBodyBones.Spine),
+                animator.GetBoneTransform(HumanBodyBones.Chest),
+                animator.GetBoneTransform(HumanBodyBones.UpperChest),
+            };
+
+            // Left (support) arm — after the spine aim moves the gun, a two-bone IK
+            // pass re-locks this hand onto the weapon so it never floats off.
+            _leftUpperArm = animator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
+            _leftForeArm  = animator.GetBoneTransform(HumanBodyBones.LeftLowerArm);
+            _leftHand     = animator.GetBoneTransform(HumanBodyBones.LeftHand);
         }
 
         // Movement is driven by NavMeshAgent / PatrolLine / transform — NOT by the
@@ -571,6 +882,37 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         if (currentState == TerroristState.Down) return;
 
+        // ── Stuck diagnostic ─────────────────────────────────────────────────
+        // If the agent has a destination but isn't actually moving toward it,
+        // report WHY after 2 s: the NavMesh path status is the smoking gun.
+        //   pathStatus=PathPartial  → destination is across an unreachable gap
+        //                             (NavMesh not connected — e.g. a door still
+        //                             severing it, or a floor gap at the doorway).
+        //   pathStatus=PathComplete → path exists but something else stops it
+        //                             (isStopped, a physical obstruction, arrival).
+        //   isOnNavMesh=false       → the agent never attached to the NavMesh.
+        if (agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh &&
+            !agent.isStopped && (agent.hasPath || agent.pathPending))
+        {
+            bool wantsToMove = agent.pathPending ||
+                               agent.remainingDistance > agent.stoppingDistance + 0.3f;
+            bool notMoving   = agent.velocity.sqrMagnitude < 0.0025f; // < 0.05 m/s
+            if (wantsToMove && notMoving)
+            {
+                _stuckTimer += Time.deltaTime;
+                if (_stuckTimer >= 2f)
+                {
+                    _stuckTimer = 0f;
+                    Debug.LogWarning($"[TerroristController] {gameObject.name}: STUCK — " +
+                        $"state={currentState} pathStatus={agent.pathStatus} " +
+                        $"onNavMesh={agent.isOnNavMesh} remaining={agent.remainingDistance:F2} " +
+                        $"dest={agent.destination:F1} pos={transform.position:F1}");
+                }
+            }
+            else _stuckTimer = 0f;
+        }
+        else _stuckTimer = 0f;
+
         // ── Velocity-driven locomotion blend ─────────────────────────────────
         // Measure how fast we ACTUALLY moved this frame (covers NavMeshAgent
         // movement — wander/converge/flank/investigate/retreat — AND PatrolLine,
@@ -588,10 +930,19 @@ public class TerroristController : MonoBehaviour, INPCResponder
             // 0.12 s damping smooths the start/stop so legs ease in/out.
             animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
 
-            // Firing clip plays whenever the shooter is actually firing (Engage).
-            animator.SetBool(_animFiring, shooter != null && shooter.IsFiring);
+            // Firing clip plays whenever the shooter is actually firing (Engage) — and also
+            // during the hostage WARNING beat, so the guardian holds the rifle aimed at the
+            // hostage (it faces the hostage via the look-anchor override) instead of relaxing.
+            animator.SetBool(_animFiring, (shooter != null && shooter.IsFiring) ||
+                                          (isHostageGuardian && _hostageWarning));
             // Crouch clip while moving to / holding cover.
             animator.SetBool(_animCrouch, currentState == TerroristState.TakeCover);
+            // Threat-aware flag drives the locomotion swap: relaxed patrol walk
+            // (Remy@Rifle Walk) only while Idle/patrolling; any other state uses the
+            // cautious tactical walk (Ch08@Walking) via the AlertMove state. Driven
+            // here every frame so it stays correct even in states (e.g. Engage) that
+            // don't set it on entry.
+            animator.SetBool(_animAlert, currentState != TerroristState.Idle);
         }
         _lastAnimPos = transform.position;
 
@@ -601,10 +952,35 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (currentState == TerroristState.Engage && _lastSeenPlayer != null)
             _lastKnownPlayerPos = _lastSeenPlayer.position;
 
+        // Sustained-fight caution: a drawn-out engagement slowly raises escalation
+        // even without fresh casualties, so a long firefight eventually pushes the
+        // NPC into cover-and-peek.
+        if (currentState == TerroristState.Engage &&
+            escalationCombatInterval > 0f && Time.time >= _nextCombatTickTime)
+        {
+            _nextCombatTickTime = Time.time + escalationCombatInterval;
+            AddEscalation(1f);
+        }
+
+        // Guardian: keep the leashed roam alive, and run the leverage decision
+        // (fight normally / grab shield under pressure / execute on rush).
+        if (isHostageGuardian)
+        {
+            if (_guardRoamRoutine == null && currentState != TerroristState.Down)
+                _guardRoamRoutine = StartCoroutine(GuardianRoamRoutine());
+            GuardianPressureTick();
+        }
+
         // Keep look anchor tracking the player's live position every frame.
         if (_lastSeenPlayer != null && currentState != TerroristState.Idle && _lookAnchor != null)
             _lookAnchor.position = new Vector3(
                 _lastSeenPlayer.position.x, transform.position.y, _lastSeenPlayer.position.z);
+
+        // WARNING beat: a guardian threatening the hostage turns and aims AT it instead of
+        // the trainee — the visible "back off or it dies" telegraph.
+        if (isHostageGuardian && _hostageWarning && guardedHostage != null && _lookAnchor != null)
+            _lookAnchor.position = new Vector3(
+                guardedHostage.transform.position.x, transform.position.y, guardedHostage.transform.position.z);
 
         // Wander/Static NPCs have PatrolLine disabled so we rotate them ourselves.
         // Patrol NPCs use PatrolLine.StopAndLook which reads _lookAnchor, but we also
@@ -684,35 +1060,121 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
         }
 
-        // ── 2) Chest bone aim — rotates whole arm chain so gun points at player ────
-        // The gun is a descendant of the chest (chest → shoulder → arm → forearm → hand
-        // → weaponPivot → gun mesh). Rotating the chest carries everything together.
-        if (currentState == TerroristState.Engage && _aimBone != null)
+        // ── 2) Spine-chain aim — bends the torso so the gun points at the player ───
+        // The gun barrel (shooter.firePoint) is a descendant of the spine
+        // (spine → chest → shoulder → arm → hand → gun). We spread the rotation
+        // needed to bring the barrel onto the player across the spine bones
+        // (low → high), re-measuring the barrel direction after each bone so the
+        // chain converges on the target. Distributing the twist keeps the
+        // two-handed grip intact and the head level — instead of one bone snapping
+        // ~90° (which is what tore the hand off the gun and pitched the face down).
+        if (useProceduralAim && currentState == TerroristState.Engage &&
+            _spineChain != null && shooter != null && shooter.firePoint != null)
         {
-            // Find the gun's current forward direction in world space.
-            // Prefer the actual fire point (most accurate barrel direction); fall back
-            // to weaponPivot, then to the aim bone's own forward as last resort.
-            Transform gunRef = null;
-            if (shooter != null && shooter.firePoint != null) gunRef = shooter.firePoint;
-            else if (weaponPivot != null)                     gunRef = weaponPivot;
+            Transform barrel  = shooter.firePoint;
+            Vector3   aimAt   = _lastSeenPlayer.position;
+            float     perBone = Mathf.Max(1f, maxAimAngle); // max degrees each bone may add
 
-            Vector3 currentForward = gunRef != null ? gunRef.forward : _aimBone.forward;
-            Vector3 desiredForward = (_lastSeenPlayer.position - _aimBone.position).normalized;
-
-            if (currentForward.sqrMagnitude > 0.001f && desiredForward.sqrMagnitude > 0.001f)
+            // Capture the animation's support-hand grip RELATIVE to the weapon BEFORE
+            // we bend the spine (the firing clip poses the left hand on the gun). After
+            // aiming we restore that same relative grip so the hand rides with the gun.
+            bool haveGrip = _leftHand != null && _leftForeArm != null && _leftUpperArm != null;
+            Vector3    gripLocalPos = Vector3.zero;
+            Quaternion gripLocalRot = Quaternion.identity;
+            if (haveGrip)
             {
-                // Rotation that maps current gun-forward → desired (player) direction.
-                Quaternion delta = Quaternion.FromToRotation(currentForward, desiredForward);
-
-                // Clamp magnitude so an awkward player position can't cause an extreme
-                // spine twist. Allow at least 70° so the gun can be brought onto the
-                // player even from a held-across-chest firing pose (GunplayShooting).
-                delta = Quaternion.RotateTowards(Quaternion.identity, delta,
-                                                 Mathf.Max(maxAimAngle, 70f));
-
-                // Apply additively to the chest's animator-driven rotation.
-                _aimBone.rotation = delta * _aimBone.rotation;
+                gripLocalPos = barrel.InverseTransformPoint(_leftHand.position);
+                gripLocalRot = Quaternion.Inverse(barrel.rotation) * _leftHand.rotation;
             }
+
+            foreach (Transform bone in _spineChain)
+            {
+                if (bone == null) continue;
+
+                Vector3 currentForward = barrel.forward;
+                Vector3 desiredForward = aimAt - barrel.position;
+                if (currentForward.sqrMagnitude < 1e-4f || desiredForward.sqrMagnitude < 1e-4f)
+                    continue;
+
+                Quaternion delta = Quaternion.FromToRotation(currentForward, desiredForward.normalized);
+                delta = Quaternion.RotateTowards(Quaternion.identity, delta, perBone);
+                bone.rotation = delta * bone.rotation; // reading barrel.forward next loop reflects this
+            }
+
+            // Re-lock the support hand to the same spot on the weapon.
+            if (haveGrip)
+            {
+                Vector3 gripWorld = barrel.TransformPoint(gripLocalPos);
+                SolveTwoBoneIK(_leftUpperArm, _leftForeArm, _leftHand, gripWorld, _leftForeArm.position);
+                _leftHand.rotation = barrel.rotation * gripLocalRot;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Analytic two-bone IK (canonical "two-joint" solution). Rotates <paramref name="upper"/>
+    /// and <paramref name="mid"/> so <paramref name="tip"/> reaches <paramref name="target"/>,
+    /// with <paramref name="hint"/> steering the elbow's pole direction. Used to keep the
+    /// terrorist's support hand welded to the rifle after the spine aims it.
+    /// </summary>
+    static void SolveTwoBoneIK(Transform upper, Transform mid, Transform tip,
+                               Vector3 target, Vector3 hint)
+    {
+        Vector3 a = upper.position, b = mid.position, c = tip.position, t = target;
+
+        float lab = (b - a).magnitude;
+        float lcb = (b - c).magnitude;
+        float lat = Mathf.Clamp((t - a).magnitude, 0.001f, lab + lcb - 0.001f);
+        if (lab < 1e-4f || lcb < 1e-4f) return;
+
+        float ac_ab_0 = Mathf.Acos(Mathf.Clamp(Vector3.Dot((c - a).normalized, (b - a).normalized), -1f, 1f));
+        float ba_bc_0 = Mathf.Acos(Mathf.Clamp(Vector3.Dot((a - b).normalized, (c - b).normalized), -1f, 1f));
+        float ac_at_0 = Mathf.Acos(Mathf.Clamp(Vector3.Dot((c - a).normalized, (t - a).normalized), -1f, 1f));
+
+        float ac_ab_1 = Mathf.Acos(Mathf.Clamp((lcb * lcb - lab * lab - lat * lat) / (-2f * lab * lat), -1f, 1f));
+        float ba_bc_1 = Mathf.Acos(Mathf.Clamp((lat * lat - lab * lab - lcb * lcb) / (-2f * lab * lcb), -1f, 1f));
+
+        Vector3 axis0 = Vector3.Cross(c - a, hint - a);
+        if (axis0.sqrMagnitude < 1e-8f) axis0 = Vector3.Cross(c - a, b - a);
+        axis0.Normalize();
+        Vector3 axis1 = Vector3.Cross(c - a, t - a);
+        if (axis1.sqrMagnitude < 1e-8f) axis1 = axis0; else axis1.Normalize();
+
+        Quaternion r0 = Quaternion.AngleAxis((ac_ab_1 - ac_ab_0) * Mathf.Rad2Deg,
+                                             Quaternion.Inverse(upper.rotation) * axis0);
+        Quaternion r1 = Quaternion.AngleAxis((ba_bc_1 - ba_bc_0) * Mathf.Rad2Deg,
+                                             Quaternion.Inverse(mid.rotation) * axis0);
+        Quaternion r2 = Quaternion.AngleAxis(ac_at_0 * Mathf.Rad2Deg,
+                                             Quaternion.Inverse(upper.rotation) * axis1);
+
+        upper.localRotation = upper.localRotation * r0 * r2;
+        mid.localRotation   = mid.localRotation * r1;
+    }
+
+    /// <summary>
+    /// Humanoid head/eye LookAt IK — makes the NPC physically turn its head (and lean
+    /// the torso a little) to look AT the player while alerted or fighting, instead of
+    /// staring straight ahead / down. Requires "IK Pass" on the animator base layer.
+    /// </summary>
+    void OnAnimatorIK(int layerIndex)
+    {
+        if (animator == null || !animator.isHuman) return;
+
+        bool watchPlayer =
+            _lastSeenPlayer != null && !_isInvestigating &&
+            (currentState == TerroristState.Engage ||
+             currentState == TerroristState.Alert  ||
+             currentState == TerroristState.TakeCover);
+
+        if (watchPlayer)
+        {
+            animator.SetLookAtPosition(_lastSeenPlayer.position);
+            // (overall, body, head, eyes, clamp) — head leads, torso follows a little.
+            animator.SetLookAtWeight(headLookWeight, headLookBodyWeight, 1f, 1f, 0.6f);
+        }
+        else
+        {
+            animator.SetLookAtWeight(0f);
         }
     }
 
@@ -738,6 +1200,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (prev == TerroristState.Engage && next != TerroristState.Engage)
         {
             shooter?.StopFiring();
+            StopCombatPositioning();
         }
 
         // ── Cancel pending Suspicious timeout ─────────────────────────────────
@@ -850,13 +1313,26 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // Leader coordination: an engaging Leader orders the squad to
                 // FLANK (spread to the threat's sides) while it holds the front.
                 IssueDirectiveIfLeader(trigger, LeaderDirectiveType.Flank);
-                FollowActiveDirective();
+                // Govern OUR OWN footing while firing: hold the standoff ring
+                // (HoldAndShoot) or relocate between cover (CoverAndPeek). This
+                // replaces blindly following a flank directive onto the player.
+                _nextCombatTickTime = Time.time + escalationCombatInterval;
+                StartCombatPositioning();
                 break;
 
             case TerroristState.Idle:
                 // Returning to patrol — drop any stale leader directive so we don't
                 // immediately re-route to an old threat position on the next alert.
                 _activeDirective = null;
+                // Guardians don't use the shared patrol/wander idle modes — their movement
+                // is the leashed GuardianRoamRoutine so they never drift off the hostage.
+                // Returning to patrol means it lost the trainee → let any held hostage go.
+                if (isHostageGuardian)
+                {
+                    if (guardedHostage != null && guardedHostage.IsHeld)
+                        guardedHostage.ReleaseFromHold();
+                    break;
+                }
                 switch (idleMode)
                 {
                     case IdleMode.Patrol:
@@ -887,12 +1363,283 @@ public class TerroristController : MonoBehaviour, INPCResponder
         }
     }
 
+    // ── Hostage leverage (guardian only) ────────────────────────────────────────
+
+    /// <summary>Per-frame guardian decision while it's hostile: fight normally by default,
+    /// but (a) execute instantly if the trainee rushes the hostage, and (b) fall back on the
+    /// human shield only once the situation turns high-pressure (escalated posture, wounded,
+    /// or the trainee closing in). Called from Update.</summary>
+    void GuardianPressureTick()
+    {
+        if (!isHostageGuardian) return;
+        // Only relevant while actively threatened.
+        if (currentState != TerroristState.Engage && currentState != TerroristState.Alert) return;
+        if (guardedHostage == null) guardedHostage = FindNearestHostage();
+        if (guardedHostage == null) return;
+        if (guardedHostage.currentState == HostageState.Down ||
+            guardedHostage.currentState == HostageState.Freed) return;
+
+        // ONLY decide to use the hostage while the guardian CURRENTLY sees the trainee.
+        // _lastSeenPlayer is the camera transform (its .position is always live), so it
+        // can't tell us LOS — _playerVisible does. No current sight → it just fights/searches,
+        // never grabbing or executing through a wall.
+        if (!_playerVisible || _lastSeenPlayer == null) return;
+        if (_leverageRoutine != null || guardedHostage.IsHeld) return;
+
+        Vector3 hostagePos = guardedHostage.transform.position;
+        Vector3 p = _lastSeenPlayer.position;
+        float distToHostage = Vector3.Distance(new Vector3(p.x, hostagePos.y, p.z), hostagePos);
+
+        // Reach for the shield only when the situation is genuinely high-pressure.
+        bool dangerClose  = distToHostage <= shieldTriggerRange;
+        bool highPressure = posture == CombatPosture.CoverAndPeek ||
+                            currentHealth <= retreatHealthThreshold ||
+                            dangerClose;
+        if (highPressure)
+        {
+            Debug.Log($"[TerroristController] {gameObject.name}: high-pressure (posture={posture}, " +
+                      $"hp={currentHealth:F0}, dangerClose={dangerClose}) — grabbing the hostage as a shield.");
+            StartHostageLeverage();
+        }
+    }
+
+    /// <summary>Begin the leverage sequence: seize the guarded hostage as a human shield
+    /// and start the execution countdown. Called when a guardian first becomes aware of the
+    /// trainee (Alert/Engage). Idempotent — safe to call every time those states are entered.</summary>
+    void StartHostageLeverage()
+    {
+        if (!isHostageGuardian) return;
+        if (guardedHostage == null) guardedHostage = FindNearestHostage();  // lazy auto-bind
+        if (guardedHostage == null) return;
+        if (_leverageRoutine != null) return;                       // already running
+        if (guardedHostage.currentState == HostageState.Down ||
+            guardedHostage.currentState == HostageState.Freed) return;
+        _leverageRoutine = StartCoroutine(HostageLeverageRoutine());
+    }
+
+    HostageController FindNearestHostage()
+    {
+        HostageController best = null;
+        float bestSqr = float.MaxValue;
+        foreach (var npc in NPCRegistry.GetAll())
+        {
+            if (npc is HostageController hc &&
+                hc.currentState != HostageState.Down &&
+                hc.currentState != HostageState.Freed)
+            {
+                float d = (hc.transform.position - transform.position).sqrMagnitude;
+                if (d < bestSqr) { bestSqr = d; best = hc; }
+            }
+        }
+        return best;
+    }
+
+    IEnumerator HostageLeverageRoutine()
+    {
+        // Seize the hostage: it kneels at gunpoint and stops reacting to ambient stimuli.
+        guardedHostage.SeizeAsLeverage(this);
+        Debug.Log($"[TerroristController] {gameObject.name}: seized {guardedHostage.NPCId} as a shield — " +
+                  $"it will warn if you close in, and execute if you push past the warning (or after ~{executionCountdown:F0}s).");
+
+        float threat = 0f;
+        bool  warnedOnce = false;
+
+        while (guardedHostage != null && guardedHostage.IsHeld && currentState != TerroristState.Down)
+        {
+            // Guardian disengaged (gave up, lost the trainee, back to patrol) → let the
+            // hostage go. A guardian that isn't in an active standoff does not execute.
+            if (currentState != TerroristState.Engage &&
+                currentState != TerroristState.Alert  &&
+                currentState != TerroristState.TakeCover)
+            {
+                guardedHostage.ReleaseFromHold();
+                break;
+            }
+
+            Vector3 hostagePos = guardedHostage.transform.position;
+
+            // The whole graduated threat runs ONLY while the guardian currently SEES the
+            // trainee. No line of sight → warning drops, countdown pauses (it can't track).
+            if (_playerVisible && _lastSeenPlayer != null)
+            {
+                Vector3 p = _lastSeenPlayer.position;
+                float distPH = Vector3.Distance(new Vector3(p.x, hostagePos.y, p.z), hostagePos);
+
+                if (distPH <= executeRange)
+                {
+                    // Trainee pushed past the warning into the kill range → shoot the hostage.
+                    ExecuteHostage("trainee_pushed_in");
+                    yield break;
+                }
+                else if (distPH <= warningRange)
+                {
+                    // WARNING beat — turn and aim AT the hostage so the trainee sees the threat.
+                    if (!_hostageWarning)
+                    {
+                        _hostageWarning = true;
+                        shooter?.StopFiring();  // stop shooting the trainee — threaten the hostage instead
+                        if (!warnedOnce)
+                        {
+                            warnedOnce = true;
+                            Debug.LogWarning($"[TerroristController] {gameObject.name}: WARNING — aiming at " +
+                                             $"{guardedHostage.NPCId}. Trainee too close — back off or it dies.");
+                        }
+                    }
+                }
+                else
+                {
+                    // SHIELD beat — standoff distance: use the hostage as cover, keep firing at the trainee.
+                    if (_hostageWarning)
+                    {
+                        _hostageWarning = false;
+                        shooter?.StartFiring();
+                    }
+                    if (agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh)
+                    {
+                        Vector3 away = hostagePos - p; away.y = 0f;
+                        if (away.sqrMagnitude > 0.0001f)
+                        {
+                            Vector3 shieldPos = hostagePos + away.normalized * shieldStandoff;
+                            if (Vector3.Distance(transform.position, shieldPos) > 0.5f)
+                            {
+                                agent.isStopped = false;
+                                agent.SetDestination(shieldPos);
+                            }
+                        }
+                    }
+                }
+
+                // Standoff backstop — held in view too long without being neutralised.
+                threat += Time.deltaTime;
+                if (threat >= executionCountdown)
+                {
+                    ExecuteHostage("standoff_expired");
+                    yield break;
+                }
+            }
+            else
+            {
+                // Lost sight — drop the warning beat; countdown paused (doesn't accrue).
+                _hostageWarning = false;
+            }
+
+            yield return null;
+        }
+
+        _hostageWarning = false;
+        _leverageRoutine = null;
+    }
+
+    void ExecuteHostage(string cause)
+    {
+        _leverageRoutine = null;
+        _hostageWarning = false;
+        if (guardedHostage == null) return;
+        Debug.LogWarning($"[TerroristController] {gameObject.name}: EXECUTING {guardedHostage.NPCId} ({cause}).");
+        shooter?.StopFiring();
+        guardedHostage.Execute(this);
+    }
+
+    // ── Guardian leashed roam (patrol around hostage / suspicious search) ─────────
+
+    /// <summary>Keeps a guardian moving realistically around its hostage WITHOUT ever
+    /// leaving it: a gentle patrol within guardPatrolRadius while relaxed, and a tenser
+    /// search within guardLeashRadius while Suspicious/Alert. Never runs during combat
+    /// (Engage holds & fights) or while the hostage is seized as a shield.</summary>
+    IEnumerator GuardianRoamRoutine()
+    {
+        while (guardedHostage == null)
+        {
+            guardedHostage = FindNearestHostage();
+            if (guardedHostage == null) yield return new WaitForSeconds(0.5f);
+        }
+
+        while (currentState != TerroristState.Down)
+        {
+            bool relaxed    = currentState == TerroristState.Idle;
+            bool suspicious = currentState == TerroristState.Suspicious ||
+                              currentState == TerroristState.Alert;
+
+            if ((!relaxed && !suspicious) ||
+                guardedHostage == null ||
+                guardedHostage.currentState == HostageState.Down ||
+                guardedHostage.IsHeld ||
+                agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh)
+            {
+                yield return new WaitForSeconds(0.4f);
+                continue;
+            }
+
+            Vector3 anchor = guardedHostage.transform.position;
+            float radius = suspicious ? guardLeashRadius : guardPatrolRadius;
+
+            if (TryPickPointAround(anchor, radius, out Vector3 target))
+            {
+                agent.isStopped = false;
+                agent.SetDestination(target);
+
+                float t = 0f;
+                while (t < 6f &&
+                       (currentState == TerroristState.Idle ||
+                        currentState == TerroristState.Suspicious ||
+                        currentState == TerroristState.Alert) &&
+                       !guardedHostage.IsHeld &&
+                       agent.isActiveAndEnabled && !agent.pathPending &&
+                       agent.remainingDistance > agent.stoppingDistance + 0.25f)
+                {
+                    // Hard leash — never stray beyond the leash from the hostage.
+                    if (Vector3.Distance(transform.position, guardedHostage.transform.position) > guardLeashRadius + 1f)
+                        agent.SetDestination(guardedHostage.transform.position);
+                    t += Time.deltaTime;
+                    yield return null;
+                }
+                if (agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+            }
+
+            // Hold and watch between moves — brief/tense when suspicious, longer when relaxed.
+            float dwell = suspicious ? Random.Range(1.5f, 3f) : Random.Range(3f, 7f);
+            float waited = 0f;
+            while (waited < dwell &&
+                   (currentState == TerroristState.Idle ||
+                    currentState == TerroristState.Suspicious ||
+                    currentState == TerroristState.Alert) &&
+                   !guardedHostage.IsHeld)
+            {
+                waited += Time.deltaTime;
+                yield return null;
+            }
+        }
+        _guardRoamRoutine = null;
+    }
+
+    bool TryPickPointAround(Vector3 center, float radius, out Vector3 result)
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            Vector2 r = Random.insideUnitCircle * radius;
+            Vector3 candidate = center + new Vector3(r.x, 0f, r.y);
+            if (UnityEngine.AI.NavMesh.SamplePosition(candidate, out var hit, 2f, UnityEngine.AI.NavMesh.AllAreas))
+            {
+                result = hit.position;
+                return true;
+            }
+        }
+        result = center;
+        return false;
+    }
+
     // ── Down state ────────────────────────────────────────────────────────────
 
     void EnterDownState(ScenarioEvent trigger)
     {
         // Stop all combat
         shooter?.StopFiring();
+
+        // A dying guardian can no longer hold its hostage at gunpoint — release it so
+        // the trainee can reach and escort it out. (StopAllCoroutines below kills the
+        // leverage loop; this drops the hostage out of Held.)
+        if (isHostageGuardian && guardedHostage != null && guardedHostage.IsHeld)
+            guardedHostage.ReleaseFromHold();
 
         // Stop ALL active routines so the body doesn't keep wandering / patrolling / investigating.
         StopAllCoroutines();
@@ -1360,12 +2107,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// </summary>
     public void InvestigatePosition(Vector3 soundPos, bool allowEscalation = false)
     {
-        // Guardian never leaves the hostage to investigate.
-        if (isHostageGuardian) return;
-        if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
+        // Guardian never leaves the hostage to investigate — its search is the leashed
+        // GuardianRoamRoutine, so it just declines here (silently; this fires on every
+        // gunshot and used to spam the console).
+        if (isHostageGuardian)
+            return;
+        if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh)
+        {
+            Debug.LogWarning($"[TerroristController] {gameObject.name}: InvestigatePosition ABORTED — NavMeshAgent unusable " +
+                             $"(agent={(agent == null ? "null" : "present")}, " +
+                             $"active={(agent != null && agent.isActiveAndEnabled)}, " +
+                             $"onNavMesh={(agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh)}). NPC cannot walk to investigate.");
+            return;
+        }
         // Allow both Suspicious (gunshot) and Alert (squad-member down) investigations
-        if (currentState != TerroristState.Suspicious && currentState != TerroristState.Alert) return;
+        if (currentState != TerroristState.Suspicious && currentState != TerroristState.Alert)
+        {
+            Debug.Log($"[TerroristController] {gameObject.name}: InvestigatePosition skipped — state is {currentState}, " +
+                      "not Suspicious/Alert (only those investigate).");
+            return;
+        }
 
+        Debug.Log($"[TerroristController] {gameObject.name}: InvestigatePosition ACCEPTED → walking to {soundPos:F1} " +
+                  $"(state={currentState}, allowEscalation={allowEscalation}).");
         _pendingEscalation = allowEscalation;
         if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
         _investigateRoutine = StartCoroutine(InvestigateRoutine(soundPos));
@@ -1630,14 +2394,17 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (_activeDirective == null) return;
         if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
 
+        Vector3 target = _activeDirective.TargetPosition;
         switch (_activeDirective.Type)
         {
             case LeaderDirectiveType.Converge:
-                agent.SetDestination(_activeDirective.TargetPosition);
+                // Close on the threat but stop on the standoff ring — never on top of the player.
+                agent.SetDestination(ApproachRingPoint(target));
                 break;
 
             case LeaderDirectiveType.Flank:
-                agent.SetDestination(ComputeFlankPoint(_activeDirective.TargetPosition));
+                // Flank to the side, then ensure the chosen point isn't inside the standoff ring.
+                agent.SetDestination(EnforceStandoff(ComputeFlankPoint(target), target));
                 break;
 
             case LeaderDirectiveType.Hold:

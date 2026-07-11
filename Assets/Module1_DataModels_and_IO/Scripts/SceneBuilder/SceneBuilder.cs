@@ -35,6 +35,7 @@ using TeamSentinels.ScenarioGeneration.DataModels;
 using TeamSentinels.ScenarioGeneration.IO;
 using Unity.AI.Navigation;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace TeamSentinels.ScenarioGeneration.Scene
 {
@@ -329,6 +330,8 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 // it is not close enough to the NavMesh" and leaves agents dead
                 // (NPCs can shoot but never walk).
                 BakeNavMesh();
+                BuildDoorNavLinks(scenario);
+                LogNavMeshConnectivity(scenario);
                 SpawnHostages(scenario);
                 SpawnTerrorists(scenario);
 
@@ -1333,8 +1336,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            traineeRig.position = World(t.position.ToVector3());
+            Vector3 spawnPos = World(t.position.ToVector3());
+            traineeRig.position = spawnPos;
             traineeRig.rotation = LookRotation(t.facingDirection);
+            Debug.Log($"[SceneBuilder] Trainee spawned at Module 1 position {spawnPos:F1} " +
+                      $"(entry room, facing {t.facingDirection.ToVector3():F1}).");
         }
 
         private void SpawnHostages(ScenarioData scenario)
@@ -1393,7 +1399,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             TraineeSpawnPoint t = scenario.spawnPoints?.trainee;
             if (t == null) return;
 
-            Vector3 pos = t.position.ToVector3();
+            // Apply the same per-build world offset the trainee/building use, so the
+            // extraction zone stays co-located with the (Module 1) trainee spawn.
+            // Without World(), the zone sits at the un-offset origin — up to
+            // buildOffset (20 m) away from where the trainee actually spawns.
+            Vector3 pos = World(t.position.ToVector3());
 
             _safeZone = new GameObject("SafeZone_Extraction");
             _safeZone.transform.position = pos;
@@ -1599,6 +1609,16 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         {
             if (_roomsRoot == null) return;
 
+            // The perimeter-corridor floor bridges the rooms at every doorway, but
+            // it is built under its own root (PerimeterCorridor), a SIBLING of Rooms.
+            // CollectObjects.Children on the Rooms surface would exclude it, leaving
+            // each room's NavMesh an isolated island that NPCs can't path across —
+            // which is exactly why terrorists couldn't move room-to-room / through
+            // doors. Parent the corridor under Rooms for the bake so it's voxelised
+            // too and the rooms connect. (It's cleared each rebuild via Rooms.)
+            if (_corridorRoot != null && _corridorRoot.parent != _roomsRoot)
+                _corridorRoot.SetParent(_roomsRoot, worldPositionStays: true);
+
             _navMeshSurface = _roomsRoot.GetComponent<NavMeshSurface>();
             if (_navMeshSurface == null)
                 _navMeshSurface = _roomsRoot.gameObject.AddComponent<NavMeshSurface>();
@@ -1625,6 +1645,110 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 Debug.LogWarning($"[SceneBuilder] NavMesh bake failed: {ex.Message}. " +
                                  $"NPCs will not navigate but the scene will still load.");
+            }
+        }
+
+        /// <summary>
+        /// Drops a NavMeshLink across every doorway so the two rooms' NavMeshes are
+        /// explicitly stitched together. The generated rooms sit with a ~2 m gap
+        /// between their floors (walls meet on a shared plane, but each room's floor
+        /// slab stops short), so the baked NavMesh is a set of disconnected islands
+        /// and agents can't path room-to-room. A NavMeshLink bridges each opening
+        /// regardless of the floor gap — the robust, geometry-independent fix.
+        ///
+        /// Runs AFTER the bake so the link endpoints land on the freshly-baked mesh.
+        /// One link per undirected door pair; parented to Rooms so it's cleared on
+        /// rebuild. Links carry every door (incl. locked) — terrorists traverse all
+        /// doors; a locked door only blocks the trainee (its hinge stays clamped).
+        /// </summary>
+        private void BuildDoorNavLinks(ScenarioData scenario)
+        {
+            if (scenario.layout?.rooms == null) return;
+
+            var placed = new HashSet<string>();
+            int count = 0;
+
+            foreach (RoomData room in scenario.layout.rooms)
+            {
+                if (room.doors == null) continue;
+
+                foreach (DoorData door in room.doors)
+                {
+                    string key = MakeDoorPairKey(room.id, door.connectsToRoomId);
+                    if (!placed.Add(key)) continue; // reciprocal already linked
+
+                    Vector3 p = World(door.position.ToVector3());
+                    p.y = _buildOffset.y; // floor level
+
+                    // The link spans PERPENDICULAR to the wall the door sits in:
+                    // North/South walls run along X → cross along Z; East/West → along X.
+                    bool crossAlongZ = door.wallSide == WallSide.North ||
+                                       door.wallSide == WallSide.South;
+                    Vector3 span = crossAlongZ ? Vector3.forward : Vector3.right;
+
+                    // Reach far enough past the shared wall plane to land inside each
+                    // room's NavMesh (half the corridor gap + into the room interior).
+                    float reach = CorridorGap * 0.5f + 1.5f;
+
+                    var go = new GameObject($"DoorNavLink_{door.id}");
+                    go.transform.SetParent(_roomsRoot, worldPositionStays: true);
+                    go.transform.position = p;
+
+                    var link = go.AddComponent<NavMeshLink>();
+                    link.startPoint    = -span * reach; // local space (identity rotation)
+                    link.endPoint      =  span * reach;
+                    link.width         = Mathf.Max(1.2f, _doorOpeningWidth);
+                    link.bidirectional = true;
+                    link.area          = 0; // built-in Walkable
+                    link.UpdateLink();
+
+                    count++;
+                }
+            }
+
+            Debug.Log($"[SceneBuilder] Placed {count} NavMeshLink(s) across doorways to connect the rooms.");
+        }
+
+        /// <summary>
+        /// One-shot NavMesh connectivity probe, logged right after the bake (before
+        /// any combat/spam). For each terrorist spawn it asks the NavMesh whether a
+        /// path exists to the trainee spawn. PathComplete = rooms are linked and the
+        /// terrorist CAN walk to you; PathPartial/Invalid = the NavMesh is severed
+        /// between their room and yours (they physically cannot reach you no matter
+        /// what the AI decides). This is the definitive "are the doors connected?"
+        /// answer, independent of any behaviour.
+        /// </summary>
+        private void LogNavMeshConnectivity(ScenarioData scenario)
+        {
+            TraineeSpawnPoint t = scenario.spawnPoints?.trainee;
+            List<NpcSpawnPoint> terrorists = scenario.spawnPoints?.terrorists;
+            if (t == null || terrorists == null) return;
+
+            Vector3 traineeWorld = World(t.position.ToVector3());
+            if (!NavMesh.SamplePosition(traineeWorld, out NavMeshHit traineeHit, 4f, NavMesh.AllAreas))
+            {
+                Debug.LogWarning($"[NavCheck] Trainee spawn {traineeWorld:F1} is NOT on the NavMesh — cannot test connectivity.");
+                return;
+            }
+
+            foreach (NpcSpawnPoint sp in terrorists)
+            {
+                Vector3 tWorld = World(sp.position.ToVector3());
+                if (!NavMesh.SamplePosition(tWorld, out NavMeshHit tHit, 4f, NavMesh.AllAreas))
+                {
+                    Debug.LogWarning($"[NavCheck] {sp.entityId} spawn {tWorld:F1} is NOT on the NavMesh " +
+                                     "(agent will fail to attach / can't move).");
+                    continue;
+                }
+
+                var path = new NavMeshPath();
+                NavMesh.CalculatePath(tHit.position, traineeHit.position, NavMesh.AllAreas, path);
+                float dist = Vector3.Distance(tHit.position, traineeHit.position);
+                string verdict = path.status == NavMeshPathStatus.PathComplete
+                    ? "CONNECTED — can walk to trainee"
+                    : "BLOCKED — NavMesh severed between this room and the trainee's";
+                Debug.Log($"[NavCheck] {sp.entityId} → trainee: {path.status} " +
+                          $"(straight-line {dist:F1}m, path corners={path.corners.Length}) → {verdict}");
             }
         }
 

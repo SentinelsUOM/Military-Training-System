@@ -76,6 +76,15 @@ public class HostageController : MonoBehaviour, INPCResponder
     [Header("Debug — read-only in Play mode")]
     public HostageState currentState = HostageState.Calm;
 
+    /// <summary>Raised exactly once when this hostage dies — whether by trainee
+    /// friendly-fire (TakeHit) or a guardian execution (Execute). Module4SessionController
+    /// subscribes to end the mission as an immediate FAIL and tag the cause.</summary>
+    public event System.Action<HostageController> OnKilled;
+
+    /// <summary>True when a terrorist executed this hostage (vs. trainee friendly-fire).
+    /// Lets the session tag the outcome as "hostage_executed" for the AAR.</summary>
+    public bool WasExecuted { get; private set; }
+
     // ── INPCResponder ─────────────────────────────────────────────────────────
 
     public string  NPCId            => gameObject.name;
@@ -100,6 +109,10 @@ public class HostageController : MonoBehaviour, INPCResponder
         // Terminal states — no further reactions
         if (currentState == HostageState.Freed) return false;
         if (currentState == HostageState.Down)  return false;
+        // Held at gunpoint — the guardian fully controls this hostage. It ignores
+        // ambient stimuli; only ReleaseFromHold()/Execute() (driven by the guardian)
+        // or its death move it out of this state.
+        if (currentState == HostageState.Held)  return false;
 
         switch (e.Type)
         {
@@ -221,6 +234,44 @@ public class HostageController : MonoBehaviour, INPCResponder
             _injured = true; // Update() pushes this to the animator → injured walk
     }
 
+    // ── Leverage (guardian control) ─────────────────────────────────────────────
+
+    /// <summary>A guardian terrorist seizes this hostage as leverage: it kneels at
+    /// gunpoint (Held) and stops reacting to ambient stimuli until released, executed,
+    /// or its captor dies. No-op if the hostage is already terminal.</summary>
+    public void SeizeAsLeverage(TerroristController captor)
+    {
+        if (currentState == HostageState.Down || currentState == HostageState.Freed) return;
+        if (currentState == HostageState.Held && _captor == captor) return;
+        _captor = captor;
+        TransitionTo(HostageState.Held, null);
+    }
+
+    /// <summary>Release a held hostage (e.g. the captor was killed). Drops it back to
+    /// Fearful so the trainee can then make contact and escort it out. No-op unless Held.</summary>
+    public void ReleaseFromHold()
+    {
+        if (currentState != HostageState.Held) return;
+        _captor = null;
+        TransitionTo(HostageState.Fearful, null);
+    }
+
+    /// <summary>The guardian executes this hostage — an instant, unavoidable kill used
+    /// as the leverage payoff. Terrorist weapons otherwise can't harm hostages, so this
+    /// is the only terrorist→hostage lethal path. Ends in Down + OnKilled(executed).</summary>
+    public void Execute(TerroristController by)
+    {
+        if (currentState == HostageState.Down || currentState == HostageState.Freed) return;
+        WasExecuted = true;
+        _currentHealth = 0f;
+        Debug.LogWarning($"[HostageController] {NPCId} EXECUTED by " +
+                         $"{(by != null ? by.gameObject.name : "guardian")} — mission failure.");
+        TransitionTo(HostageState.Down, null);
+    }
+
+    /// <summary>True while a live guardian is holding this hostage at gunpoint.</summary>
+    public bool IsHeld => currentState == HostageState.Held;
+
     // ── Private state ─────────────────────────────────────────────────────────
 
     float       _lastResponseTime = -99f;
@@ -232,10 +283,14 @@ public class HostageController : MonoBehaviour, INPCResponder
     Vector3     _lastAnimPos;
     float       _currentHealth;
     bool        _injured;
+    bool        _killedFired;              // guards OnKilled against double-firing
+    TerroristController _captor;           // guardian holding this hostage as leverage (null if free)
     bool        _hasSpeedParam;
     bool        _hasInjuredParam;
+    bool        _hasHeldParam;
     static readonly int _animSpeed   = Animator.StringToHash("Speed");
     static readonly int _animInjured = Animator.StringToHash("Injured");
+    static readonly int _animHeld    = Animator.StringToHash("Held");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -259,6 +314,7 @@ public class HostageController : MonoBehaviour, INPCResponder
             {
                 if (p.nameHash == _animSpeed)   _hasSpeedParam   = true;
                 if (p.nameHash == _animInjured) _hasInjuredParam = true;
+                if (p.nameHash == _animHeld)    _hasHeldParam    = true;
             }
             if (!_hasSpeedParam)
                 Debug.LogWarning($"[HostageController] {NPCId}: Animator has no 'Speed' param — " +
@@ -331,6 +387,12 @@ public class HostageController : MonoBehaviour, INPCResponder
         {
             if (_freezeCheckRoutine != null) { StopCoroutine(_freezeCheckRoutine); _freezeCheckRoutine = null; }
         }
+        if (prev == HostageState.Held && next != HostageState.Down)
+        {
+            if (_hasHeldParam) _animator?.SetBool(_animHeld, false);
+            else               scareController?.SetScared(false);
+            if (_agent != null && _agent.isActiveAndEnabled) _agent.isStopped = false;
+        }
 
         // ── Behaviours for new state ──────────────────────────────────────────
         switch (next)
@@ -358,6 +420,26 @@ public class HostageController : MonoBehaviour, INPCResponder
                 _followRoutine = StartCoroutine(FollowRoutine());
                 break;
 
+            case HostageState.Held:
+                // Seized as leverage — kneel/hands-up at gunpoint, frozen in place.
+                // Uses the dedicated 'Held' animator state if the controller has one,
+                // otherwise falls back to the Scared cower so it still reads as captive.
+                if (_agent != null && _agent.isActiveAndEnabled)
+                {
+                    _agent.isStopped = true;
+                    _agent.ResetPath();
+                }
+                if (_hasHeldParam) _animator?.SetBool(_animHeld, true);
+                else               scareController?.SetScared(true);
+                // Face the captor if we have one, so the "at gunpoint" read is clear.
+                if (_captor != null)
+                {
+                    Vector3 look = _captor.transform.position; look.y = transform.position.y;
+                    if ((look - transform.position).sqrMagnitude > 0.01f)
+                        transform.rotation = Quaternion.LookRotation(look - transform.position);
+                }
+                break;
+
             case HostageState.Calm:
                 scareController?.SetScared(false);
                 runawayController?.OnGunfire(false);
@@ -371,6 +453,7 @@ public class HostageController : MonoBehaviour, INPCResponder
                 // Shot dead (training failure). Stop everything, play death, and
                 // turn the body into a non-blocking corpse.
                 scareController?.SetScared(false);
+                if (_hasHeldParam) _animator?.SetBool(_animHeld, false);
                 if (_freezeCheckRoutine != null) { StopCoroutine(_freezeCheckRoutine); _freezeCheckRoutine = null; }
                 if (_agent != null && _agent.isActiveAndEnabled)
                 {
@@ -381,6 +464,12 @@ public class HostageController : MonoBehaviour, INPCResponder
                 _animator?.SetTrigger("Death");
                 foreach (var col in GetComponentsInChildren<Collider>())
                     if (col != null && !col.isTrigger) col.enabled = false;
+                // Notify listeners once (Module4SessionController → immediate FAIL).
+                if (!_killedFired)
+                {
+                    _killedFired = true;
+                    OnKilled?.Invoke(this);
+                }
                 break;
         }
     }

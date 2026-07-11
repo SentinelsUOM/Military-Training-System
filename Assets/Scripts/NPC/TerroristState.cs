@@ -14,3 +14,13 @@ public enum TerroristState
     Retreat,     // Health low — falling back away from the threat (once per life)
     Down,        // Terminal — health reached 0; no further responses
 }
+
+/// <summary>
+/// How a terrorist carries itself in a firefight. Starts disciplined and
+/// degrades toward caution as casualties / stress mount — a simple morale model.
+/// </summary>
+public enum CombatPosture
+{
+    HoldAndShoot,  // First contact: stand at a standoff distance and return fire
+    CoverAndPeek,  // Escalated: relocate between cover points, peek and fire
+}
