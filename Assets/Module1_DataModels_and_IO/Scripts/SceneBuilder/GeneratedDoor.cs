@@ -99,7 +99,12 @@ public class GeneratedDoor : MonoBehaviour
     {
         bool grabbed     = grab != null && grab.isSelected;
         bool npcPresent  = _aiHold || NpcInDoorway();
-        bool wantNpcOpen = npcPresent && state != DoorState.Locked && !grabbed;
+        // NPCs auto-open EVERY door, including locked ones — the building is
+        // theirs, so a lock is only an obstacle for the trainee (whose grab
+        // pushes against the clamped hinge and can't move it until Unlock()).
+        // The NPC drive is kinematic, so it swings a locked leaf aside regardless
+        // of the hinge clamp; grabbed still yields priority to the trainee's hands.
+        bool wantNpcOpen = npcPresent && !grabbed;
 
         // The trainee's grab takes priority; the NPC kinematic assist only runs
         // when no hand is holding the door.
@@ -171,13 +176,17 @@ public class GeneratedDoor : MonoBehaviour
         }
     }
 
-    // Carving obstacle tracks the open state so NPC pathing matches what the
-    // trainee sees. The leaf swings aside when open, so it stops blocking.
+    // NPCs traverse EVERY door, so the NavMesh is never severed for agents — the
+    // carving obstacle stays disabled at all times. (Carving cut the NavMesh
+    // across the doorway before an NPC could reach the sensor that opens it — a
+    // chicken-and-egg that dead-ended the agent's path and trapped it in its
+    // room.) A locked door remains an obstacle for the TRAINEE only: its hinge
+    // stays clamped shut (see ConfigureHingeLimits) so the trainee can't push
+    // through until Unlock(), while NPCs auto-open it kinematically and pass.
     private void UpdateBlocking(float angle)
     {
-        bool open = angle >= openThreshold;
-        if (navObstacle != null && navObstacle.enabled == open)
-            navObstacle.enabled = !open;
+        if (navObstacle != null && navObstacle.enabled)
+            navObstacle.enabled = false;
     }
 
     // Only the trainee physically swinging a door raises the alert; the NPC

@@ -101,4 +101,10 @@ const SessionSchema = new mongoose.Schema(
   { timestamps: true }
 )
 
+// The sessions list is sorted newest-first (sort: { createdAt: -1 }). Without an index
+// on createdAt, MongoDB loads and sorts every document in memory and aborts once the
+// sort exceeds 32MB ("QueryExceededMemoryLimitNoDiskUseAllowed"). This index lets the
+// sort be served straight from the index instead.
+SessionSchema.index({ createdAt: -1 })
+
 export default mongoose.models.Session || mongoose.model('Session', SessionSchema)

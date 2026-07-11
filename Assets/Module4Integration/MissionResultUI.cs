@@ -85,6 +85,7 @@ public class MissionResultUI : MonoBehaviour
             case "hostages_rescued": return "All hostages extracted safely.";
             case "player_down":      return "You were killed in action.";
             case "hostage_killed":   return "A hostage was killed — friendly fire is a mission failure.";
+            case "hostage_executed": return "The captor executed the hostage — you were too slow or too aggressive.";
             case "timeout":          return "Time expired before extraction.";
             default:                 return "Session ended.";
         }

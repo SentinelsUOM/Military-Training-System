@@ -19,7 +19,19 @@
       "Bash(rm -rf \".claude/.claude.LOCAL_BACKUP\" 2>&1; echo \"---\"; ls -la .claude/; echo \"---\"; git status --short)",
       "Bash(cat .env.local.example)",
       "Bash(rm -f \"Assets/Module4Integration/Editor/Module4ManagerSetup.cs\" \"Assets/Module4Integration/Editor/Module4ManagerSetup.cs.meta\")",
-      "Bash(rmdir \"Assets/Module4Integration/Editor\")"
+      "Bash(rmdir \"Assets/Module4Integration/Editor\")",
+      "Read(//c/Users/navin/AppData/Local/Unity/Editor/**)",
+      "WebFetch(domain:github.com)",
+      "PowerShell(powershell -c \"irm https://astral.sh/uv/install.ps1 | iex\")",
+      "Bash([ -e \"$f\" ])",
+      "mcp__UnityMCP__read_console",
+      "mcp__UnityMCP__find_gameobjects",
+      "Bash(awk 'NR<=313 && /m_Script:/{ln=NR; s=$0} END{print \"last m_Script before 313 at line \"ln\": \"s}' \"Assets/Prefabs/TerroristNPC.prefab\")",
+      "WebSearch",
+      "mcp__UnityMCP__refresh_unity",
+      "mcp__UnityMCP__execute_code",
+      "Bash(cd \"c:/Users/navin/Downloads/Military-Training-System\"; echo \"=== parent-level react copies \\(should be none outside sentinels-aar\\) ===\"; find . -maxdepth 4 -type d -name react -path \"*/node_modules/react\" 2>/dev/null | grep -v \"sentinels-aar/node_modules/react/node_modules\" | head; echo \"=== react version in sentinels-aar ===\"; cat sentinels-aar/node_modules/react/package.json 2>/dev/null | grep '\"version\"'; cat sentinels-aar/node_modules/react-dom/package.json 2>/dev/null | grep '\"version\"'; echo \"=== stray package.json at project root? ===\"; ls sentinels-aar/../package.json 2>/dev/null || echo \"no root package.json\")",
+      "Read(//c/Users/navin/Downloads/Military-Training-System/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Navindu\\Documents\\GitHub\\Military-Training-System\\.claude",

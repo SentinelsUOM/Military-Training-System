@@ -76,6 +76,11 @@ public class Module4SessionController : MonoBehaviour
     [Tooltip("Actor id used for the player in replay frames.")]
     [SerializeField] private string playerActorId = "trainee_01";
 
+    // Latches once a mission has ended (pass or fail) so auto-start triggers can't
+    // immediately spin up a fresh session that re-detects the dead hostage and ends
+    // again, looping "MissionEnded" every frame. Reset naturally on scene reload.
+    private bool _missionEnded;
+
     private void OnEnable()
     {
         EventManager.OnEventRaised += HandleScenarioEvent;
@@ -148,12 +153,17 @@ public class Module4SessionController : MonoBehaviour
             return;
         }
 
-        // Hostage killed check — poll the registry for any hostage that has died
-        // (HostageController.TakeHit drives it to Down at 0 HP, but raises no event).
-        if (endWhenHostageKilled && AnyHostageKilled())
+        // Hostage killed check — poll the registry for any hostage that has died.
+        // Distinguish a guardian EXECUTION (leverage payoff) from trainee friendly-fire
+        // so the after-action report shows the real cause.
+        if (endWhenHostageKilled)
         {
-            EndSession("hostage_killed");
-            return;
+            var dead = FirstDeadHostage();
+            if (dead != null)
+            {
+                EndSession(dead.WasExecuted ? "hostage_executed" : "hostage_killed");
+                return;
+            }
         }
 
         // Mission timeout check
@@ -170,6 +180,11 @@ public class Module4SessionController : MonoBehaviour
     [ContextMenu("Start Session")]
     public void StartSession()
     {
+        if (_missionEnded)
+        {
+            // Mission already resolved this scene load — don't restart into an instant re-fail.
+            return;
+        }
         if (SessionLogger.Instance == null)
         {
             Debug.LogError("[Module4SessionController] SessionLogger.Instance is null.");
@@ -239,6 +254,7 @@ public class Module4SessionController : MonoBehaviour
 
         if (replayRecorder != null) replayRecorder.StopRecording();
 
+        _missionEnded = true;
         Debug.Log($"[Module4SessionController] Ending session — reason: {reason}");
         SessionLogger.Instance.EndSession();
         // OnSessionComplete fires inside EndSession() → DashboardUploader & WebReportExporter pick it up.
@@ -320,15 +336,15 @@ public class Module4SessionController : MonoBehaviour
         }
     }
 
-    private bool AnyHostageKilled()
+    private HostageController FirstDeadHostage()
     {
         var all = NPCRegistry.GetAll();
         foreach (var npc in all)
         {
             if (npc is HostageController hc && hc.currentState == HostageState.Down)
-                return true;
+                return hc;
         }
-        return false;
+        return null;
     }
 
     private bool AllHostagesFreed()
