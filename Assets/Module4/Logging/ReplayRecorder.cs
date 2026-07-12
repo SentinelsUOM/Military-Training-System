@@ -17,7 +17,14 @@ namespace TeamSentinels.Module4.Logging
     {
         #region Data
 
-        [SerializeField] private float recordInterval = 0.1f;
+        [Tooltip("Seconds between replay samples. 0.1s x 5 actors = 50 frames/sec, which blew the " +
+                 "session JSON up to 11 MB and made the dashboard POST take 16 minutes. 0.5s is " +
+                 "ample for a replay path.")]
+        [SerializeField] private float recordInterval = 0.5f;
+
+        [Tooltip("Hard cap on replay frames. On reaching it the recorder halves the data and the " +
+                 "sample rate instead of growing forever, so the uploaded payload stays bounded.")]
+        [SerializeField] private int maxFrames = 4000;
 
         private readonly List<ReplayFrame> _frames = new List<ReplayFrame>();
 
@@ -126,8 +133,31 @@ namespace TeamSentinels.Module4.Logging
             while (_recording)
             {
                 CaptureFrame();
+                TrimIfTooLarge();
                 yield return wait;
             }
+        }
+
+        /// <summary>
+        /// Hard ceiling on replay size. At 0.1s x 5 actors this recorded 50 frames/second —
+        /// one real session produced 34,465 frames and an 11.3 MB session JSON, which took
+        /// the dashboard 16 MINUTES to POST and then died with ECONNRESET. A replay scatter
+        /// plot needs nothing like that resolution. When we hit the cap we halve the data
+        /// (keep every 2nd frame) and halve the sample rate, so the recording keeps running
+        /// at lower resolution instead of growing without bound. Payload stays bounded no
+        /// matter how long the mission runs.
+        /// </summary>
+        private void TrimIfTooLarge()
+        {
+            if (_frames.Count < maxFrames) return;
+
+            for (int i = _frames.Count - 1; i >= 0; i--)
+                if (i % 2 == 1) _frames.RemoveAt(i);      // drop every other frame
+
+            recordInterval *= 2f;                          // and sample half as often from now on
+            Debug.Log($"[ReplayRecorder] Replay hit {maxFrames} frames — downsampled to " +
+                      $"{_frames.Count} and dropped the sample rate to {recordInterval:F2}s. " +
+                      "(Keeps the uploaded session payload bounded.)");
         }
 
         private void CaptureFrame()

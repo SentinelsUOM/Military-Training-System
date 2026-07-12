@@ -243,7 +243,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 0de709c2086a64f4796920362590482d, type: 3}
       propertyPath: m_Name
-      value: walkingNPC
+      value: TerroristNPC
       objectReference: {fileID: 0}
     - target: {fileID: 5866666021909216657, guid: 0de709c2086a64f4796920362590482d, type: 3}
       propertyPath: m_Controller
@@ -454,10 +454,12 @@ MonoBehaviour:
   hitMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  fireRate: 2
-  spreadDegrees: 1.5
+  fireRate: 8
+  spreadDegrees: 5
   range: 80
   damage: 10
+  shotsPerBurst: 3
+  burstPause: 1.2
   muzzleFlash: {fileID: 0}
   fireAudioSource: {fileID: 391039948992314803}
   fireClip: {fileID: 8300000, guid: cabbd3fd5ecd9f34189a90e120a55259, type: 3}
@@ -480,13 +482,38 @@ MonoBehaviour:
   shooter: {fileID: 5815913395311697315}
   agent: {fileID: 8752113011039546}
   idleMode: 0
+  moveSpeed: 1
   wanderRadius: 12
   wanderPauseTime: 2
   staticFaceTarget: {fileID: 0}
   animator: {fileID: 6412352956768574739}
+  walkAnimReferenceSpeed: 1
   deathFloorOffset: 0
   role: 0
   squadId: alpha
+  isHostageGuardian: 0
+  guardedHostage: {fileID: 0}
+  voiceSource: {fileID: 1012083207813001623}
+  voSeize: {fileID: 8300000, guid: f0d0bc0e66eb2944f996aec9c71c26b5, type: 3}
+  voThreaten: {fileID: 8300000, guid: ee8daa3b8fa920c4a8c936ae5b4326d4, type: 3}
+  voWarningA: {fileID: 8300000, guid: b3d7bb089137ff742973be922417e948, type: 3}
+  voWarningB: {fileID: 8300000, guid: edd7bacb85cbb4c4a8d54c5fc26bb5f1, type: 3}
+  executionCountdown: 0
+  warningShotRange: 2.5
+  executeAfterWarningShot: 60
+  warningRange: 3.5
+  executeRange: 1.5
+  releaseGraceTime: 6
+  shieldStandoff: 1
+  shieldTriggerRange: 6
+  guardPatrolRadius: 2.5
+  guardLeashRadius: 6
+  allySupportHealthThreshold: 60
+  holdDoorDistance: 1.5
+  doorWatchRange: 20
+  _losBlockerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
   maxHealth: 100
   retreatHealthThreshold: 40
   retreatDistance: 10
@@ -495,23 +522,38 @@ MonoBehaviour:
   flankOffset: 5
   responseCooldown: 4
   engageDistance: 5
+  minStandoffDistance: 3
+  preferredStandoffDistance: 3.5
+  posture: 0
+  escalationThreshold: 3
+  escalationPerAllyDown: 2
+  escalationPerStressSpike: 1
+  escalationPerHit: 1
+  escalationCombatInterval: 8
+  coverHoldTime: 3.5
   playerCamera: {fileID: 0}
   suspiciousTimeout: 6
+  alertGiveUpTime: 12
   hearingRange: 100
+  useProceduralAim: 0
   weaponPivot: {fileID: 0}
   aimRotationSpeed: 8
   maxAimAngle: 20
   aimBoneType: 8
+  headLookWeight: 1
+  headLookBodyWeight: 0.35
   autoCalculateDeathOffset: 1
   clearCollidersOnDeath: 1
   currentState: 0
   currentHealth: 0
-  investigateSpeed: 1.0
+  debugBarrelToTargetDeg: -1
+  lookBeforeInvestigateTime: 1.5
+  investigateSpeed: 1
   gunReadyDistance: 4
   searchCheckPoints: 4
   searchPausePerDirection: 1
   searchTurnSpeed: 90
-  searchWaypointCount: 30
+  searchWaypointCount: 18
   searchWaypointMinRadius: 4
   searchWaypointMaxRadius: 10
   searchWaypointPauseTime: 2
@@ -536,6 +578,7 @@ MonoBehaviour:
   obstacleLayers:
     serializedVersion: 2
     m_Bits: 1
+  playerClearance: 0.5
   snapshotInterval: 5
 --- !u!195 &8752113011039546
 NavMeshAgent:
