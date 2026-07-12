@@ -272,6 +272,32 @@ public class HostageController : MonoBehaviour, INPCResponder
     /// <summary>True while a live guardian is holding this hostage at gunpoint.</summary>
     public bool IsHeld => currentState == HostageState.Held;
 
+    /// <summary>World position of the hostage's head. The guardian aims its barrel here
+    /// during the warning — pointing at the ROOT would aim at the floor, and aiming level
+    /// would sail straight over a kneeling hostage. Falls back to a sensible offset if the
+    /// rig isn't humanoid.</summary>
+    public Vector3 HeadPosition
+    {
+        get
+        {
+            if (_animator != null && _animator.isHuman)
+            {
+                var head = _animator.GetBoneTransform(HumanBodyBones.Head);
+                if (head != null) return head.position;
+            }
+            return transform.position + Vector3.up * 1.1f;
+        }
+    }
+
+    /// <summary>Guardian is actively threatening this hostage (barrel on its head). Switches
+    /// it to the cowering/looking-up kneel (Kneeling Inspecting) instead of the calm kneel.
+    /// Only meaningful while Held.</summary>
+    public void SetThreatened(bool on)
+    {
+        _threatened = on && currentState == HostageState.Held;
+        if (_hasThreatenedParam) _animator?.SetBool(_animThreatened, _threatened);
+    }
+
     // ── Private state ─────────────────────────────────────────────────────────
 
     float       _lastResponseTime = -99f;
@@ -284,13 +310,17 @@ public class HostageController : MonoBehaviour, INPCResponder
     float       _currentHealth;
     bool        _injured;
     bool        _killedFired;              // guards OnKilled against double-firing
+    bool        _threatened;               // captor currently has the barrel on this hostage's head
     TerroristController _captor;           // guardian holding this hostage as leverage (null if free)
     bool        _hasSpeedParam;
     bool        _hasInjuredParam;
     bool        _hasHeldParam;
-    static readonly int _animSpeed   = Animator.StringToHash("Speed");
-    static readonly int _animInjured = Animator.StringToHash("Injured");
-    static readonly int _animHeld    = Animator.StringToHash("Held");
+    bool        _hasThreatenedParam;
+    static readonly int _animSpeed      = Animator.StringToHash("Speed");
+    static readonly int _animInjured    = Animator.StringToHash("Injured");
+    static readonly int _animHeld       = Animator.StringToHash("Held");
+    static readonly int _animScared     = Animator.StringToHash("Scared");
+    static readonly int _animThreatened = Animator.StringToHash("Threatened");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -312,9 +342,10 @@ public class HostageController : MonoBehaviour, INPCResponder
             // hostage's Animator Controller isn't the rebuilt HostageAnimator).
             foreach (var p in _animator.parameters)
             {
-                if (p.nameHash == _animSpeed)   _hasSpeedParam   = true;
-                if (p.nameHash == _animInjured) _hasInjuredParam = true;
-                if (p.nameHash == _animHeld)    _hasHeldParam    = true;
+                if (p.nameHash == _animSpeed)      _hasSpeedParam      = true;
+                if (p.nameHash == _animInjured)    _hasInjuredParam    = true;
+                if (p.nameHash == _animHeld)       _hasHeldParam       = true;
+                if (p.nameHash == _animThreatened) _hasThreatenedParam = true;
             }
             if (!_hasSpeedParam)
                 Debug.LogWarning($"[HostageController] {NPCId}: Animator has no 'Speed' param — " +
@@ -333,6 +364,20 @@ public class HostageController : MonoBehaviour, INPCResponder
 
     void Update()
     {
+        // While held at gunpoint, keep TURNING TO FACE the captor. A one-shot snap on
+        // entering Held goes stale the moment the guardian repositions (human-shield
+        // tracking), which left the hostage kneeling with its back to the gun.
+        if (currentState == HostageState.Held && _captor != null)
+        {
+            Vector3 toCaptor = _captor.transform.position - transform.position;
+            toCaptor.y = 0f;
+            if (toCaptor.sqrMagnitude > 0.01f)
+            {
+                Quaternion look = Quaternion.LookRotation(toCaptor);
+                transform.rotation = Quaternion.Slerp(transform.rotation, look, Time.deltaTime * 6f);
+            }
+        }
+
         // Velocity-driven locomotion blend: walk while moving (e.g. following the
         // trainee), idle when still. Measures real movement so it never glides.
         if (_animator != null)
@@ -387,11 +432,16 @@ public class HostageController : MonoBehaviour, INPCResponder
         {
             if (_freezeCheckRoutine != null) { StopCoroutine(_freezeCheckRoutine); _freezeCheckRoutine = null; }
         }
-        if (prev == HostageState.Held && next != HostageState.Down)
+        if (prev == HostageState.Held)
         {
-            if (_hasHeldParam) _animator?.SetBool(_animHeld, false);
-            else               scareController?.SetScared(false);
-            if (_agent != null && _agent.isActiveAndEnabled) _agent.isStopped = false;
+            _threatened = false;
+            if (_hasThreatenedParam) _animator?.SetBool(_animThreatened, false);
+            if (next != HostageState.Down)
+            {
+                if (_hasHeldParam) _animator?.SetBool(_animHeld, false);
+                else               scareController?.SetScared(false);
+                if (_agent != null && _agent.isActiveAndEnabled) _agent.isStopped = false;
+            }
         }
 
         // ── Behaviours for new state ──────────────────────────────────────────
@@ -421,16 +471,23 @@ public class HostageController : MonoBehaviour, INPCResponder
                 break;
 
             case HostageState.Held:
-                // Seized as leverage — kneel/hands-up at gunpoint, frozen in place.
-                // Uses the dedicated 'Held' animator state if the controller has one,
-                // otherwise falls back to the Scared cower so it still reads as captive.
+                // Seized as leverage — kneel at gunpoint, frozen in place.
                 if (_agent != null && _agent.isActiveAndEnabled)
                 {
                     _agent.isStopped = true;
                     _agent.ResetPath();
                 }
-                if (_hasHeldParam) _animator?.SetBool(_animHeld, true);
-                else               scareController?.SetScared(true);
+                if (_hasHeldParam)
+                {
+                    _animator?.SetBool(_animHeld, true);
+                    // CRITICAL: drop the Scared flag. Coming from Fearful (a gunshot) leaves
+                    // Scared=true, and the animator's AnyState→Scared then keeps yanking him
+                    // out of the kneel while AnyState→Held pulls him back — the kneel/stand
+                    // "blinking". Held owns the pose now, so Scared must be off.
+                    scareController?.SetScared(false);
+                    _animator?.SetBool(_animScared, false);
+                }
+                else scareController?.SetScared(true);
                 // Face the captor if we have one, so the "at gunpoint" read is clear.
                 if (_captor != null)
                 {

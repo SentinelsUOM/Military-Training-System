@@ -317,6 +317,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 ActiveScenario = scenario;
                 _buildOffset = buildAnchor != null ? buildAnchor.position : buildOffset;
 
+                // Doors record themselves as they're placed; BuildDoorNavLinks links them
+                // after the bake. Reset per build so a rebuild doesn't re-link stale doors.
+                _placedDoors.Clear();
+
                 MeasureDoorPrefab();
                 ComputeEntryOpenings(scenario);
                 BuildRooms(scenario);
@@ -1192,7 +1196,26 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             // ApplyDoorState runs the same frame as Instantiate, before any
             // component's Start(), so the XRI Door reads the right startOpened.
             ApplyDoorState(go, state);
+
+            // Record EVERY door that actually gets built. The NavMeshLinks are created from
+            // this list AFTER the bake (see BuildDoorNavLinks) — a link made before the bake
+            // has no NavMesh to attach to. Recording here (rather than walking the scenario's
+            // room-to-room door list) is what finally covers the perimeter-corridor entry,
+            // which SceneBuilder builds itself and which never appears in scenario.layout.
+            // Without it the corridor was baked but unreachable: measured 0/6 corridor floor
+            // points pathable from a terrorist (all PathPartial).
+            _placedDoors.Add(new PlacedDoor { name = name, center = openingCenter, side = side });
         }
+
+        /// <summary>A doorway that was actually built, so it can be NavMesh-linked post-bake.</summary>
+        private struct PlacedDoor
+        {
+            public string   name;
+            public Vector3  center;   // world-space centre of the opening
+            public WallSide side;     // which wall it sits in (decides the link's axis)
+        }
+
+        private readonly List<PlacedDoor> _placedDoors = new List<PlacedDoor>();
 
         /// <summary>
         /// Drives a freshly instantiated door's initial state. Prefers the
@@ -1663,50 +1686,43 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// </summary>
         private void BuildDoorNavLinks(ScenarioData scenario)
         {
-            if (scenario.layout?.rooms == null) return;
-
-            var placed = new HashSet<string>();
+            // Drive this from the doors we ACTUALLY built (_placedDoors), not from the
+            // scenario's room list. The scenario only describes room-to-room doors (the
+            // validator requires every door to have a connectsToRoomId pointing at a real
+            // room), so walking it silently skipped the perimeter-corridor entry door that
+            // SceneBuilder creates on its own — leaving the corridor baked but severed.
             int count = 0;
 
-            foreach (RoomData room in scenario.layout.rooms)
+            foreach (PlacedDoor door in _placedDoors)
             {
-                if (room.doors == null) continue;
+                Vector3 p = door.center;
+                p.y = _buildOffset.y; // floor level
 
-                foreach (DoorData door in room.doors)
-                {
-                    string key = MakeDoorPairKey(room.id, door.connectsToRoomId);
-                    if (!placed.Add(key)) continue; // reciprocal already linked
+                // The link spans PERPENDICULAR to the wall the door sits in:
+                // North/South walls run along X → cross along Z; East/West → along X.
+                bool crossAlongZ = door.side == WallSide.North || door.side == WallSide.South;
+                Vector3 span = crossAlongZ ? Vector3.forward : Vector3.right;
 
-                    Vector3 p = World(door.position.ToVector3());
-                    p.y = _buildOffset.y; // floor level
+                // Reach far enough past the wall plane to land on the NavMesh either side.
+                float reach = CorridorGap * 0.5f + 1.5f;
 
-                    // The link spans PERPENDICULAR to the wall the door sits in:
-                    // North/South walls run along X → cross along Z; East/West → along X.
-                    bool crossAlongZ = door.wallSide == WallSide.North ||
-                                       door.wallSide == WallSide.South;
-                    Vector3 span = crossAlongZ ? Vector3.forward : Vector3.right;
+                var go = new GameObject($"DoorNavLink_{door.name}");
+                go.transform.SetParent(_roomsRoot, worldPositionStays: true);
+                go.transform.position = p;
 
-                    // Reach far enough past the shared wall plane to land inside each
-                    // room's NavMesh (half the corridor gap + into the room interior).
-                    float reach = CorridorGap * 0.5f + 1.5f;
+                var link = go.AddComponent<NavMeshLink>();
+                link.startPoint    = -span * reach; // local space (identity rotation)
+                link.endPoint      =  span * reach;
+                link.width         = Mathf.Max(1.2f, _doorOpeningWidth);
+                link.bidirectional = true;
+                link.area          = 0; // built-in Walkable
+                link.UpdateLink();
 
-                    var go = new GameObject($"DoorNavLink_{door.id}");
-                    go.transform.SetParent(_roomsRoot, worldPositionStays: true);
-                    go.transform.position = p;
-
-                    var link = go.AddComponent<NavMeshLink>();
-                    link.startPoint    = -span * reach; // local space (identity rotation)
-                    link.endPoint      =  span * reach;
-                    link.width         = Mathf.Max(1.2f, _doorOpeningWidth);
-                    link.bidirectional = true;
-                    link.area          = 0; // built-in Walkable
-                    link.UpdateLink();
-
-                    count++;
-                }
+                count++;
             }
 
-            Debug.Log($"[SceneBuilder] Placed {count} NavMeshLink(s) across doorways to connect the rooms.");
+            Debug.Log($"[SceneBuilder] Placed {count} NavMeshLink(s) across EVERY built doorway " +
+                      $"(rooms + perimeter-corridor entry), from {_placedDoors.Count} recorded door(s).");
         }
 
         /// <summary>

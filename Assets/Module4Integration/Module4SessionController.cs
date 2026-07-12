@@ -56,8 +56,9 @@ public class Module4SessionController : MonoBehaviour
 
     [Header("Auto-End: Timeout (FAIL safety net)")]
     [Tooltip("Maximum allowed mission duration in seconds. The session ends as a timeout " +
-             "if neither the rescue nor a player-death trigger fires by then. Set to 0 to disable.")]
-    [SerializeField] private float missionTimeoutSeconds = 600f;
+             "if neither the rescue nor a player-death trigger fires by then. 0 = NO TIMEOUT " +
+             "(mission runs until you win or die) — this is the configured default.")]
+    [SerializeField] private float missionTimeoutSeconds = 0f;
 
     [Header("Realistic Escort Mode")]
     [Tooltip("On scene start, clear the Runaway Controller on every HostageController in the scene. " +
@@ -257,6 +258,12 @@ public class Module4SessionController : MonoBehaviour
         _missionEnded = true;
         Debug.Log($"[Module4SessionController] Ending session — reason: {reason}");
         SessionLogger.Instance.EndSession();
+
+        // The result is decided — FREEZE the simulation. Without this the NPC AI kept
+        // running after the mission ended: in one session the mission ended on 'timeout'
+        // with the hostage ALIVE, and the guardian then executed him *after* the result
+        // was already recorded. Nothing may change the outcome once it's been called.
+        FreezeAllNpcs();
         // OnSessionComplete fires inside EndSession() → DashboardUploader & WebReportExporter pick it up.
     }
 
@@ -334,6 +341,42 @@ public class Module4SessionController : MonoBehaviour
             case HostageController   hc: return hc.currentState.ToString();
             default:                     return "Unknown";
         }
+    }
+
+    /// <summary>
+    /// Stops every NPC dead once the mission result is decided: halts their coroutines
+    /// (patrol, search, hostage-leverage countdown), stops any weapon firing, and disables
+    /// the controllers. Prevents the after-the-whistle behaviour that killed a hostage
+    /// AFTER the session had already ended on a timeout.
+    /// </summary>
+    private void FreezeAllNpcs()
+    {
+        int frozen = 0;
+
+        foreach (var t in FindObjectsByType<TerroristController>(FindObjectsSortMode.None))
+        {
+            if (t == null) continue;
+            t.StopAllCoroutines();                       // kills the hostage-leverage countdown too
+            var shooter = t.GetComponent<NpcShooterRaycast>();
+            if (shooter != null) shooter.StopFiring();
+            var agent = t.GetComponent<UnityEngine.AI.NavMeshAgent>();
+            if (agent != null && agent.isActiveAndEnabled) { agent.isStopped = true; agent.ResetPath(); }
+            t.enabled = false;
+            frozen++;
+        }
+
+        foreach (var h in FindObjectsByType<HostageController>(FindObjectsSortMode.None))
+        {
+            if (h == null) continue;
+            h.StopAllCoroutines();
+            var agent = h.GetComponent<UnityEngine.AI.NavMeshAgent>();
+            if (agent != null && agent.isActiveAndEnabled) { agent.isStopped = true; agent.ResetPath(); }
+            h.enabled = false;
+            frozen++;
+        }
+
+        Debug.Log($"[Module4SessionController] Mission over — froze {frozen} NPC(s). " +
+                  "Nothing can change the outcome now.");
     }
 
     private HostageController FirstDeadHostage()

@@ -9,10 +9,20 @@ public class NpcShooterRaycast : MonoBehaviour
     public LayerMask hitMask = ~0;
 
     [Header("Shooting")]
-    public float fireRate = 2f;
-    public float spreadDegrees = 1.5f;
+    [Tooltip("Rounds per second WITHIN a burst.")]
+    public float fireRate = 8f;
+    [Tooltip("Cone of inaccuracy. 1.5 deg was laser-accurate — real CQB fire is far looser, " +
+             "and an enemy who never misses just feels unfair. 5 deg = suppressive, not sniper.")]
+    public float spreadDegrees = 5f;
     public float range = 80f;
     public int damage = 10;
+
+    [Header("Burst Fire")]
+    [Tooltip("Rounds fired in one burst before pausing. A steady metronome of single shots reads " +
+             "as a machine; humans fire in bursts.")]
+    public int shotsPerBurst = 3;
+    [Tooltip("Seconds of pause between bursts (re-acquire / assess).")]
+    public float burstPause = 1.2f;
 
     [Header("FX / Audio")]
     public ParticleSystem muzzleFlash;
@@ -79,13 +89,35 @@ public class NpcShooterRaycast : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Fires ONE deliberately-missed but fully AUDIBLE round — the doctrinal "warning shot".
+    /// Same muzzle flash and gunshot report as a live round, but it is aimed to miss and does
+    /// no damage. This is the loudest, least-missable rung of the hostage escalation ladder:
+    /// at the Lindt Café siege the gunman fired a shot into a wall ~2 minutes before he
+    /// executed the hostage, and the Coroner found that shot should itself have triggered an
+    /// immediate assault. A silent countdown gives the trainee nothing to react to; a gunshot
+    /// does.
+    /// </summary>
+    public void FireWarningShot()
+    {
+        if (muzzleFlash != null) muzzleFlash.Play();
+        if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
+        // Deliberately NO raycast and NO damage — it is a warning, not an attack.
+    }
+
     IEnumerator FireLoop()
     {
         float delay = 1f / Mathf.Max(0.1f, fireRate);
         while (true)
         {
-            FireOnce();
-            yield return new WaitForSeconds(delay);
+            int rounds = Mathf.Max(1, shotsPerBurst);
+            for (int i = 0; i < rounds; i++)
+            {
+                FireOnce();
+                yield return new WaitForSeconds(delay);
+            }
+            // Pause between bursts — this is what turns a metronome into a person.
+            if (burstPause > 0f) yield return new WaitForSeconds(burstPause);
         }
     }
 
@@ -112,7 +144,16 @@ public class NpcShooterRaycast : MonoBehaviour
 
         if (Physics.Raycast(start, dir, out RaycastHit hit, range, hitMask, QueryTriggerInteraction.Ignore))
         {
+            // Resolve the trainee's health. Walking UP the hierarchy alone is not enough:
+            // the XR rig's own colliders (CharacterController / capsule on "XR Origin") sit
+            // ABOVE PlayerHealth in the tree, so a bullet that struck the rig capsule found
+            // no PlayerHealth above it — or worse, found a SECOND, duplicate PlayerHealth
+            // that the mission wasn't watching. Result: the trainee was effectively immortal.
+            // So: try upward first, then fall back to searching the whole rig.
             var health = hit.collider.GetComponentInParent<PlayerHealth>();
+            if (health == null)
+                health = hit.collider.transform.root.GetComponentInChildren<PlayerHealth>();
+
             if (health != null) health.TakeDamage(damage);
         }
     }

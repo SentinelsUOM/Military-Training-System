@@ -6877,7 +6877,7 @@ MonoBehaviour:
   endWhenAllHostagesFreed: 1
   playerHealth: {fileID: 1370155276}
   endWhenHostageKilled: 1
-  missionTimeoutSeconds: 0
+  missionTimeoutSeconds: 600
   disableAutoFleeOnAllHostages: 1
   replayRecorder: {fileID: 132151388}
   playerTransform: {fileID: 1312843278}
@@ -6909,8 +6909,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 98b02e5adbecac3488758b2efdaca8fd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: TeamSentinels.Module4::TeamSentinels.Module4.Logging.ReplayRecorder
-  recordInterval: 0.5
-  maxFrames: 4000
+  recordInterval: 0.1
 --- !u!114 &132151389
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -136381,6 +136380,9 @@ PrefabInstance:
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 8260549900137009084, guid: 31324bb751cdf8946ad9f5f04221b57f, type: 3}
       insertIndex: -1
+      addedObject: {fileID: 8477629630631293691}
+    - targetCorrespondingSourceObject: {fileID: 8260549900137009084, guid: 31324bb751cdf8946ad9f5f04221b57f, type: 3}
+      insertIndex: -1
       addedObject: {fileID: 8477629630631293692}
   m_SourcePrefab: {fileID: 100100000, guid: 31324bb751cdf8946ad9f5f04221b57f, type: 3}
 --- !u!114 &8249284141803858737
@@ -136741,6 +136743,19 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 8260549900137009087, guid: 31324bb751cdf8946ad9f5f04221b57f, type: 3}
   m_PrefabInstance: {fileID: 8244287946206816962}
   m_PrefabAsset: {fileID: 0}
+--- !u!114 &8477629630631293691
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 823943081}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9506aa8599d98674d97dbfb92c276323, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: MikeNspiredXRIStarterKit.Runtime::PlayerHealth
+  health: 100
 --- !u!136 &8477629630631293692
 CapsuleCollider:
   m_ObjectHideFlags: 0
