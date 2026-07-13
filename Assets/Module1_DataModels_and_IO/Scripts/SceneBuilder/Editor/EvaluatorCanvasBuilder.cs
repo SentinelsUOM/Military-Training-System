@@ -19,6 +19,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using UnityEngine.XR.Interaction.Toolkit.UI;
 
 namespace TeamSentinels.ScenarioGeneration.EditorTools
 {
@@ -41,6 +42,12 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
         private const int   RowFontSize  = 15;
         private const int   HeaderFontSize = 17;
 
+        // World-space sizing. The canvas is authored in pixels and scaled down to
+        // metres, so 640 x 820 px at 0.001 becomes a 0.64 x 0.82 m panel in VR.
+        private const float PanelWidth       = 640f;
+        private const float PanelHeight      = 820f;
+        private const float WorldCanvasScale = 0.001f;
+
         private const string EvaluatorCanvasName = "EvaluatorCanvas";
         private const string EvaluatorPanelName  = "EvaluatorPanel";
 
@@ -62,20 +69,33 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             var staleCanvas = GameObject.Find(EvaluatorCanvasName);
             if (staleCanvas != null) Object.DestroyImmediate(staleCanvas);
 
-            // 1. Always create a dedicated screen-space overlay canvas. Do not reuse
-            //    any pre-existing canvas (e.g. the XRI Starter Kit's world-space readme
-            //    canvas) - that puts the panel inside the 3D scene instead of on screen.
+            // 1. Always create a dedicated canvas. Do not reuse any pre-existing
+            //    canvas - that would nest the panel under unrelated UI.
+            //
+            //    The canvas MUST be world-space: Unity never renders a screen-space
+            //    canvas to an HMD, so a ScreenSpaceOverlay panel is invisible in the
+            //    Quest build even though it looks fine in the desktop Game view.
+            //    TrackedDeviceGraphicRaycaster is what lets the XR controller ray
+            //    click it; a plain GraphicRaycaster only understands a mouse.
             var canvasGo = new GameObject(EvaluatorCanvasName,
-                typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+                typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster),
+                typeof(TrackedDeviceGraphicRaycaster), typeof(WorldSpacePanelPlacer));
             Canvas canvas = canvasGo.GetComponent<Canvas>();
-            canvas.renderMode  = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 100; // above any pre-existing screen-space UI
+            canvas.renderMode  = RenderMode.WorldSpace;
+            canvas.sortingOrder = 100;
+            canvas.worldCamera = Camera.main;
+
+            // Authored in pixels, scaled down to metres: 640 x 820 px at
+            // WorldCanvasScale is a ~0.64 x 0.82 m panel, comfortable to read at
+            // the placer's 1.4 m distance.
+            var canvasRt = canvasGo.GetComponent<RectTransform>();
+            canvasRt.sizeDelta  = new Vector2(PanelWidth, PanelHeight);
+            canvasRt.localScale = Vector3.one * WorldCanvasScale;
 
             var scaler = canvasGo.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode          = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution  = new Vector2(1920, 1080);
-            scaler.screenMatchMode      = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
-            scaler.matchWidthOrHeight   = 0.5f;
+            scaler.uiScaleMode          = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.scaleFactor          = 1f;
+            scaler.dynamicPixelsPerUnit = 3f; // keeps text crisp up close in VR
 
             if (Object.FindObjectOfType<EventSystem>() == null)
                 EditorApplication.ExecuteMenuItem("GameObject/UI/Event System");

@@ -32,6 +32,23 @@ public class HostageHitBox : MonoBehaviour, IDamageable, IImpactType
     {
         if (_controller == null) return;
         _controller.TakeHit(damage * damageMultiplier);
+
+        // Report the hit so the AAR can PENALISE it. Previously nothing was raised here, so
+        // wounding the very person you came to rescue cost the trainee nothing at all — the
+        // safety score's friendly-fire penalty could never fire, because no event was ever
+        // tagged for it. Only an outright kill registered.
+        //
+        // Every hit that reaches this method is the trainee's: NPC weapons are raycast-only
+        // and resolve against PlayerHealth, and a guardian's execution kills via
+        // HostageController.Execute() — neither routes through IDamageable. So a projectile
+        // landing on a hostage came from the trainee's rifle.
+        EventManager.Instance?.Raise(new ScenarioEvent(
+            ScenarioEventType.HostageHit,
+            transform.position,
+            damager,
+            roomId: null,
+            targetActorId: _controller.NPCId
+        ));
     }
 
     // ── IImpactType — flesh decal ─────────────────────────────────────────────

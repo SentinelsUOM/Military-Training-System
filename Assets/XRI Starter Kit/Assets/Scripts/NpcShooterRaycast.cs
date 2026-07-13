@@ -100,9 +100,28 @@ public class NpcShooterRaycast : MonoBehaviour
     /// </summary>
     public void FireWarningShot()
     {
+        // Deliberately NO raycast and NO damage — it is a warning, not an attack.
+        PlayShotFx();
+    }
+
+    /// <summary>
+    /// The point-blank execution shot. Muzzle flash and gunshot report ONLY — the hostage's
+    /// death is scripted (HostageController.Execute), not simulated, so a raycast here would
+    /// be wrong: at contact distance the barrel is inside the hostage's head and the trace
+    /// could just as easily strike the captor's own arm. Without this the execution was
+    /// completely SILENT — the single most important beat in the mission had no gunshot.
+    /// </summary>
+    public void FireExecutionShot()
+    {
+        PlayShotFx();
+    }
+
+    /// <summary>Muzzle flash + gunshot report, with no ballistics. Shared by every shot whose
+    /// outcome is scripted rather than traced.</summary>
+    void PlayShotFx()
+    {
         if (muzzleFlash != null) muzzleFlash.Play();
         if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
-        // Deliberately NO raycast and NO damage — it is a warning, not an attack.
     }
 
     IEnumerator FireLoop()
