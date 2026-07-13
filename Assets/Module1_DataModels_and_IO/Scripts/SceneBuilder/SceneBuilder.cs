@@ -99,6 +99,33 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "corridor reuses the room floor material so it matches the building.")]
         public Material corridorFloorMaterial;
 
+        [Header("Furniture")]
+        [Tooltip("Render the furniture that Module 1 placed in each room. Items are " +
+                 "seed-reproducible, already scaled to the room, and guaranteed to " +
+                 "clear walls, doorways and NPC/hostage spawns. They bake into the " +
+                 "NavMesh as obstacles so NPCs path around them.")]
+        public bool addFurniture = true;
+
+        [Tooltip("Material for the shaped greybox furniture. If empty, a neutral " +
+                 "URP-safe tint is generated at runtime so furniture never renders " +
+                 "as the magenta 'missing shader' colour.")]
+        public Material furnitureMaterial;
+
+        [Tooltip("Use imported furniture models instead of shaped greyboxes. OFF by " +
+                 "default because the bundled prop packs (e.g. PandazoleHome) ship " +
+                 "Built-in-RP materials that render MAGENTA under this project's URP " +
+                 "pipeline. Only turn this on after upgrading those materials to URP " +
+                 "(Edit ▸ Rendering ▸ Materials ▸ Convert Selected…), or after mapping " +
+                 "your own URP-ready prefabs below.")]
+        public bool useFurniturePrefabs = false;
+
+        [Tooltip("OPTIONAL override, honoured whether or not 'Use Furniture Prefabs' " +
+                 "is on. Force a specific prefab for a furniture type (use URP-ready " +
+                 "prefabs to avoid magenta). Prefabs are uniformly scaled to the " +
+                 "generated footprint, so the layout stays collision-correct whatever " +
+                 "the source art's native size.")]
+        public List<FurniturePrefabMapping> furniturePrefabs = new List<FurniturePrefabMapping>();
+
         [Header("NPC Prefabs")]
         [Tooltip("Terrorist prefab. Must have a TerroristController component.")]
         public GameObject terroristPrefab;
@@ -417,7 +444,438 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 _roomObjects[room.id] = go;
 
                 BuildWalls(room, go, scenario.layout.rooms);
+                BuildFurniture(room, go);
             }
+        }
+
+        // ── Furniture ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Instantiates every <see cref="FurnitureData"/> item Module 1 placed in
+        /// the room. Items are parented under the room object (a "Furniture" child)
+        /// so they are voxelised in the room's NavMesh bake and become obstacles
+        /// NPCs path around. Each item is a greybox box scaled to the generated
+        /// footprint, unless a prefab is mapped for its type, in which case the
+        /// prefab is instantiated and scaled to the same footprint so the layout
+        /// stays collision-correct. Positions/rotations come straight from the data,
+        /// so the rendered scene matches the seed-reproducible plan exactly.
+        /// </summary>
+        private void BuildFurniture(RoomData room, GameObject roomGo)
+        {
+            if (!addFurniture || room.furniture == null || room.furniture.Count == 0) return;
+
+            var container = new GameObject("Furniture");
+            container.transform.SetParent(roomGo.transform, worldPositionStays: false);
+
+            Vector3 roomCentre = room.position.ToVector3();
+
+            foreach (FurnitureData f in room.furniture)
+            {
+                if (f?.size == null || f.position == null) continue;
+
+                Vector3 size = f.size.ToVector3();
+                if (size.x <= 0f || size.y <= 0f || size.z <= 0f) continue;
+
+                // Room-local position: the item's floor-plane centre relative to the
+                // room centre (both in layout space), raised so the box rests on the
+                // floor. Mirrors how the procedural walls are parented room-locally.
+                Vector3 local = f.position.ToVector3() - roomCentre;
+                local.y = size.y * 0.5f;
+
+                Quaternion rot = Quaternion.Euler(0f, f.rotationY, 0f);
+
+                GameObject prefab = ResolveFurniturePrefab(f.type, f.id);
+                if (prefab != null)
+                    BuildFurnitureFromPrefab(container.transform, prefab, f, rot, size);
+                else
+                    BuildFurnitureGreybox(container.transform, f, local, rot, size);
+            }
+        }
+
+        /// <summary>
+        /// Greybox item: a small composition of primitives shaped like the furniture
+        /// type (e.g. a tabletop on four legs, a chair with a back, open shelving)
+        /// rather than a featureless block, so rooms read believably without relying
+        /// on any imported art/materials. Built in the item's local frame — X = width,
+        /// Y = height from the floor, Z = depth — under a root placed at the planned
+        /// footprint centre and turned to face into the room. Every part is a solid
+        /// primitive with a collider, so the whole item still blocks the trainee and
+        /// bakes into the NavMesh as an obstacle.
+        /// </summary>
+        private void BuildFurnitureGreybox(Transform parent, FurnitureData f,
+                                           Vector3 local, Quaternion rot, Vector3 size)
+        {
+            var root = new GameObject(f.id);
+            root.transform.SetParent(parent, worldPositionStays: false);
+            root.transform.localRotation = rot;
+            root.transform.localPosition = new Vector3(local.x, 0f, local.z); // sit on floor
+
+            Material mat = ResolveFurnitureMaterial();
+            BuildFurnitureShape(root.transform, f.type, size, mat);
+        }
+
+        /// <summary>Dispatches to a per-type primitive composition. Falls back to a
+        /// plain box for any type without a bespoke shape.</summary>
+        private void BuildFurnitureShape(Transform root, FurnitureType type, Vector3 s, Material mat)
+        {
+            switch (type)
+            {
+                case FurnitureType.Table:
+                case FurnitureType.Desk:
+                case FurnitureType.SideTable:
+                    BuildTableShape(root, s, mat); break;
+                case FurnitureType.Chair:
+                    BuildSeatShape(root, s, mat, withBack: true); break;
+                case FurnitureType.Stool:
+                    BuildSeatShape(root, s, mat, withBack: false); break;
+                case FurnitureType.Shelf:
+                case FurnitureType.Bookshelf:
+                    BuildShelfShape(root, s, mat); break;
+                case FurnitureType.Cabinet:
+                case FurnitureType.Locker:
+                    BuildCabinetShape(root, s, mat); break;
+                case FurnitureType.Bed:
+                    BuildBedShape(root, s, mat); break;
+                case FurnitureType.Sofa:
+                    BuildSofaShape(root, s, mat); break;
+                case FurnitureType.Barrel:
+                    BuildBarrelShape(root, s, mat); break;
+                case FurnitureType.Crate:
+                default:
+                    AddPrim(root, PrimitiveType.Cube, new Vector3(0f, s.y * 0.5f, 0f), s, mat); break;
+            }
+        }
+
+        private void BuildTableShape(Transform root, Vector3 s, Material mat)
+        {
+            float top = Mathf.Clamp(s.y * 0.12f, 0.04f, 0.1f);
+            float legT = Mathf.Clamp(Mathf.Min(s.x, s.z) * 0.12f, 0.05f, 0.12f);
+            float legH = s.y - top;
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, s.y - top * 0.5f, 0f),
+                    new Vector3(s.x, top, s.z), mat);
+            float lx = s.x * 0.5f - legT * 0.5f, lz = s.z * 0.5f - legT * 0.5f;
+            AddLegs(root, lx, lz, legH, legT, mat);
+        }
+
+        private void BuildSeatShape(Transform root, Vector3 s, Material mat, bool withBack)
+        {
+            float seatH = Mathf.Clamp(s.y * (withBack ? 0.5f : 0.9f), 0.28f, 0.5f);
+            float seatT = 0.07f;
+            float legT = Mathf.Clamp(Mathf.Min(s.x, s.z) * 0.14f, 0.04f, 0.1f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, seatH, 0f),
+                    new Vector3(s.x, seatT, s.z), mat);
+            float lx = s.x * 0.5f - legT * 0.5f, lz = s.z * 0.5f - legT * 0.5f;
+            AddLegs(root, lx, lz, seatH - seatT * 0.5f, legT, mat);
+            if (withBack && s.y > seatH + 0.15f)
+            {
+                float backT = 0.06f;
+                AddPrim(root, PrimitiveType.Cube,
+                        new Vector3(0f, seatH + (s.y - seatH) * 0.5f, -(s.z * 0.5f - backT * 0.5f)),
+                        new Vector3(s.x, s.y - seatH, backT), mat);
+            }
+        }
+
+        private void AddLegs(Transform root, float lx, float lz, float legH, float legT, Material mat)
+        {
+            if (legH <= 0.01f) return;
+            var leg = new Vector3(legT, legH, legT);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-lx, legH * 0.5f, -lz), leg, mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3( lx, legH * 0.5f, -lz), leg, mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-lx, legH * 0.5f,  lz), leg, mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3( lx, legH * 0.5f,  lz), leg, mat);
+        }
+
+        private void BuildShelfShape(Transform root, Vector3 s, Material mat)
+        {
+            float panel = Mathf.Clamp(Mathf.Min(s.x, s.z) * 0.1f, 0.04f, 0.08f);
+            // Back and two sides.
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, s.y * 0.5f, -(s.z * 0.5f - panel * 0.5f)),
+                    new Vector3(s.x, s.y, panel), mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-(s.x * 0.5f - panel * 0.5f), s.y * 0.5f, 0f),
+                    new Vector3(panel, s.y, s.z), mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3( s.x * 0.5f - panel * 0.5f, s.y * 0.5f, 0f),
+                    new Vector3(panel, s.y, s.z), mat);
+            // Horizontal shelves (incl. top and bottom).
+            int levels = Mathf.Clamp(Mathf.RoundToInt(s.y / 0.4f), 2, 5);
+            for (int i = 0; i <= levels; i++)
+            {
+                float y = Mathf.Lerp(0.02f, s.y - 0.02f, i / (float)levels);
+                AddPrim(root, PrimitiveType.Cube, new Vector3(0f, y, 0f),
+                        new Vector3(s.x - panel, 0.04f, s.z - panel), mat);
+            }
+        }
+
+        private void BuildCabinetShape(Transform root, Vector3 s, Material mat)
+        {
+            // Solid body on a slight plinth with a small top overhang for shape.
+            float plinth = Mathf.Min(0.08f, s.y * 0.1f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, plinth * 0.5f, 0f),
+                    new Vector3(s.x * 0.96f, plinth, s.z * 0.9f), mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, plinth + (s.y - plinth) * 0.5f, 0f),
+                    new Vector3(s.x, s.y - plinth, s.z), mat);
+        }
+
+        private void BuildBedShape(Transform root, Vector3 s, Material mat)
+        {
+            float frame = Mathf.Min(0.3f, s.y * 0.55f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, frame * 0.5f, 0f),
+                    new Vector3(s.x, frame, s.z), mat);                                   // base
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, frame + (s.y - frame) * 0.5f, 0f),
+                    new Vector3(s.x * 0.98f, s.y - frame, s.z * 0.96f), mat);             // mattress
+            AddPrim(root, PrimitiveType.Cube,
+                    new Vector3(0f, s.y + 0.04f, -(s.z * 0.5f - s.z * 0.16f)),
+                    new Vector3(s.x * 0.5f, 0.08f, s.z * 0.22f), mat);                    // pillow
+        }
+
+        private void BuildSofaShape(Transform root, Vector3 s, Material mat)
+        {
+            float baseH = s.y * 0.5f;
+            float arm = Mathf.Clamp(s.x * 0.12f, 0.12f, 0.25f);
+            float backT = Mathf.Clamp(s.z * 0.2f, 0.12f, 0.25f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, baseH * 0.5f, 0f),
+                    new Vector3(s.x, baseH, s.z), mat);                                   // seat base
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, baseH + (s.y - baseH) * 0.5f, -(s.z * 0.5f - backT * 0.5f)),
+                    new Vector3(s.x, s.y - baseH, backT), mat);                           // backrest
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-(s.x * 0.5f - arm * 0.5f), s.y * 0.45f, 0f),
+                    new Vector3(arm, s.y * 0.9f, s.z), mat);                              // left arm
+            AddPrim(root, PrimitiveType.Cube, new Vector3( s.x * 0.5f - arm * 0.5f, s.y * 0.45f, 0f),
+                    new Vector3(arm, s.y * 0.9f, s.z), mat);                              // right arm
+        }
+
+        private void BuildBarrelShape(Transform root, Vector3 s, Material mat)
+        {
+            float dia = Mathf.Min(s.x, s.z);
+            // Unity's default cylinder is 2 units tall and 1 wide, so scale Y by h/2.
+            AddPrim(root, PrimitiveType.Cylinder, new Vector3(0f, s.y * 0.5f, 0f),
+                    new Vector3(dia, s.y * 0.5f, dia), mat);
+        }
+
+        /// <summary>Adds one primitive part in the item's local frame.</summary>
+        private void AddPrim(Transform root, PrimitiveType prim, Vector3 center, Vector3 scale, Material mat)
+        {
+            scale = new Vector3(Mathf.Max(0.01f, scale.x), Mathf.Max(0.01f, scale.y), Mathf.Max(0.01f, scale.z));
+            var go = GameObject.CreatePrimitive(prim);
+            go.transform.SetParent(root, worldPositionStays: false);
+            go.transform.localPosition = center;
+            go.transform.localScale    = scale;
+            if (mat != null) go.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>Prefab item: instantiate, scale UNIFORMLY so the model fits
+        /// inside the reserved footprint without distorting its proportions, turn it
+        /// to face into the room, then drop it so it rests on the floor with its
+        /// footprint centred on the planned position. Works in world space via the
+        /// live renderer bounds, so any pivot / import scale / internal offset in the
+        /// source art is handled automatically. Falls back to a greybox box if the
+        /// prefab has no measurable renderers.</summary>
+        private void BuildFurnitureFromPrefab(Transform parent, GameObject prefab, FurnitureData f,
+                                              Quaternion rot, Vector3 size)
+        {
+            GameObject go = Instantiate(prefab, parent);
+            go.name = f.id;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale    = prefab.transform.localScale;
+
+            // Natural (unrotated) world size of the art as authored.
+            if (!TryGetWorldBounds(go, out Bounds natural) ||
+                natural.size.x <= 1e-4f || natural.size.z <= 1e-4f)
+            {
+                if (Application.isPlaying) Destroy(go); else DestroyImmediate(go);
+                Vector3 local = World(f.position.ToVector3()) - parent.position;
+                local.y = size.y * 0.5f;
+                BuildFurnitureGreybox(parent, f, local, rot, size);
+                return;
+            }
+
+            // Uniform fit: shrink (never stretch a single axis) so the model's
+            // footprint fits within the reserved width×depth. Cap at 1 so small
+            // props keep their real size rather than being blown up to fill a box.
+            float fit = Mathf.Min(size.x / natural.size.x, size.z / natural.size.z);
+            fit = Mathf.Min(fit, 1f);
+            go.transform.localScale = prefab.transform.localScale * fit;
+
+            // Face into the room, then re-measure the placed bounds.
+            go.transform.localRotation = rot;
+            if (!TryGetWorldBounds(go, out Bounds placed)) placed = natural;
+
+            // Target: footprint centred on the planned world position, base on floor.
+            Vector3 targetWorld = World(f.position.ToVector3());
+            float floorY = parent.position.y;
+
+            Vector3 delta = new Vector3(
+                targetWorld.x - placed.center.x,
+                floorY        - placed.min.y,
+                targetWorld.z - placed.center.z);
+            go.transform.position += delta;
+
+            EnsureFurnitureCollider(go);
+        }
+
+        /// <summary>
+        /// Resolves the prefab to spawn for a furniture item. Priority: (1) an
+        /// explicit inspector mapping; (2) automatic discovery from the project's
+        /// prop packs in the editor, choosing a variant deterministically from the
+        /// item id so the same seed always yields the same look; (3) null → the
+        /// caller draws a greybox box (device builds with no mapping assigned).
+        /// </summary>
+        private GameObject ResolveFurniturePrefab(FurnitureType type, string id)
+        {
+            // An explicit inspector mapping always wins (assumed URP-ready).
+            if (furniturePrefabs != null)
+                foreach (FurniturePrefabMapping m in furniturePrefabs)
+                    if (m != null && m.prefab != null && m.type == type) return m.prefab;
+
+            // Auto-discovery is opt-in: the bundled packs are Built-in-RP and would
+            // render magenta under URP. Off ⇒ caller draws a shaped greybox instead.
+            if (!useFurniturePrefabs) return null;
+
+#if UNITY_EDITOR
+            GameObject[] variants = GetAutoVariants(type);
+            if (variants != null && variants.Length > 0)
+                return variants[(int)(StableHash(id) % (uint)variants.Length)];
+#endif
+            return null;
+        }
+
+        /// <summary>Combined world-space renderer bounds of a hierarchy (skips
+        /// particle renderers). Reflects live pivot, scale and rotation.</summary>
+        private static bool TryGetWorldBounds(GameObject go, out Bounds bounds)
+        {
+            bounds = default;
+            bool has = false;
+            foreach (Renderer r in go.GetComponentsInChildren<Renderer>())
+            {
+                if (r is ParticleSystemRenderer) continue;
+                if (!has) { bounds = r.bounds; has = true; }
+                else bounds.Encapsulate(r.bounds);
+            }
+            return has;
+        }
+
+        /// <summary>Adds a footprint-sized box collider when the art ships without
+        /// one, so the trainee can't walk through furniture. Placed on an unrotated
+        /// child aligned to the world AABB (kept out of the way of any existing
+        /// interaction colliders on the prefab).</summary>
+        private static void EnsureFurnitureCollider(GameObject go)
+        {
+            if (go.GetComponentInChildren<Collider>() != null) return;
+            if (!TryGetWorldBounds(go, out Bounds b)) return;
+
+            var colGo = new GameObject("FurnitureCollider");
+            colGo.transform.SetParent(go.transform.parent, worldPositionStays: true);
+            colGo.transform.position = b.center;
+            var bc = colGo.AddComponent<BoxCollider>();
+            bc.size = b.size;
+        }
+
+        /// <summary>Stable FNV-1a hash so variant choice is reproducible across
+        /// sessions (unlike <see cref="string.GetHashCode"/>, which is randomised).</summary>
+        private static uint StableHash(string s)
+        {
+            uint hash = 2166136261u;
+            if (s != null)
+                foreach (char c in s) { hash ^= c; hash *= 16777619u; }
+            return hash;
+        }
+
+#if UNITY_EDITOR
+        // ── Automatic furniture prefab discovery (editor only) ───────────────
+        // Maps each furniture type to the prop-prefab name prefixes to pull from
+        // the project's art packs, so real furniture appears with no manual wiring.
+        // Every matching variant is used, chosen deterministically per item id.
+        private const string FurniturePrefabFolder =
+            "Assets/XRI Starter Kit/Assets/PandazoleHome/Prefabs";
+
+        private static readonly Dictionary<FurnitureType, string[]> AutoPrefabPrefixes =
+            new Dictionary<FurnitureType, string[]>
+            {
+                { FurnitureType.Table,     new[] { "Prop_Table_" } },
+                { FurnitureType.Desk,      new[] { "Prop_Desk_" } },
+                { FurnitureType.Chair,     new[] { "Prop_Chair_" } },
+                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_" } },
+                { FurnitureType.Barrel,    new[] { "Prop_SmallStorageBox_" } },
+                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_" } },
+                { FurnitureType.Cabinet,   new[] { "Prop_Cabinet_" } },
+                { FurnitureType.Bookshelf, new[] { "Prop_Cabinet_" } },
+                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },
+                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } },
+                { FurnitureType.Locker,    new[] { "Prop_Wardrobe_" } },
+                { FurnitureType.SideTable, new[] { "Prop_KidsTable" } },
+                { FurnitureType.Stool,     new[] { "Prop_Chair_" } },
+            };
+
+        // Every prefab under the art folder, loaded and name-sorted once per build.
+        private List<GameObject> _furniturePrefabCatalog;
+        private Dictionary<FurnitureType, GameObject[]> _autoVariantCache;
+
+        private GameObject[] GetAutoVariants(FurnitureType type)
+        {
+            _autoVariantCache ??= new Dictionary<FurnitureType, GameObject[]>();
+            if (_autoVariantCache.TryGetValue(type, out GameObject[] cached)) return cached;
+
+            EnsureFurniturePrefabCatalog();
+            if (!AutoPrefabPrefixes.TryGetValue(type, out string[] prefixes))
+                return _autoVariantCache[type] = System.Array.Empty<GameObject>();
+
+            var matches = new List<GameObject>();
+            foreach (GameObject go in _furniturePrefabCatalog)
+                foreach (string prefix in prefixes)
+                    if (go.name.StartsWith(prefix, System.StringComparison.Ordinal))
+                    {
+                        matches.Add(go);
+                        break;
+                    }
+
+            // Sort by name so the deterministic per-id index maps to a stable variant.
+            matches.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            return _autoVariantCache[type] = matches.ToArray();
+        }
+
+        private void EnsureFurniturePrefabCatalog()
+        {
+            if (_furniturePrefabCatalog != null) return;
+            _furniturePrefabCatalog = new List<GameObject>();
+
+            if (!UnityEditor.AssetDatabase.IsValidFolder(FurniturePrefabFolder))
+            {
+                Debug.LogWarning($"[SceneBuilder] Furniture prefab folder not found " +
+                                 $"('{FurniturePrefabFolder}'); furniture will render as greyboxes. " +
+                                 $"Assign prefabs on the Furniture list to override.");
+                return;
+            }
+
+            string[] guids = UnityEditor.AssetDatabase.FindAssets(
+                "t:Prefab", new[] { FurniturePrefabFolder });
+            foreach (string guid in guids)
+            {
+                string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guid);
+                var go = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (go != null) _furniturePrefabCatalog.Add(go);
+            }
+        }
+#endif
+
+        // Lazily-created neutral material so greybox furniture reads distinctly
+        // from the walls without requiring the evaluator to assign one.
+        private Material _furnitureMatCache;
+
+        private Material ResolveFurnitureMaterial()
+        {
+            if (furnitureMaterial != null) return furnitureMaterial;
+            if (_furnitureMatCache != null) return _furnitureMatCache;
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return null;
+
+            _furnitureMatCache = new Material(shader) { name = "GeneratedFurnitureMat" };
+            // Warm neutral tone, clearly different from typical wall greys. Set both
+            // the built-in and URP colour properties so it tints under either pipeline.
+            var tint = new Color(0.55f, 0.42f, 0.30f, 1f);
+            _furnitureMatCache.color = tint;
+            if (_furnitureMatCache.HasProperty("_BaseColor"))
+                _furnitureMatCache.SetColor("_BaseColor", tint);
+            return _furnitureMatCache;
         }
 
         /// <summary>
@@ -1968,5 +2426,22 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             UnityEditor.Handles.Label(p + Vector3.up * (radius + 0.4f), label, style);
 #endif
         }
+    }
+
+    /// <summary>
+    /// Inspector-editable mapping from a Module 1 <see cref="FurnitureType"/> to a
+    /// real prefab. Wire entries on the <see cref="SceneBuilder"/> to replace the
+    /// greybox box for that type; any unmapped type keeps its scaled box. Mapped
+    /// prefabs are re-scaled to the generated footprint at build time, so the
+    /// placement stays collision-correct whatever the source art's native size is.
+    /// </summary>
+    [Serializable]
+    public class FurniturePrefabMapping
+    {
+        [Tooltip("Furniture category this prefab represents.")]
+        public FurnitureType type;
+
+        [Tooltip("Prefab to spawn for this type. Scaled to the generated footprint.")]
+        public GameObject prefab;
     }
 }

@@ -56,6 +56,7 @@ namespace TeamSentinels.ScenarioGeneration.Generators
         private readonly EntityPlacer _entityPlacer;
         private readonly RoleAssigner _roleAssigner;
         private readonly NavigationContextBuilder _navigationContextBuilder;
+        private readonly FurniturePlacer _furniturePlacer;
         private readonly ScenarioValidator _scenarioValidator;
 
         // ── Construction ─────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ namespace TeamSentinels.ScenarioGeneration.Generators
             _entityPlacer = new EntityPlacer();
             _roleAssigner = new RoleAssigner();
             _navigationContextBuilder = new NavigationContextBuilder();
+            _furniturePlacer = new FurniturePlacer();
             _scenarioValidator = new ScenarioValidator();
         }
 
@@ -152,6 +154,16 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                         layout, roleAssignments, entities, spawnPoints, rng);
                 Debug.Log($"[ScenarioGenerator] Navigation context built: " +
                     $"{navigationContext.Count} entries");
+
+                // Stage 4b: Furniture Placement. Runs LAST among the generative
+                // stages (after entities/roles/navigation) so it can read every
+                // actor position and guarantee no item overlaps an entity, a
+                // doorway, a wall, or another item. Placing it here also keeps the
+                // earlier stages' RNG stream byte-identical to pre-furniture runs,
+                // so a given seed reproduces the same rooms/roles/paths as before.
+                List<FurnitureData> furniture = _furniturePlacer.Place(layout, entities, config, rng);
+                Debug.Log($"[ScenarioGenerator] Furniture placed: {furniture.Count} items " +
+                    $"across {layout.rooms.Count} rooms");
 
                 // Stage 5: Assemble ScenarioData
                 scenario = new ScenarioData

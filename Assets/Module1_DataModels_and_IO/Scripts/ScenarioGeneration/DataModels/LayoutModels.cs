@@ -63,6 +63,64 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
     }
 
     // =========================================================================
+    // Furniture Data
+    // =========================================================================
+
+    /// <summary>
+    /// A single piece of furniture placed inside a room. Modelled as a room
+    /// attribute (like <see cref="DoorData"/>) following the room-centric graph
+    /// model [20]. Furniture is decorative-plus-tactical: it makes rooms read as
+    /// real spaces and provides cover/obstacles that Module 2 NPCs path around
+    /// (SceneBuilder bakes furniture into the NavMesh as obstacles). Placement is
+    /// fully seed-reproducible and guaranteed to clear walls, doorways, entities,
+    /// and other furniture by <c>FurniturePlacer</c>.
+    /// </summary>
+    [Serializable]
+    public class FurnitureData
+    {
+        /// <summary>Unique furniture identifier (e.g., "furniture_room_02_01").</summary>
+        [JsonProperty("id")]
+        public string id;
+
+        /// <summary>Furniture category, which fixes its canonical proportions.</summary>
+        [JsonProperty("type")]
+        public FurnitureType type;
+
+        /// <summary>
+        /// Furniture footprint centre in Unity world coordinates. Y is the floor
+        /// level (0 for single-floor scenarios); SceneBuilder raises the mesh so
+        /// it rests on the floor.
+        /// </summary>
+        [JsonProperty("position")]
+        public SerializableVector3 position;
+
+        /// <summary>
+        /// Item dimensions in metres expressed in the item's LOCAL axes before
+        /// rotation: x = width, y = height, z = depth. SceneBuilder scales the
+        /// greybox box (or a mapped prefab) to exactly this size, then applies
+        /// <see cref="rotationY"/>. Already scaled/clamped to fit the room.
+        /// </summary>
+        [JsonProperty("size")]
+        public SerializableVector3 size;
+
+        /// <summary>
+        /// Yaw rotation in degrees about the Y axis (0/90/180/270). Wall-anchored
+        /// items face into the room, so their "back" (local −Z) sits against the
+        /// wall they were placed on.
+        /// </summary>
+        [JsonProperty("rotationY")]
+        public float rotationY;
+
+        /// <summary>
+        /// Wall this item is anchored against (its back faces this wall). Recorded
+        /// so Module 2 can reason about which sightlines the item blocks and
+        /// Module 4 can render it consistently on the AAR map.
+        /// </summary>
+        [JsonProperty("againstWall")]
+        public WallSide againstWall;
+    }
+
+    // =========================================================================
     // Room Data
     // =========================================================================
 
@@ -112,6 +170,16 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
         /// </summary>
         [JsonProperty("doors")]
         public List<DoorData> doors = new List<DoorData>();
+
+        /// <summary>
+        /// Furniture placed inside this room. Populated by <c>FurniturePlacer</c>
+        /// after entity placement so every item clears the entities, doorways, and
+        /// walls. Empty for rooms the placer keeps clear (or when furniture is
+        /// disabled). Consumed by SceneBuilder (rendering + NavMesh obstacles) and
+        /// available to Modules 2/4 for cover reasoning and AAR map rendering.
+        /// </summary>
+        [JsonProperty("furniture")]
+        public List<FurnitureData> furniture = new List<FurnitureData>();
 
         /// <summary>
         /// BFS depth from the entry room. Used for depth-based role

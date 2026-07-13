@@ -211,6 +211,57 @@ namespace TeamSentinels.ScenarioGeneration.DataModels
     }
 
     /// <summary>
+    /// Category of a piece of generated furniture. Each type carries a canonical
+    /// real-world footprint (see <c>FurniturePlacer</c>) so items read at a
+    /// believable scale regardless of room size. Types are grouped loosely by the
+    /// room kinds they suit: storage props (crate, barrel, shelf), work props
+    /// (desk, table, chair, cabinet, bookshelf), and living props (bed, sofa).
+    /// Serialised as snake_case to match the JSON schema.
+    /// </summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum FurnitureType
+    {
+        [EnumMember(Value = "table")]
+        Table,
+
+        [EnumMember(Value = "desk")]
+        Desk,
+
+        [EnumMember(Value = "chair")]
+        Chair,
+
+        [EnumMember(Value = "crate")]
+        Crate,
+
+        [EnumMember(Value = "barrel")]
+        Barrel,
+
+        [EnumMember(Value = "shelf")]
+        Shelf,
+
+        [EnumMember(Value = "cabinet")]
+        Cabinet,
+
+        [EnumMember(Value = "bookshelf")]
+        Bookshelf,
+
+        [EnumMember(Value = "bed")]
+        Bed,
+
+        [EnumMember(Value = "sofa")]
+        Sofa,
+
+        [EnumMember(Value = "locker")]
+        Locker,
+
+        [EnumMember(Value = "side_table")]
+        SideTable,
+
+        [EnumMember(Value = "stool")]
+        Stool
+    }
+
+    /// <summary>
     /// Entity actor type used across all modules for stable identification.
     /// </summary>
     [JsonConverter(typeof(StringEnumConverter))]
