@@ -37,4 +37,11 @@ public enum ScenarioEventType
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     ScenarioReady,       // NavMesh baked + all NPCs spawned — safe to start simulation
+
+    // NOTE: append new members HERE, at the end — never in the middle.
+    // TriggerZoneDetector.eventType is a serialized ScenarioEventType, which Unity
+    // stores in scenes/prefabs as an INTEGER ordinal. Inserting a member higher up
+    // silently renumbers everything below it and repoints every existing detector at
+    // the wrong event.
+    HostageHit,          // A bullet damaged a hostage but did NOT kill them (trainee friendly fire)
 }

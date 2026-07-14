@@ -4,6 +4,7 @@
 // both Module 2 (also Assembly-CSharp) and Module 4 (autoReferenced asmdef).
 
 using System;
+using System.Collections.Generic;
 using TeamSentinels.Module4.Data;
 using TeamSentinels.Module4.Logging;
 using UnityEngine;
@@ -70,13 +71,21 @@ public class Module4Bridge : MonoBehaviour
         // MissionEnded uses the same convention, so timestamps are consistent.
         float elapsed = Mathf.Max(0f, e.Timestamp - SessionLogger.Instance.SessionStartTime);
 
+        // Tag hostage hits as friendly fire. PerformanceCalculator's safety penalty counts
+        // events tagged "friendly_fire" — and until now NOTHING ever applied that tag, so
+        // friendlyFireCount was permanently 0 and shooting the hostage was free.
+        List<string> tags = e.Type == ScenarioEventType.HostageHit
+            ? new List<string> { "friendly_fire" }
+            : null;
+
         var record = MissionEvent.Create(
             eventType,
             elapsed,
             sourceId,
             targetId,
             roomId,
-            e.Origin
+            e.Origin,
+            tags
         );
 
         SessionLogger.Instance.LogEvent(record);

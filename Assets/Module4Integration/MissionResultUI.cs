@@ -163,6 +163,12 @@ public class MissionResultUI : MonoBehaviour
                 22, FontStyle.Italic, new Color(0.55f, 0.58f, 0.66f),
                 TextAnchor.MiddleCenter, new Vector2(0.05f, 0.02f), new Vector2(0.95f, 0.09f));
 
+        // The whole panel must live on the UI layer. On a player_down ending, PlayerDamageFeedback
+        // blacks the world out by culling every layer EXCEPT UI — anything left on the Default
+        // layer (which is what `new GameObject()` gives you) would be culled away with it, and the
+        // trainee would fade to black and then just sit there staring at nothing.
+        SetLayerRecursively(_panel, LayerMask.NameToLayer("UI"));
+
         Debug.Log($"[MissionResultUI] Shown — {(success ? "SUCCESS" : "FAIL")} ({reason}).");
     }
 
@@ -267,5 +273,13 @@ public class MissionResultUI : MonoBehaviour
     {
         rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
         rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+    }
+
+    private static void SetLayerRecursively(GameObject go, int layer)
+    {
+        if (go == null || layer < 0) return;
+        go.layer = layer;
+        foreach (Transform child in go.transform)
+            SetLayerRecursively(child.gameObject, layer);
     }
 }

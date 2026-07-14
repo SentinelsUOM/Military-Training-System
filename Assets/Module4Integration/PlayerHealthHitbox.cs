@@ -45,7 +45,12 @@ public class PlayerHealthHitbox : MonoBehaviour, IDamageable, IImpactType
         if (playerHealth == null) return;
 
         int dmg = Mathf.Max(0, Mathf.RoundToInt(damage * damageMultiplier));
-        playerHealth.TakeDamage(dmg);
+
+        // Forward WHERE the hit came from so the damage feedback can point the trainee at the
+        // shooter. Fall back to the direction-less overload when the damager is unknown, so no
+        // misleading indicator is drawn.
+        if (damager != null) playerHealth.TakeDamage(dmg, damager.transform.position);
+        else                 playerHealth.TakeDamage(dmg);
 
         if (echoToConsole)
             Debug.Log($"[PlayerHealthHitbox] Player took {dmg} damage from {(damager != null ? damager.name : "unknown")} → HP={playerHealth.health}");

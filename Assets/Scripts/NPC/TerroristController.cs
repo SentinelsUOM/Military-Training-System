@@ -279,6 +279,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "extreme spine twists when the player is in an awkward position. 45° is a good balance.")]
     public float maxAimAngle = 45f;
 
+    [Tooltip("Maximum degrees the FIRING WRIST may deviate from its animated pose to finish the " +
+             "aim. The weapon hangs off this bone, so this is what keeps the rifle in his fist " +
+             "instead of tearing out of it. A real wrist has ~20-25° of usable play here.")]
+    public float maxWristAimAngle = 22f;
+
     [Tooltip("Which humanoid bone to rotate for aim. Chest gives the cleanest 'rifle stock' aim. " +
              "UpperChest is more subtle; Spine swings the hips too. Leave on Chest for most rigs.")]
     public HumanBodyBones aimBoneType = HumanBodyBones.Chest;
@@ -826,6 +831,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
     Transform _aimBone;                 // cached chest/spine bone used to aim the upper body at the player
     Transform[] _spineChain;            // Spine→Chest→UpperChest, used to spread the aim rotation naturally
     Transform _leftUpperArm, _leftForeArm, _leftHand;
+    Transform _rightHand;               // the firing hand — the weapon is a DESCENDANT of it,
+                                        // so rotating this bone aims the gun without unseating it.
     Transform _gunAimPivot;             // rig's gun pivot (RightHand → GunAimPivot → gun → firePoint).
                                         // Rotating HERE barely moves the muzzle, so aiming converges;
                                         // rotating the spine moves the muzzle more than it turns it. // support-hand IK chain — keeps the left hand on the gun
@@ -895,6 +902,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
             _leftUpperArm = animator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
             _leftForeArm  = animator.GetBoneTransform(HumanBodyBones.LeftLowerArm);
             _leftHand     = animator.GetBoneTransform(HumanBodyBones.LeftHand);
+
+            // The firing hand. The weapon hangs BELOW it (RightHand → GunAimPivot → gun),
+            // so this is the lowest bone we can rotate that still carries the rifle WITH it.
+            _rightHand    = animator.GetBoneTransform(HumanBodyBones.RightHand);
 
             // The rig has a dedicated gun pivot under the right hand — that's where an exact
             // aim must be applied (see the aim block in LateUpdate for why the spine can't).
@@ -1154,12 +1165,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
             currentState == TerroristState.Alert  ||
             currentState == TerroristState.TakeCover;
 
+        // ── 0) Eyes follow the trainee, every frame, the whole time he is in sight. ──
+        // SetLookTarget only moves the look anchor when something CALLS it, so whatever set
+        // it last owned his gaze indefinitely — and for a guardian that was GuardianRoamRoutine
+        // pinning him to the doorway. Re-asserting it here each frame means seeing the player
+        // always wins over any stale anchor, and his aim tracks the trainee as he moves.
+        if (_playerVisible && _lastSeenPlayer != null && !warning)
+            SetLookTarget(_lastSeenPlayer.position);
+
         // ── 1) Body Y-rotation — face the HOSTAGE while warning it, else the player ──
         // (This runs in LateUpdate, after Update, so it is the final word on facing.)
         Vector3? facePos = null;
         if (warning)
             facePos = guardedHostage.transform.position;
-        else if (engagedOrAlert && !_isInvestigating && _lastSeenPlayer != null)
+        // Turn to face him whenever he is actually VISIBLE — not just in Engage/Alert.
+        // A Suspicious guard was excluded from this set, so he would keep his back to a
+        // trainee he could plainly see, waiting for a state change that never came.
+        else if (_lastSeenPlayer != null && !_isInvestigating && (_playerVisible || engagedOrAlert))
             facePos = _lastSeenPlayer.position;
 
         if (facePos.HasValue)
@@ -1239,19 +1261,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 if (dd.sqrMagnitude < 1e-6f) break;
                 if (Vector3.Angle(barrel.forward, dd.normalized) < 1.5f) break; // on target
             }
-            // ── (b) Final exact touch-up at the pivot nearest the muzzle. ─────────────
-            // Rotating here barely moves the muzzle, so it can only tighten the aim.
-            Transform pivot = _gunAimPivot != null ? _gunAimPivot : barrel.parent;
-            if (pivot != null)
+            // ── (b) Final touch-up — at the WRIST, never at the gun's own pivot. ──────
+            // GunAimPivot sits BETWEEN the hand and the weapon (RightHand → GunAimPivot →
+            // gun), so rotating it swings the rifle relative to the fist that is holding it.
+            // The right hand is never IK'd back (only the left/support hand is), so the gun
+            // visibly tore out of his grip — worst exactly during the warning beat, where the
+            // residual angle is largest because he's aiming steeply DOWN at a kneeling head.
+            // Rotating the HAND instead carries the weapon with it, so the grip survives.
+            Transform wrist = _rightHand != null ? _rightHand : _gunAimPivot;
+            if (wrist != null)
             {
+                Quaternion wristRest = wrist.rotation;
                 for (int i = 0; i < 5; i++)
                 {
                     Vector3 d = aimAt - barrel.position;
                     if (d.sqrMagnitude < 1e-6f) break;
                     Quaternion q = Quaternion.FromToRotation(barrel.forward, d.normalized);
                     if (Quaternion.Angle(Quaternion.identity, q) < 0.05f) break;
-                    pivot.rotation = q * pivot.rotation;
+                    wrist.rotation = q * wrist.rotation;
                 }
+                // A wrist has a limited range. Clamping the total deviation from the animated
+                // pose keeps the hand anatomically plausible; the spine pass above has already
+                // done the heavy lifting, so the leftover correction here is small anyway.
+                wrist.rotation = Quaternion.RotateTowards(wristRest, wrist.rotation, maxWristAimAngle);
             }
 
             // Re-lock the support hand to the same spot on the weapon.
@@ -1829,6 +1861,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (guardedHostage == null) return;
         Debug.LogWarning($"[TerroristController] {gameObject.name}: EXECUTING {guardedHostage.NPCId} ({cause}).");
         shooter?.StopFiring();
+        // The trainee MUST hear this. The kill is scripted, so it never went through FireOnce()
+        // and therefore never played a gunshot — the execution was landing in total silence.
+        shooter?.FireExecutionShot();
         guardedHostage.Execute(this);
     }
 
@@ -1869,7 +1904,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
             // door of the hostage's room so he's ready for whoever comes through it, rather
             // than idly wandering. (The Alert animator state now holds the rifle UP, so this
             // reads as "covering the door", not "standing around".)
-            if (suspicious)
+            //
+            // ONLY while he cannot actually see the trainee. He covers the door because it is
+            // the best GUESS at where the threat will appear — the moment the threat is stood
+            // in front of him that guess is worthless. Without this check the routine re-pinned
+            // his gaze to the doorway every iteration, so he kept staring at the door while the
+            // player shot him in the face.
+            if (suspicious && !_playerVisible)
             {
                 Transform way = NearestDoorTo(anchor);
                 if (way != null) SetLookTarget(way.position);

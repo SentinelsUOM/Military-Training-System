@@ -51,11 +51,25 @@ namespace TeamSentinels.Module4.Analysis
             safetyScore  = Mathf.Clamp01(safetyScore);
 
             // ── Mission success ──────────────────────────────────────────────
-            // Aligned with Module4SessionController.AllHostagesFreed():
-            // at least one hostage rescued (Freed) → mission success.
-            // Terrorist count is no longer a gating factor; players can succeed
-            // by escorting hostages to safety even if some terrorists remain.
-            bool missionSuccess = hostagesSaved >= 1;
+            // A rescued hostage is NECESSARY but not SUFFICIENT. Judging success on
+            // hostagesSaved alone let a mission that ended in disaster still report a win:
+            // free the hostage, get shot dead on the way out, and the AAR proudly showed
+            // "RESCUE COMPLETE" above the subtitle "You were killed in action." A training
+            // debrief that contradicts itself teaches the wrong lesson, so the outcome must
+            // agree with HOW the mission actually ended.
+            //
+            // Module4SessionController.EndSession() records the reason as the sole tag on a
+            // final "MissionEnded" event — that is the authoritative outcome.
+            string endReason = events
+                .LastOrDefault(e => e.eventType == "MissionEnded")?
+                .tags?.FirstOrDefault();
+
+            bool endedInFailure =
+                endReason == "player_down"        ||   // trainee killed in action
+                endReason == "hostage_executed"   ||   // captor shot the hostage
+                endReason == "hostage_killed";         // trainee's own round killed the hostage
+
+            bool missionSuccess = hostagesSaved >= 1 && !endedInFailure;
 
             // ── Speed ────────────────────────────────────────────────────────
             // Benchmark: 300 s. Anything longer scores 0.
