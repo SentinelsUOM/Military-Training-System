@@ -136,6 +136,19 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "doors keep their generated state.")]
         public bool entryDoorStartsOpen = true;
 
+        [Header("Trainee Loadout")]
+        [Tooltip("Weapon moved to the trainee's spawn point when Start Mission is " +
+                 "pressed, so it is within reach the moment the scenario loads. " +
+                 "Drag the weapon that is already in the scene (e.g. 'Rifle 2Hand- " +
+                 "Auto Fire'). We MOVE that object rather than instantiating the base " +
+                 "prefab, so its Inspector overrides (automatic firing, infinite ammo) " +
+                 "are preserved and no duplicate guns pile up on regeneration.")]
+        public Transform traineeWeapon;
+
+        [Tooltip("Where the weapon lands relative to the trainee: (right, up, forward) " +
+                 "in metres. It drops to the floor from here if it has gravity.")]
+        public Vector3 weaponSpawnOffset = new Vector3(0.3f, 1.0f, 0.6f);
+
         [Header("Safe Zone / Extraction")]
         [Tooltip("Spawn a visible 'safe spot' (extraction zone) at the trainee's start " +
                  "position. Lead a rescued hostage back into it to complete the mission.")]
@@ -1349,6 +1362,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 traineeRig.SetPositionAndRotation(traineeStartPoint.position, yaw);
                 Debug.Log("[SceneBuilder] Trainee spawned at staging point " +
                           $"'{traineeStartPoint.name}'.");
+                PlaceTraineeWeapon();
                 return;
             }
 
@@ -1364,6 +1378,44 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             traineeRig.rotation = LookRotation(t.facingDirection);
             Debug.Log($"[SceneBuilder] Trainee spawned at Module 1 position {spawnPos:F1} " +
                       $"(entry room, facing {t.facingDirection.ToVector3():F1}).");
+            PlaceTraineeWeapon();
+        }
+
+        /// <summary>
+        /// Drops the trainee's weapon beside them at the spawn point so it is in
+        /// reach as soon as the mission starts.
+        /// </summary>
+        private void PlaceTraineeWeapon()
+        {
+            if (traineeWeapon == null || traineeRig == null)
+                return;
+
+            Vector3 pos = traineeRig.TransformPoint(weaponSpawnOffset);
+            Quaternion rot = Quaternion.Euler(0f, traineeRig.eulerAngles.y, 0f);
+
+            var rb = traineeWeapon.GetComponent<Rigidbody>();
+
+            // Rooms are built BEFORE the trainee is positioned, so on a rebuild the new
+            // room colliders are instantiated straight through wherever the weapon was
+            // left standing. PhysX queues a depenetration impulse for that overlap and
+            // applies it on the next step - AFTER we teleport - which flings the weapon
+            // metres away. Going kinematic across the teleport and syncing the transform
+            // into PhysX discards the stale contact so it wakes up cleanly at the spawn.
+            bool wasKinematic = rb != null && rb.isKinematic;
+            if (rb != null)
+                rb.isKinematic = true;
+
+            traineeWeapon.SetPositionAndRotation(pos, rot);
+            Physics.SyncTransforms();
+
+            if (rb != null)
+            {
+                rb.isKinematic     = wasKinematic;
+                rb.linearVelocity  = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+
+            Debug.Log($"[SceneBuilder] Trainee weapon '{traineeWeapon.name}' placed at {pos:F1}.");
         }
 
         private void SpawnHostages(ScenarioData scenario)

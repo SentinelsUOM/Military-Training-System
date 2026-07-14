@@ -173,7 +173,9 @@ public class NpcShooterRaycast : MonoBehaviour
             if (health == null)
                 health = hit.collider.transform.root.GetComponentInChildren<PlayerHealth>();
 
-            if (health != null) health.TakeDamage(damage);
+            // Pass the MUZZLE position, not the impact point — the trainee needs to know which
+            // direction they are being shot FROM so they can turn and break line of sight.
+            if (health != null) health.TakeDamage(damage, firePoint.position);
         }
     }
 }
