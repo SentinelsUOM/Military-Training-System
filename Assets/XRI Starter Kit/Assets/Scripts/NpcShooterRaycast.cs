@@ -140,6 +140,33 @@ public class NpcShooterRaycast : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Where to actually aim. NOT <see cref="target"/>.position.
+    ///
+    /// TerroristController assigns `target` = the trainee's CAMERA. That is the head, and it is
+    /// the wrong thing to shoot at for two reasons. First, real shooters are trained to engage
+    /// CENTRE-MASS: aiming at the head means half the vertical spread sails harmlessly over the
+    /// trainee. Second — and much worse — outside a headset the XR camera never leaves the rig
+    /// origin, i.e. it sits on the FLOOR, so the NPCs were literally aiming at the trainee's feet
+    /// and only landing hits when random spread happened to kick a round upward. Measured hit rate
+    /// at 8 m was 20%.
+    ///
+    /// Aim at the middle of the trainee's hitbox instead. Correct in a headset, correct on a flat
+    /// screen, and doctrinally right either way.
+    /// </summary>
+    Vector3 ResolveAimPoint()
+    {
+        var health = target.GetComponentInParent<PlayerHealth>();
+        if (health == null) health = target.root.GetComponentInChildren<PlayerHealth>();
+
+        if (health != null)
+        {
+            var body = health.GetComponent<CapsuleCollider>();
+            if (body != null) return body.bounds.center;   // centre-mass
+        }
+        return target.position;                            // fallback: whatever we were given
+    }
+
     void FireOnce()
     {
         if (firePoint == null) { Debug.LogWarning("No firePoint"); return; }
@@ -148,7 +175,7 @@ public class NpcShooterRaycast : MonoBehaviour
         if (muzzleFlash != null) muzzleFlash.Play();
         if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
 
-        Vector3 dir = (target.position - firePoint.position).normalized;
+        Vector3 dir = (ResolveAimPoint() - firePoint.position).normalized;
 
         float angle = spreadDegrees * Mathf.Deg2Rad;
         dir += new Vector3(

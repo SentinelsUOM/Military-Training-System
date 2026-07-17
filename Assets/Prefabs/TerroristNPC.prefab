@@ -455,7 +455,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294967295
   fireRate: 8
-  spreadDegrees: 5
+  spreadDegrees: 8
   range: 80
   damage: 10
   shotsPerBurst: 3

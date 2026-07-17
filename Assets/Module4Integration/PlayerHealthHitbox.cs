@@ -32,12 +32,42 @@ public class PlayerHealthHitbox : MonoBehaviour, IDamageable, IImpactType
     [Tooltip("Print every hit to the Console for debugging.")]
     [SerializeField] private bool echoToConsole = true;
 
+    [Header("Follow the trainee's head")]
+    [Tooltip("Keep this damageable body collider underneath the trainee's head every frame. " +
+             "The hitbox is parented to the XR Origin, but the head/camera moves independently of " +
+             "it — so the moment the trainee walks anywhere, the collider is left behind (metres " +
+             "away, often inside a wall) while the camera moves on. Bullets aimed at the trainee " +
+             "then pass through empty space and never register: the trainee is effectively immortal " +
+             "as soon as they move. Following the head keeps the body where the player actually is.")]
+    [SerializeField] private bool followHead = true;
+
+    private Transform _head;
+    private float     _floorY;   // captured standing/floor height — kept constant while following in XZ
+
     private void Awake()
     {
         if (playerHealth == null) playerHealth = GetComponent<PlayerHealth>();
         if (playerHealth == null) playerHealth = GetComponentInParent<PlayerHealth>();
         if (playerHealth == null)
             Debug.LogError($"[PlayerHealthHitbox] {name}: no PlayerHealth found. Drag one into the Inspector.");
+
+        _floorY = transform.position.y;
+        if (Camera.main != null) _head = Camera.main.transform;
+    }
+
+    private void LateUpdate()
+    {
+        if (!followHead) return;
+        if (_head == null)
+        {
+            if (Camera.main == null) return;
+            _head = Camera.main.transform;
+        }
+        // Track the head in the horizontal plane; hold the original floor height so the standing
+        // capsule stays grounded (single-storey layouts). Set directly — this collider is not a
+        // rigidbody, so a per-frame move is a clean teleport that raycast bullets resolve fine.
+        var h = _head.position;
+        transform.position = new Vector3(h.x, _floorY, h.z);
     }
 
     public void TakeDamage(float damage, GameObject damager)
