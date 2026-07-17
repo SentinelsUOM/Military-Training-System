@@ -2494,9 +2494,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
             else
             {
-                // ── SWEEP: nobody has contact — clear rooms/doors near last contact.
-                if (!_isInvestigating && _lastKnownPlayerPos != Vector3.zero)
-                    InvestigatePosition(_lastKnownPlayerPos);
+                // ── SWEEP: nobody has eyes on the trainee — HUNT. Instead of every supporter
+                // walking to the same last-known point (which clumped them), ask the squad to
+                // fan out: each searcher gets a DISTINCT room. The call is cooldown-gated, so
+                // whichever supporter calls first re-tasks the whole squad and the rest no-op.
+                if (!_isInvestigating && _lastKnownPlayerPos != Vector3.zero && !string.IsNullOrEmpty(squadId))
+                    Squad.Get(squadId)?.FanOutSearch(_lastKnownPlayerPos, this);
                 yield return new WaitForSeconds(1.5f);
             }
         }
@@ -2623,6 +2626,32 @@ public class TerroristController : MonoBehaviour, INPCResponder
         _doorsCache   = list.ToArray();
         _doorsCacheAt = Time.time;
         return _doorsCache;
+    }
+
+    static Vector3[] _roomCentersCache;
+    static float     _roomCentersCacheAt = -999f;
+
+    /// <summary>
+    /// Every room's CENTRE point, used by the squad to fan searchers out across distinct rooms
+    /// instead of piling everyone onto one last-known position. SceneBuilder parents each room
+    /// GameObject under a child named "Rooms" and places it at the room centre, so the centres are
+    /// simply those children's positions. Cached for 5 s (rooms never move within a mission).
+    /// </summary>
+    public static Vector3[] GetSceneRoomCenters()
+    {
+        if (_roomCentersCache != null && Time.time - _roomCentersCacheAt < 5f) return _roomCentersCache;
+
+        var centers = new System.Collections.Generic.List<Vector3>();
+        foreach (var t in FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "Rooms" || t.childCount == 0) continue;
+            foreach (Transform room in t) centers.Add(room.position);
+            break; // there is exactly one "Rooms" root per built scenario
+        }
+
+        _roomCentersCache   = centers.ToArray();
+        _roomCentersCacheAt = Time.time;
+        return _roomCentersCache;
     }
 
     Transform ResolvePlayerCamera(ScenarioEvent e)
@@ -2769,7 +2798,6 @@ public class TerroristController : MonoBehaviour, INPCResponder
         Debug.Log($"[TerroristController] {gameObject.name}: investigating position at {soundPos}");
 
         var startState = currentState;
-        bool escalate  = _pendingEscalation; // capture; a later call may overwrite the field
         _isInvestigating = true;
         animator?.SetBool("Investigating", true);
 
@@ -2877,14 +2905,26 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (currentState == startState &&
             (startState == TerroristState.Suspicious || startState == TerroristState.Alert))
         {
+            // This room is clear. Re-split: ask the squad to fan out again, which — thanks to the
+            // swept-room memory — pushes searchers onto FRESH rooms rather than re-checking this
+            // one. Cooldown-gated, so a wave of "empty" reports produces at most one re-task.
+            // (The old behaviour sent the whole squad to the SAME point; that is what clumped
+            //  them. This is the "if they don't find me, they split again" behaviour.)
+            Vector3 reFocus = _lastKnownPlayerPos != Vector3.zero ? _lastKnownPlayerPos : soundPos;
+            if (!string.IsNullOrEmpty(squadId))
+                Squad.Get(squadId)?.FanOutSearch(reFocus, this);
+
+            // If I have PERSONALLY seen the trainee I never give up — stay Alert and I'll get a
+            // fresh sector from the fan-out (or, failing that, keep scanning). If I only ever
+            // HEARD something, the area's clear to me now → stand down to Idle.
+            if (_personallyConfirmedPlayer)
+            {
+                Debug.Log($"[TerroristController] {gameObject.name}: room clear but I've seen the trainee — staying on the hunt.");
+                EndInvestigation();
+                yield break;
+            }
+
             Debug.Log($"[TerroristController] {gameObject.name}: area clear, returning to Idle");
-
-            // First investigator turned up nothing → call the rest of the squad to
-            // sweep the same area (second wave). Backups don't escalate again, so
-            // this is bounded to one extra wave.
-            if (escalate && !string.IsNullOrEmpty(squadId))
-                Squad.Get(squadId)?.EscalateInvestigation(soundPos, this);
-
             EndInvestigation();
             TransitionTo(TerroristState.Idle, null);
             yield break;

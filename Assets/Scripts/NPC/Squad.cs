@@ -96,23 +96,102 @@ public class Squad
     /// Clear the active directive (call at scenario reset or when the leader dies).
     public void ClearDirective() => CurrentDirective = null;
 
-    // ── Investigation escalation (second wave) ────────────────────────────────
+    // ── Coordinated fan-out search ────────────────────────────────────────────
+
+    // Rooms swept recently, keyed by a quantised centre, so successive fan-outs rotate to
+    // FRESH rooms instead of re-checking the one just cleared. Entries older than this decay.
+    const float RoomFreshnessSeconds = 15f;
+    // Minimum gap between fan-outs, so several members reporting "empty" at once don't thrash
+    // the whole squad's destinations. One call already re-tasks everyone.
+    const float FanOutCooldownSeconds = 5f;
+
+    readonly Dictionary<long, float> _roomSweptAt = new Dictionary<long, float>();
+    float _nextFanOutAllowedAt = -999f;
+
+    static long RoomKey(Vector3 p) => (long)Mathf.Round(p.x) * 100000L + (long)Mathf.Round(p.z);
 
     /// <summary>
-    /// Called when the first investigator searched an area and found nothing.
-    /// Dispatches every AVAILABLE squad member to sweep the same area — a second
-    /// wave. The hostage guardian is skipped (it must stay on the hostage), as are
-    /// the requester, downed/engaged members, and anyone already searching.
+    /// Kept for the existing call site (first investigator found nothing). Now spreads the squad
+    /// OUT rather than piling everyone onto the same point — see <see cref="FanOutSearch"/>.
     /// </summary>
     public void EscalateInvestigation(Vector3 area, TerroristController requester)
+        => FanOutSearch(area, requester);
+
+    /// <summary>
+    /// Split the squad up to HUNT the trainee: assign each available searcher a DISTINCT room so
+    /// they cover ground and cut off escape, instead of everyone converging on one spot. The
+    /// candidate rooms are the ones nearest the focus (last-known position) that haven't just been
+    /// swept, so a re-split after a lost contact rotates onto fresh rooms.
+    ///
+    /// The HOSTAGE GUARDIAN is never included — it must never leave the hostage room, for any
+    /// reason. Members already Engaging are left to fight; downed members are skipped.
+    ///
+    /// Convergence is handled elsewhere: the instant any searcher gets LOS it enters Engage and
+    /// broadcasts GunshotHeard, which re-tasks the others onto that contact. If that contact is
+    /// then lost, an empty sweep calls back here and the squad splits again.
+    /// </summary>
+    public void FanOutSearch(Vector3 focus, TerroristController caller)
     {
-        foreach (var member in _members)
+        if (Time.time < _nextFanOutAllowedAt) return;
+
+        var searchers = new List<TerroristController>();
+        foreach (var m in _members)
         {
-            if (member == null || member == requester) continue;
-            if (member.isHostageGuardian)              continue; // guards the hostage
-            if (member.currentState == TerroristState.Down)   continue;
-            if (member.currentState == TerroristState.Engage) continue;
-            member.DispatchToInvestigate(area);
+            if (m == null)                                 continue;
+            if (m.isHostageGuardian)                       continue; // NEVER leaves the hostage room
+            if (m.currentState == TerroristState.Down)     continue;
+            if (m.currentState == TerroristState.Engage)   continue; // already in the fight
+            searchers.Add(m);
         }
+        if (searchers.Count == 0) return;
+
+        var rooms = new List<Vector3>(TerroristController.GetSceneRoomCenters());
+        if (rooms.Count == 0)
+        {
+            // No room data (unbuilt/legacy scene): fall back to the old same-point sweep so the
+            // squad still responds rather than freezing.
+            foreach (var m in searchers) m.DispatchToInvestigate(focus);
+            _nextFanOutAllowedAt = Time.time + FanOutCooldownSeconds;
+            return;
+        }
+
+        // Rank rooms: freshly-swept rooms sink to the bottom; otherwise nearest-to-focus first.
+        rooms.Sort((a, b) => RoomCost(a, focus).CompareTo(RoomCost(b, focus)));
+
+        // Consider a few more rooms than searchers so, with distinct assignment, they genuinely
+        // spread rather than all crowding the single closest room.
+        int candidateCount = Mathf.Min(rooms.Count, searchers.Count + 2);
+
+        var taken = new bool[candidateCount];
+        foreach (var m in searchers)
+        {
+            // Each searcher claims the nearest UNTAKEN candidate room to its own position — this
+            // is what makes them split (distinct rooms) while still each walking the short way.
+            int best = -1; float bestD = float.MaxValue;
+            for (int i = 0; i < candidateCount; i++)
+            {
+                if (taken[i]) continue;
+                float d = (rooms[i] - m.transform.position).sqrMagnitude;
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            if (best < 0) best = 0; // more searchers than candidate rooms → double up on the closest
+
+            taken[best] = true;
+            _roomSweptAt[RoomKey(rooms[best])] = Time.time;
+            m.DispatchToInvestigate(rooms[best]);
+        }
+
+        _nextFanOutAllowedAt = Time.time + FanOutCooldownSeconds;
+    }
+
+    /// <summary>Sort cost for a room during fan-out: distance to the focus, with a large penalty
+    /// for rooms swept within the last few seconds so re-splits move onto fresh ground.</summary>
+    float RoomCost(Vector3 room, Vector3 focus)
+    {
+        float cost = Vector3.Distance(room, focus);
+        if (_roomSweptAt.TryGetValue(RoomKey(room), out float t) &&
+            Time.time - t < RoomFreshnessSeconds)
+            cost += 1000f; // recently searched — try somewhere else first
+        return cost;
     }
 }
