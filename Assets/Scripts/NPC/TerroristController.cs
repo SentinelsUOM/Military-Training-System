@@ -2649,9 +2649,16 @@ public class TerroristController : MonoBehaviour, INPCResponder
             break; // there is exactly one "Rooms" root per built scenario
         }
 
-        _roomCentersCache   = centers.ToArray();
-        _roomCentersCacheAt = Time.time;
-        return _roomCentersCache;
+        // Never cache an EMPTY scan. A scan that runs mid-rebuild (rooms momentarily destroyed)
+        // would otherwise lock in "no rooms" for the full cache window and silently collapse the
+        // fan-out to a single point. Only refresh the cache on a good read; on an empty read,
+        // return the last good result (or empty) without poisoning the timestamp.
+        if (centers.Count > 0)
+        {
+            _roomCentersCache   = centers.ToArray();
+            _roomCentersCacheAt = Time.time;
+        }
+        return _roomCentersCache ?? centers.ToArray();
     }
 
     Transform ResolvePlayerCamera(ScenarioEvent e)
