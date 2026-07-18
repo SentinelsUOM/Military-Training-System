@@ -397,8 +397,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Squad-death events always bypass cooldown — every active NPC must react
         if (e.Type == ScenarioEventType.TerroristDown) return true;
 
-        // Cooldown applies to every other event
-        if (Time.time - _lastResponseTime < responseCooldown) return false;
+        // A gunshot from a MATE at a genuinely NEW location is fresh contact intel — it must
+        // ALWAYS get through, even mid-search, so a man sweeping a stale corner can drop it and
+        // converge. (Repeated shots from the SAME spot are not "new", so they stay throttled and
+        // don't thrash.) Everything else obeys the per-NPC response cooldown.
+        bool freshContact = e.Type == ScenarioEventType.GunshotHeard &&
+                            e.Instigator != gameObject &&
+                            (e.Origin - _lastKnownPlayerPos).sqrMagnitude > 4f; // >2 m from my current target
+        if (!freshContact && Time.time - _lastResponseTime < responseCooldown) return false;
 
         // Filter by event type
         switch (e.Type)
@@ -466,26 +472,30 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // the door. Recording the origin is what actually sends him there (the
                 // NavMesh routes him through the doorways).
                 bool newSpot = (e.Origin - _lastKnownPlayerPos).sqrMagnitude > 4f; // >2m away
+                bool fromMate = e.Instigator != null && e.Instigator != gameObject;
                 _lastKnownPlayerPos = e.Origin;
                 SetLookTarget(e.Origin);
-
-                // FRESH INFORMATION BEATS AN OLD SEARCH. If a mate just fired (that broadcast
-                // carries the trainee's position), a man still sweeping some stale corner must
-                // ABANDON it and re-task to the new spot — otherwise he keeps hunting an empty
-                // corridor while the trainee is somewhere else entirely.
-                if (newSpot && _isInvestigating && !isHostageGuardian)
-                {
-                    Debug.Log($"[TerroristController] {gameObject.name}: fresher contact at {e.Origin:F1} — " +
-                              "abandoning the stale search and re-tasking there.");
-                    if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
-                    _investigateRoutine = null;
-                    _isInvestigating = false;
-                }
 
                 if (currentState == TerroristState.Idle)
                     TransitionTo(TerroristState.Suspicious, e);
                 else if (currentState != TerroristState.Engage)
                     TransitionTo(TerroristState.Alert, e);
+
+                // FRESH INFORMATION BEATS AN OLD SEARCH. A mate firing (or opening fire on sight)
+                // broadcasts the trainee's position. A man still sweeping some stale corner must
+                // ABANDON it and COME to that spot IMMEDIATELY — not keep hunting an empty corridor
+                // and not wait for the next support-routine tick. So: kill the current search and
+                // re-task straight onto the new contact. The look-first phase of the new
+                // investigation keeps it from looking robotic.
+                if (newSpot && fromMate && !isHostageGuardian && currentState != TerroristState.Engage)
+                {
+                    Debug.Log($"[TerroristController] {gameObject.name}: fresh contact from {e.Instigator.name} at " +
+                              $"{e.Origin:F1} — dropping my search and CONVERGING there now.");
+                    if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
+                    _investigateRoutine = null;
+                    _isInvestigating = false;
+                    InvestigatePosition(e.Origin); // walk to the contact now
+                }
                 break;
 
             // ── Spatial ───────────────────────────────────────────────────────
