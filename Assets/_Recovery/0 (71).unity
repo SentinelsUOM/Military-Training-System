@@ -6856,7 +6856,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7cb41ee6f78f8c44d8ca85d1cde39b18, type: 3}
   m_Name: 
   m_EditorClassIdentifier: TeamSentinels.Module4::TeamSentinels.Module4.Export.DashboardUploader
-  dashboardBaseUrl: https://military-training-system.vercel.app
+  dashboardBaseUrl: http://localhost:3000
   enableUpload: 1
   timeoutSeconds: 15
   logPayload: 0
@@ -116662,17 +116662,11 @@ MonoBehaviour:
   buildPerimeterCorridor: 1
   corridorWidth: 3
   corridorFloorMaterial: {fileID: 0}
-  addFurniture: 1
-  furnitureMaterial: {fileID: 0}
-  useFurniturePrefabs: 0
-  furniturePrefabs: []
   terroristPrefab: {fileID: 384703117076225491, guid: 43367c24b95a3b0459bc95476f492316, type: 3}
   hostagePrefab: {fileID: 1989400882266563527, guid: e5bacbcfc73eea24994cfba02f4d6774, type: 3}
   traineeRig: {fileID: 268884717}
   buildAnchor: {fileID: 0}
   buildOffset: {x: 0, y: 0, z: 10}
-  spawnOutsideEntrance: 1
-  entranceStandoff: 8
   traineeStartPoint: {fileID: 929380653}
   entryDoorStartsOpen: 1
   traineeWeapon: {fileID: 840338492}
@@ -116680,10 +116674,6 @@ MonoBehaviour:
   createSafeZone: 1
   safeZoneRadius: 2.5
   safeZoneColor: {r: 0.2, g: 1, b: 0.4, a: 1}
-  buildGuidePath: 1
-  guidePathWidth: 1.4
-  guidePathColor: {r: 1, g: 0.85, b: 0.2, a: 1}
-  guidePathArrowSpacing: 2.5
   showSpawnGizmos: 1
 --- !u!4 &1956214084
 Transform:

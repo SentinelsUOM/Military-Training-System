@@ -44,6 +44,11 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("replayFrames")]
         public List<ReplayFrame> replayFrames = new List<ReplayFrame>();
 
+        /// <summary>Top-down room/door geometry of the played scenario, for the
+        /// dashboard map + 3D replay. Null for sessions logged before this existed.</summary>
+        [JsonProperty("layout")]
+        public LayoutSnapshot layout;
+
         #endregion
 
         #region Public API

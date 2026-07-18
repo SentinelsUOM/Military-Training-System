@@ -216,6 +216,20 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "ring instead of walking onto you. Should be >= minStandoffDistance.")]
     public float preferredStandoffDistance = 3.5f;
 
+    [Tooltip("While engaging, if the terrorist is farther than (preferredStandoffDistance + this), it " +
+             "ADVANCES on the player to close the gap instead of holding and shooting from range. This " +
+             "is 'when he sees you, he comes at you'. 0 = never advance (old hold-only behaviour).")]
+    public float pursueAdvanceMargin = 2.0f;
+
+    [Header("Directional search (chase the escape, check the doubling-back)")]
+    [Tooltip("When the player breaks line of sight, the terrorist searches this far ALONG the " +
+             "direction the player was last running — chasing where they went, not where they were.")]
+    public float escapeLeadDistance = 4.0f;
+
+    [Tooltip("If the forward chase turns up nothing, the terrorist swings this far the OPPOSITE way " +
+             "(back past the last-known spot) in case the player doubled back / planked. 0 = skip.")]
+    public float doubleBackDistance = 4.0f;
+
     [Header("Combat Escalation (posture)")]
     [Tooltip("Current squad-member behaviour. Starts at HoldAndShoot (stand at range and fire). As the " +
              "firefight escalates — allies killed, stress spikes, taking hits, time in combat — it flips " +
@@ -683,6 +697,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             agent.SetDestination(StandoffPoint(threat)); // too close — step back
         }
+        else if (pursueAdvanceMargin > 0f && dist > preferredStandoffDistance + pursueAdvanceMargin)
+        {
+            // Too FAR — close the gap. "When he sees you, he comes at you." StandoffPoint sits on
+            // the firing ring around the player, so pathing to it walks the terrorist in to that
+            // ring rather than standing off at range plinking. He stops once he reaches it.
+            agent.SetDestination(StandoffPoint(threat));
+        }
         else if (posture == CombatPosture.HoldAndShoot &&
                  !agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.1f)
         {
@@ -699,6 +720,22 @@ public class TerroristController : MonoBehaviour, INPCResponder
         Vector3 target = threat + away * preferredStandoffDistance;
         return NavMesh.SamplePosition(target, out NavMeshHit hit, 2f, NavMesh.AllAreas)
             ? hit.position : transform.position;
+    }
+
+    /// <summary>
+    /// A NavMesh point <paramref name="lead"/> metres PAST the last-known position along the
+    /// direction the player was escaping — i.e. where they were heading, not where they were. Falls
+    /// back to the raw last-known position when no escape heading has been recorded yet.
+    /// </summary>
+    Vector3 EscapeLeadPoint(float lead)
+    {
+        if (_lastKnownPlayerHeading != Vector3.zero && lead > 0f)
+        {
+            Vector3 candidate = _lastKnownPlayerPos + _lastKnownPlayerHeading * lead;
+            if (NavMesh.SamplePosition(candidate, out NavMeshHit hit, lead + 2f, NavMesh.AllAreas))
+                return hit.position;
+        }
+        return _lastKnownPlayerPos;
     }
 
     /// <summary>Pushes a candidate destination out of the standoff ring if it sits inside it.</summary>
@@ -798,8 +835,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         TransitionTo(TerroristState.Alert, e);
                     // Guardian holds its post — it does NOT chase/search; it keeps
                     // guarding the hostage and re-engages only if the player returns.
+                    // Everyone else CHASES: search ahead along the escape direction (where the
+                    // player was running), not the exact spot they were last standing.
                     if (!isHostageGuardian)
-                        InvestigatePosition(_lastKnownPlayerPos);
+                        InvestigatePosition(EscapeLeadPoint(escapeLeadDistance));
                 }
                 break;
         }
@@ -821,6 +860,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
     bool      _wasFiring;
     bool      _personallyConfirmedPlayer; // true only when own PerceptionController fired TargetConfirmed
     Vector3   _lastKnownPlayerPos;        // where the player was last actually seen (for search-on-lost)
+    Vector3   _lastKnownPlayerHeading;    // horizontal direction the player was MOVING when last seen —
+                                          // the escape direction. Kept after LOS is lost so the search
+                                          // can chase where they went, then check the doubling-back.
+    Vector3   _prevSeenPlayerPos;         // previous-frame player position while visible (for heading)
+    bool      _hasPrevSeenPos;            // reset on losing LOS so we never diff across a sight gap
     bool      _pendingEscalation;         // this investigation may call for squad backup if it finds nothing
     CoverPoint _claimedCover;
     Vector3   _spawnPosition;
@@ -1040,11 +1084,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
         }
         _lastAnimPos = transform.position;
 
-        // While engaging we have live sight of the player, so keep recording where
-        // they are. The instant we lose them (PlayerLost), this value freezes at the
-        // last-seen spot and becomes the search target.
-        if (currentState == TerroristState.Engage && _lastSeenPlayer != null)
-            _lastKnownPlayerPos = _lastSeenPlayer.position;
+        // While we have live sight of the player, keep recording WHERE they are and WHICH WAY
+        // they're moving. The instant we lose them (PlayerLost), both freeze: the position becomes
+        // the search anchor and the heading becomes the escape direction we chase.
+        if (_playerVisible && _lastSeenPlayer != null)
+        {
+            Vector3 cur = _lastSeenPlayer.position;
+            _lastKnownPlayerPos = cur;
+
+            if (_hasPrevSeenPos)
+            {
+                Vector3 d = cur - _prevSeenPlayerPos; d.y = 0f;
+                if (d.sqrMagnitude > 0.0009f) // moved > ~3 cm since last frame — a real step, not jitter
+                {
+                    Vector3 h = d.normalized;
+                    _lastKnownPlayerHeading = _lastKnownPlayerHeading == Vector3.zero
+                        ? h
+                        : Vector3.Slerp(_lastKnownPlayerHeading, h, 0.25f).normalized; // smooth
+                }
+            }
+            _prevSeenPlayerPos = cur;
+            _hasPrevSeenPos    = true;
+        }
+        else _hasPrevSeenPos = false; // lost sight — keep the heading, but don't diff across the gap
 
         // Sustained-fight caution: a drawn-out engagement slowly raises escalation
         // even without fresh casualties, so a long firefight eventually pushes the
@@ -2494,9 +2556,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
             else
             {
-                // ── SWEEP: nobody has contact — clear rooms/doors near last contact.
-                if (!_isInvestigating && _lastKnownPlayerPos != Vector3.zero)
-                    InvestigatePosition(_lastKnownPlayerPos);
+                // ── SWEEP: nobody has eyes on the trainee — HUNT. Instead of every supporter
+                // walking to the same last-known point (which clumped them), ask the squad to
+                // fan out: each searcher gets a DISTINCT room. The call is cooldown-gated, so
+                // whichever supporter calls first re-tasks the whole squad and the rest no-op.
+                if (!_isInvestigating && _lastKnownPlayerPos != Vector3.zero && !string.IsNullOrEmpty(squadId))
+                    Squad.Get(squadId)?.FanOutSearch(_lastKnownPlayerPos, this);
                 yield return new WaitForSeconds(1.5f);
             }
         }
@@ -2623,6 +2688,39 @@ public class TerroristController : MonoBehaviour, INPCResponder
         _doorsCache   = list.ToArray();
         _doorsCacheAt = Time.time;
         return _doorsCache;
+    }
+
+    static Vector3[] _roomCentersCache;
+    static float     _roomCentersCacheAt = -999f;
+
+    /// <summary>
+    /// Every room's CENTRE point, used by the squad to fan searchers out across distinct rooms
+    /// instead of piling everyone onto one last-known position. SceneBuilder parents each room
+    /// GameObject under a child named "Rooms" and places it at the room centre, so the centres are
+    /// simply those children's positions. Cached for 5 s (rooms never move within a mission).
+    /// </summary>
+    public static Vector3[] GetSceneRoomCenters()
+    {
+        if (_roomCentersCache != null && Time.time - _roomCentersCacheAt < 5f) return _roomCentersCache;
+
+        var centers = new System.Collections.Generic.List<Vector3>();
+        foreach (var t in FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (t.name != "Rooms" || t.childCount == 0) continue;
+            foreach (Transform room in t) centers.Add(room.position);
+            break; // there is exactly one "Rooms" root per built scenario
+        }
+
+        // Never cache an EMPTY scan. A scan that runs mid-rebuild (rooms momentarily destroyed)
+        // would otherwise lock in "no rooms" for the full cache window and silently collapse the
+        // fan-out to a single point. Only refresh the cache on a good read; on an empty read,
+        // return the last good result (or empty) without poisoning the timestamp.
+        if (centers.Count > 0)
+        {
+            _roomCentersCache   = centers.ToArray();
+            _roomCentersCacheAt = Time.time;
+        }
+        return _roomCentersCache ?? centers.ToArray();
     }
 
     Transform ResolvePlayerCamera(ScenarioEvent e)
@@ -2769,7 +2867,6 @@ public class TerroristController : MonoBehaviour, INPCResponder
         Debug.Log($"[TerroristController] {gameObject.name}: investigating position at {soundPos}");
 
         var startState = currentState;
-        bool escalate  = _pendingEscalation; // capture; a later call may overwrite the field
         _isInvestigating = true;
         animator?.SetBool("Investigating", true);
 
@@ -2870,6 +2967,30 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
         }
 
+        // ── Phase 3b: Check the DOUBLING-BACK ─────────────────────────────────
+        // The forward chase (this whole search began ahead along the escape direction) found
+        // nothing. A trainee who knows they're being chased often planks back the way they came,
+        // so before giving up, swing to the OPPOSITE side of the last-known spot and check there.
+        if (currentState == startState && doubleBackDistance > 0f &&
+            _lastKnownPlayerHeading != Vector3.zero)
+        {
+            Vector3 back = _lastKnownPlayerPos - _lastKnownPlayerHeading * doubleBackDistance;
+            if (NavMesh.SamplePosition(back, out NavMeshHit bh, doubleBackDistance + 2f, NavMesh.AllAreas))
+            {
+                Debug.Log($"[TerroristController] {gameObject.name}: forward chase empty — checking the doubling-back at {bh.position:F1}");
+                SetLookTarget(bh.position);
+                agent.SetDestination(bh.position);
+                while (currentState == startState &&
+                       (agent.pathPending || agent.remainingDistance > agent.stoppingDistance + 0.5f))
+                    yield return null;
+                if (currentState == startState)
+                {
+                    agent.ResetPath();
+                    yield return StartCoroutine(ScanRotation(startState));
+                }
+            }
+        }
+
         // ── Phase 4: Nothing found — de-escalate ──────────────────────────────
         // Whether the search began from Suspicious (heard a gunshot) or Alert
         // (lost sight of the player and hunted their last-known position), if the
@@ -2877,14 +2998,26 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (currentState == startState &&
             (startState == TerroristState.Suspicious || startState == TerroristState.Alert))
         {
+            // This room is clear. Re-split: ask the squad to fan out again, which — thanks to the
+            // swept-room memory — pushes searchers onto FRESH rooms rather than re-checking this
+            // one. Cooldown-gated, so a wave of "empty" reports produces at most one re-task.
+            // (The old behaviour sent the whole squad to the SAME point; that is what clumped
+            //  them. This is the "if they don't find me, they split again" behaviour.)
+            Vector3 reFocus = _lastKnownPlayerPos != Vector3.zero ? _lastKnownPlayerPos : soundPos;
+            if (!string.IsNullOrEmpty(squadId))
+                Squad.Get(squadId)?.FanOutSearch(reFocus, this);
+
+            // If I have PERSONALLY seen the trainee I never give up — stay Alert and I'll get a
+            // fresh sector from the fan-out (or, failing that, keep scanning). If I only ever
+            // HEARD something, the area's clear to me now → stand down to Idle.
+            if (_personallyConfirmedPlayer)
+            {
+                Debug.Log($"[TerroristController] {gameObject.name}: room clear but I've seen the trainee — staying on the hunt.");
+                EndInvestigation();
+                yield break;
+            }
+
             Debug.Log($"[TerroristController] {gameObject.name}: area clear, returning to Idle");
-
-            // First investigator turned up nothing → call the rest of the squad to
-            // sweep the same area (second wave). Backups don't escalate again, so
-            // this is bounded to one extra wave.
-            if (escalate && !string.IsNullOrEmpty(squadId))
-                Squad.Get(squadId)?.EscalateInvestigation(soundPos, this);
-
             EndInvestigation();
             TransitionTo(TerroristState.Idle, null);
             yield break;
