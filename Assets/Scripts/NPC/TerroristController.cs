@@ -835,10 +835,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         TransitionTo(TerroristState.Alert, e);
                     // Guardian holds its post — it does NOT chase/search; it keeps
                     // guarding the hostage and re-engages only if the player returns.
-                    // Everyone else CHASES: search ahead along the escape direction (where the
-                    // player was running), not the exact spot they were last standing.
                     if (!isHostageGuardian)
-                        InvestigatePosition(EscapeLeadPoint(escapeLeadDistance));
+                    {
+                        // Tell the squad WHICH WAY the trainee ran, then trigger the collaborative
+                        // chase: everyone sweeps forward along the escape direction (line-abreast).
+                        // The fan-out re-tasks me too (I'm nearest the contact → I take the direct
+                        // line), so I don't also need a separate solo InvestigatePosition here.
+                        var sq = Squad.Get(squadId);
+                        if (sq != null)
+                        {
+                            sq.SetEscapeContext(_lastKnownPlayerPos, _lastKnownPlayerHeading);
+                            sq.FanOutSearch(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
+                        }
+                        else
+                        {
+                            InvestigatePosition(EscapeLeadPoint(escapeLeadDistance));
+                        }
+                    }
                 }
                 break;
         }
@@ -2561,7 +2574,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // fan out: each searcher gets a DISTINCT room. The call is cooldown-gated, so
                 // whichever supporter calls first re-tasks the whole squad and the rest no-op.
                 if (!_isInvestigating && _lastKnownPlayerPos != Vector3.zero && !string.IsNullOrEmpty(squadId))
-                    Squad.Get(squadId)?.FanOutSearch(_lastKnownPlayerPos, this);
+                    Squad.Get(squadId)?.FanOutSearch(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                 yield return new WaitForSeconds(1.5f);
             }
         }
@@ -3005,7 +3018,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
             //  them. This is the "if they don't find me, they split again" behaviour.)
             Vector3 reFocus = _lastKnownPlayerPos != Vector3.zero ? _lastKnownPlayerPos : soundPos;
             if (!string.IsNullOrEmpty(squadId))
-                Squad.Get(squadId)?.FanOutSearch(reFocus, this);
+                Squad.Get(squadId)?.FanOutSearch(reFocus, _lastKnownPlayerHeading, this);
 
             // If I have PERSONALLY seen the trainee I never give up — stay Alert and I'll get a
             // fresh sector from the fan-out (or, failing that, keep scanning). If I only ever

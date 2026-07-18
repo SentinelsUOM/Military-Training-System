@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 
 /// <summary>
 /// Runtime squad record — created at scenario load time from the Scenario JSON
@@ -96,102 +97,143 @@ public class Squad
     /// Clear the active directive (call at scenario reset or when the leader dies).
     public void ClearDirective() => CurrentDirective = null;
 
-    // ── Coordinated fan-out search ────────────────────────────────────────────
+    // ── Coordinated directional search ────────────────────────────────────────
 
-    // Rooms swept recently, keyed by a quantised centre, so successive fan-outs rotate to
-    // FRESH rooms instead of re-checking the one just cleared. Entries older than this decay.
-    const float RoomFreshnessSeconds = 15f;
-    // Minimum gap between fan-outs, so several members reporting "empty" at once don't thrash
-    // the whole squad's destinations. One call already re-tasks everyone.
-    const float FanOutCooldownSeconds = 5f;
+    // Minimum gap between fan-outs so several members reporting "empty" at once don't thrash the
+    // whole squad's destinations. One call already re-tasks everyone.
+    const float FanOutCooldownSeconds = 4f;
+    // How long a reported escape direction stays the squad's shared search bias.
+    const float EscapeContextTTL = 12f;
 
-    readonly Dictionary<long, float> _roomSweptAt = new Dictionary<long, float>();
-    float _nextFanOutAllowedAt = -999f;
+    // Forward-sweep formation.
+    const float LeadBase       = 5f;   // how far along the escape line the near searcher goes
+    const float LeadPerLane    = 1.5f; // extra depth per lateral lane, so it reads as a cone, not a wall
+    const float LateralStep    = 3.5f; // sideways gap between adjacent searchers across the escape line
+    const float DoubleBackLead = 6f;   // how far the plank-checker goes the OPPOSITE way (later waves only)
+    const float WidenPerWave   = 3f;   // each empty wave pushes the sweep this much farther out
+    const float RadialDistance = 6f;   // fallback spread radius when no escape direction is known
 
-    static long RoomKey(Vector3 p) => (long)Mathf.Round(p.x) * 100000L + (long)Mathf.Round(p.z);
+    float   _nextFanOutAllowedAt = -999f;
+    Vector3 _sharedFocus;
+    Vector3 _sharedEscapeDir;
+    float   _sharedContextAt = -999f;
+    int     _searchWave;               // 0 = first forward sweep; grows each time a sweep comes up empty
 
     /// <summary>
-    /// Kept for the existing call site (first investigator found nothing). Now spreads the squad
-    /// OUT rather than piling everyone onto the same point — see <see cref="FanOutSearch"/>.
+    /// Reported by whoever last had eyes on the trainee as they broke line of sight. Gives the WHOLE
+    /// squad a shared "they went THAT way" — so a fan-out triggered by a member who only heard the
+    /// gunfire still pushes in the right direction instead of guessing. Resets the search to wave 0
+    /// (a fresh forward chase) and clears the cooldown so the chase starts immediately.
     /// </summary>
+    public void SetEscapeContext(Vector3 lastPos, Vector3 escapeDir)
+    {
+        _sharedFocus = lastPos;
+        escapeDir.y  = 0f;
+        _sharedEscapeDir = escapeDir.sqrMagnitude > 0.01f ? escapeDir.normalized : Vector3.zero;
+        _sharedContextAt = Time.time;
+        _searchWave      = 0;
+        _nextFanOutAllowedAt = Time.time; // allow an immediate fan-out on the fresh contact-lost
+    }
+
+    /// <summary>Kept for the gunshot-investigation call site. A gunshot gives a POINT but no travel
+    /// direction, so this fans the squad out radially around it.</summary>
     public void EscalateInvestigation(Vector3 area, TerroristController requester)
-        => FanOutSearch(area, requester);
+        => FanOutSearch(area, Vector3.zero, requester);
 
     /// <summary>
-    /// Split the squad up to HUNT the trainee: assign each available searcher a DISTINCT room so
-    /// they cover ground and cut off escape, instead of everyone converging on one spot. The
-    /// candidate rooms are the ones nearest the focus (last-known position) that haven't just been
-    /// swept, so a re-split after a lost contact rotates onto fresh rooms.
+    /// Send the squad to HUNT the trainee, spread out. When an escape direction is known (someone
+    /// saw which way they ran) the searchers sweep FORWARD along it, line-abreast, covering the
+    /// width of the escape — this is the whole point: they chase where you went, not where you were.
+    /// Each empty sweep widens the net (WidenPerWave) and, from the second wave on, peels ONE
+    /// searcher off to check the DOUBLING-BACK in case the trainee planked — matching "chase first,
+    /// check the opposite a little only if I'm not found". With no direction at all (a blind
+    /// gunshot) they spread radially around the point.
     ///
-    /// The HOSTAGE GUARDIAN is never included — it must never leave the hostage room, for any
-    /// reason. Members already Engaging are left to fight; downed members are skipped.
-    ///
-    /// Convergence is handled elsewhere: the instant any searcher gets LOS it enters Engage and
-    /// broadcasts GunshotHeard, which re-tasks the others onto that contact. If that contact is
-    /// then lost, an empty sweep calls back here and the squad splits again.
+    /// The HOSTAGE GUARDIAN is never included. Engaged members are left to fight. Convergence is
+    /// unchanged: the first to get LOS re-engages and pulls the others onto the contact.
     /// </summary>
-    public void FanOutSearch(Vector3 focus, TerroristController caller)
+    public void FanOutSearch(Vector3 focus, Vector3 escapeDir, TerroristController caller)
     {
         if (Time.time < _nextFanOutAllowedAt) return;
 
         var searchers = new List<TerroristController>();
         foreach (var m in _members)
         {
-            if (m == null)                                 continue;
-            if (m.isHostageGuardian)                       continue; // NEVER leaves the hostage room
-            if (m.currentState == TerroristState.Down)     continue;
-            if (m.currentState == TerroristState.Engage)   continue; // already in the fight
+            if (m == null)                               continue;
+            if (m.isHostageGuardian)                     continue; // NEVER leaves the hostage room
+            if (m.currentState == TerroristState.Down)   continue;
+            if (m.currentState == TerroristState.Engage) continue; // already in the fight
             searchers.Add(m);
         }
         if (searchers.Count == 0) return;
 
-        var rooms = new List<Vector3>(TerroristController.GetSceneRoomCenters());
-        if (rooms.Count == 0)
+        // Prefer the squad-shared escape context (the freshest sighting) over a caller with no
+        // heading of its own — otherwise a squadmate who only HEARD the shots would search blind.
+        escapeDir.y = 0f;
+        Vector3 dir = escapeDir.sqrMagnitude > 0.01f ? escapeDir.normalized : Vector3.zero;
+        if (dir == Vector3.zero && Time.time - _sharedContextAt < EscapeContextTTL &&
+            _sharedEscapeDir != Vector3.zero)
         {
-            // No room data (unbuilt/legacy scene): fall back to the old same-point sweep so the
-            // squad still responds rather than freezing.
-            foreach (var m in searchers) m.DispatchToInvestigate(focus);
-            _nextFanOutAllowedAt = Time.time + FanOutCooldownSeconds;
-            return;
+            dir   = _sharedEscapeDir;
+            focus = _sharedFocus;
         }
 
-        // Rank rooms: freshly-swept rooms sink to the bottom; otherwise nearest-to-focus first.
-        rooms.Sort((a, b) => RoomCost(a, focus).CompareTo(RoomCost(b, focus)));
+        bool    haveDir = dir != Vector3.zero;
+        Vector3 perp    = haveDir ? Vector3.Cross(Vector3.up, dir).normalized : Vector3.right;
+        float   widen   = _searchWave * WidenPerWave;
 
-        // Consider a few more rooms than searchers so, with distinct assignment, they genuinely
-        // spread rather than all crowding the single closest room.
-        int candidateCount = Mathf.Min(rooms.Count, searchers.Count + 2);
+        // Nearest searcher to the focus takes the direct line; the rest fan out around them.
+        searchers.Sort((a, b) =>
+            (a.transform.position - focus).sqrMagnitude.CompareTo((b.transform.position - focus).sqrMagnitude));
 
-        var taken = new bool[candidateCount];
-        foreach (var m in searchers)
+        for (int i = 0; i < searchers.Count; i++)
         {
-            // Each searcher claims the nearest UNTAKEN candidate room to its own position — this
-            // is what makes them split (distinct rooms) while still each walking the short way.
-            int best = -1; float bestD = float.MaxValue;
-            for (int i = 0; i < candidateCount; i++)
+            Vector3 desired;
+            if (haveDir)
             {
-                if (taken[i]) continue;
-                float d = (rooms[i] - m.transform.position).sqrMagnitude;
-                if (d < bestD) { bestD = d; best = i; }
+                bool plankChecker = _searchWave >= 1 && searchers.Count >= 3 && i == searchers.Count - 1;
+                if (plankChecker)
+                {
+                    // From the second wave on, ONE searcher covers the trainee doubling back.
+                    desired = focus - dir * (DoubleBackLead + widen);
+                }
+                else
+                {
+                    float lat  = LaneLateral(i) * LateralStep;
+                    float lead = LeadBase + widen + Mathf.Abs(LaneLateral(i)) * LeadPerLane;
+                    desired = focus + dir * lead + perp * lat;
+                }
             }
-            if (best < 0) best = 0; // more searchers than candidate rooms → double up on the closest
+            else
+            {
+                float ang = (360f / searchers.Count) * i * Mathf.Deg2Rad;
+                desired = focus + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * (RadialDistance + widen);
+            }
 
-            taken[best] = true;
-            _roomSweptAt[RoomKey(rooms[best])] = Time.time;
-            m.DispatchToInvestigate(rooms[best]);
+            searchers[i].DispatchToInvestigate(SampleReachable(desired, focus));
         }
 
+        _searchWave++;
         _nextFanOutAllowedAt = Time.time + FanOutCooldownSeconds;
     }
 
-    /// <summary>Sort cost for a room during fan-out: distance to the focus, with a large penalty
-    /// for rooms swept within the last few seconds so re-splits move onto fresh ground.</summary>
-    float RoomCost(Vector3 room, Vector3 focus)
+    // 0, +1, -1, +2, -2, … — spreads searchers alternately to either side of the escape line.
+    static int LaneLateral(int lane)
     {
-        float cost = Vector3.Distance(room, focus);
-        if (_roomSweptAt.TryGetValue(RoomKey(room), out float t) &&
-            Time.time - t < RoomFreshnessSeconds)
-            cost += 1000f; // recently searched — try somewhere else first
-        return cost;
+        if (lane == 0) return 0;
+        int mag = (lane + 1) / 2;
+        return (lane % 2 == 1) ? mag : -mag;
+    }
+
+    /// <summary>Nearest navigable point to <paramref name="desired"/>; if that spot is off the mesh
+    /// (through a wall / outside the building) it pulls back toward the focus so the searcher still
+    /// gets a reachable destination instead of freezing and staring at a wall.</summary>
+    static Vector3 SampleReachable(Vector3 desired, Vector3 focus)
+    {
+        if (NavMesh.SamplePosition(desired, out var h, 6f, NavMesh.AllAreas)) return h.position;
+        Vector3 mid = Vector3.Lerp(desired, focus, 0.5f);
+        if (NavMesh.SamplePosition(mid, out var h2, 8f, NavMesh.AllAreas)) return h2.position;
+        if (NavMesh.SamplePosition(focus, out var h3, 8f, NavMesh.AllAreas)) return h3.position;
+        return focus;
     }
 }
