@@ -1,10 +1,10 @@
 # ninja log v5
-1	2055	1781638059184541906	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	23f6b3fd9a577b9b
-0	2087	1781638059192035755	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	6f44d773ea70143e
-0	2097	1781638059192072297	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	bf73dcdf7827c5ca
-1	2115	1781638059241516277	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	163d7e6208f09fec
-1	2194	1781638059193017049	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	1c81263ced51deb0
-1	2196	1781638059222451653	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	f40ae7a19e60bfc5
-0	2197	1781638059271860716	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	996a035959bafc99
-0	2198	1781638059192593964	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	fff1dc7a417088a6
-2198	2360	1781638059462277413	/Volumes/ManushaSSD/FYP/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/64581v6a/obj/arm64-v8a/libgame.so	711dc04a769c1b0d
+1	1795	1784397577107036035	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	23f6b3fd9a577b9b
+1	1821	1784397577122511978	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	bf73dcdf7827c5ca
+2	1822	1784397577122486935	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	1c81263ced51deb0
+1	1823	1784397577125021509	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	fff1dc7a417088a6
+1	1824	1784397577122269058	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	6f44d773ea70143e
+2	1826	1784397577133693866	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	f40ae7a19e60bfc5
+1	1848	1784397577179204265	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	163d7e6208f09fec
+0	1862	1784397577191948756	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	996a035959bafc99
+1862	1969	1784397577300837483	/Volumes/ManushaSSD/FYP/Military-Training-System/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/64581v6a/obj/arm64-v8a/libgame.so	711dc04a769c1b0d
