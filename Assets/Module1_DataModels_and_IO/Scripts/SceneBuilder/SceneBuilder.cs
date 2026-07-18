@@ -152,10 +152,22 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "existing geometry. Tune this live until the gap looks right.")]
         public Vector3 buildOffset = new Vector3(0f, 0f, 20f);
 
-        [Tooltip("Optional staging spawn. When set, the trainee spawns HERE (e.g. " +
-                 "by the briefing table in your template) instead of inside the " +
-                 "generated building, then walks/teleports over to it. Leave empty " +
-                 "to spawn at the generated entry as before.")]
+        [Tooltip("RECOMMENDED. Spawn the trainee in open ground just outside the " +
+                 "generated building's entrance (facing the door), instead of inside " +
+                 "the building or at a fixed staging point. The entrance moves per " +
+                 "scenario, so this is computed each build — giving a clear, walkable " +
+                 "approach the guide path can follow. Takes priority over Trainee " +
+                 "Start Point.")]
+        public bool spawnOutsideEntrance = true;
+
+        [Tooltip("How far (metres) outside the entrance door the trainee spawns when " +
+                 "Spawn Outside Entrance is on.")]
+        public float entranceStandoff = 8f;
+
+        [Tooltip("Optional staging spawn. When set (and Spawn Outside Entrance is off), " +
+                 "the trainee spawns HERE (e.g. by the briefing table in your template) " +
+                 "instead of inside the generated building. Leave empty to spawn at the " +
+                 "generated entry as before.")]
         public Transform traineeStartPoint;
 
         [Tooltip("When the trainee spawns at a staging point, start the building's " +
@@ -187,6 +199,24 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         [Tooltip("Colour of the safe-spot floor marker.")]
         public Color safeZoneColor = new Color(0.2f, 1f, 0.4f, 1f);
 
+        [Header("Guide Path")]
+        [Tooltip("Lay a visible path/road on the ground from the trainee's staging " +
+                 "start point to the building's entrance door, so the trainee knows " +
+                 "exactly where to walk. Only drawn when a Trainee Start Point is set " +
+                 "(when the trainee spawns inside the building there's nothing to guide to).")]
+        public bool buildGuidePath = true;
+
+        [Tooltip("Width of the guide-path strip (metres).")]
+        public float guidePathWidth = 1.4f;
+
+        [Tooltip("Colour of the guide path. Drawn as a bright unlit strip so it reads " +
+                 "clearly even in a dark/night scene.")]
+        public Color guidePathColor = new Color(1f, 0.85f, 0.2f, 1f);
+
+        [Tooltip("Spacing between the direction chevrons laid along the path (metres). " +
+                 "Set to 0 to draw the strip only, with no arrows.")]
+        public float guidePathArrowSpacing = 2.5f;
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -216,6 +246,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private const string DOORS_ROOT    = "Doors";
         private const string NPCS_ROOT     = "NPCs";
         private const string CORRIDOR_ROOT = "PerimeterCorridor";
+        private const string GUIDE_ROOT    = "GuidePath";
 
         // ── Wall geometry (mirrors ScenePrefabBuilder so walls, floors and doors
         //    line up exactly) ──────────────────────────────────────────────────
@@ -232,6 +263,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Floor slab thickness for the perimeter corridor (matches the room floor
         // prefab's 0.08 m so the corridor floor sits flush with the building floor).
         private const float CorridorFloorThickness = 0.08f;
+
+        // Guide-path routing: how far outside the door the road's final approach
+        // point sits; the A* grid cell size; how far the search region extends past
+        // the start/goal so the road has room to detour around obstacles; and the
+        // vertical body band the obstacle probe sweeps (knee-to-head, so it catches
+        // walls/pillars/tables but ignores the floor and the roof).
+        private const float GuidePathApproach     = 2.5f;
+        private const float GuidePathCell         = 0.5f;
+        private const float GuidePathRegionMargin = 10f;
+        private const float GuidePathBodyLow      = 0.25f;
+        private const float GuidePathBodyHigh     = 1.9f;
 
         // ── Window geometry (carved into solid exterior walls) ────────────────
         private const float WindowWidth      = 1.0f;   // opening width along the wall
@@ -277,6 +319,23 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private Transform _doorsRoot;
         private Transform _npcsRoot;
         private Transform _corridorRoot;
+        private Transform _guidePathRoot;
+
+        // World position of the building's outer entrance door, captured while the
+        // perimeter corridor is built. The guide path targets this so it always ends
+        // at the door the trainee walks through. Reset false each build.
+        private bool    _hasEntryDoorWorld;
+        private Vector3 _entryDoorWorld;
+
+        // True when the trainee was spawned in open ground outside the entrance this
+        // build (via spawnOutsideEntrance); the guide path is drawn only then.
+        private bool _traineeSpawnedOutside;
+
+        // Outer footprint of the building INCLUDING the perimeter corridor, in world
+        // space, captured during the corridor build. The guide path routes around
+        // this rectangle so the road stays outside the walls instead of cutting
+        // through the interior. Valid only when _hasEntryDoorWorld is true.
+        private float _fpMinX, _fpMaxX, _fpMinZ, _fpMaxZ;
 
         private readonly Dictionary<string, GameObject> _roomObjects =
             new Dictionary<string, GameObject>();
@@ -368,6 +427,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 BuildEntryDoors(scenario);
                 BuildPerimeterCorridor(scenario);
                 PositionTrainee(scenario);
+                BuildGuidePath(scenario);
                 CreateSafeZone(scenario);
                 // Bake BEFORE spawning NPCs: NavMeshAgent attaches to the mesh in
                 // OnEnable, so spawning first throws "Failed to create agent because
@@ -404,6 +464,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
+            DestroyChildren(_guidePathRoot);
 
             if (_safeZone != null)
             {
@@ -428,10 +489,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         private void EnsureContainers()
         {
-            _roomsRoot    = GetOrCreateChild(ROOMS_ROOT);
-            _doorsRoot    = GetOrCreateChild(DOORS_ROOT);
-            _npcsRoot     = GetOrCreateChild(NPCS_ROOT);
-            _corridorRoot = GetOrCreateChild(CORRIDOR_ROOT);
+            _roomsRoot     = GetOrCreateChild(ROOMS_ROOT);
+            _doorsRoot     = GetOrCreateChild(DOORS_ROOT);
+            _npcsRoot      = GetOrCreateChild(NPCS_ROOT);
+            _corridorRoot  = GetOrCreateChild(CORRIDOR_ROOT);
+            _guidePathRoot = GetOrCreateChild(GUIDE_ROOT);
+
+            // The entrance door for this build hasn't been placed yet.
+            _hasEntryDoorWorld = false;
         }
 
         private void BuildRooms(ScenarioData scenario)
@@ -1287,6 +1352,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
+            // Outer footprint (world space) including the corridor band, so the guide
+            // path can route around it and stay outside the building walls.
+            _fpMinX = minX - corridorWidth; _fpMaxX = maxX + corridorWidth;
+            _fpMinZ = minZ - corridorWidth; _fpMaxZ = maxZ + corridorWidth;
+
             const float g = CorridorGrid;
             int cwCells = Mathf.Max(1, Mathf.RoundToInt(corridorWidth / g));
 
@@ -1432,6 +1502,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                         : new Vector3(gapPerp, baseY, doorLat);
                     DoorState outerState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
                     PlaceDoor("door_corridor_entry", doorPos, entranceSide, outerState);
+
+                    // Remember where the entrance ended up so the guide path can run to it.
+                    _entryDoorWorld    = doorPos;
+                    _hasEntryDoorWorld = true;
                 }
             }
         }
@@ -1804,9 +1878,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         private void PositionTrainee(ScenarioData scenario)
         {
+            _traineeSpawnedOutside = false;
+
             if (traineeRig == null)
             {
                 Debug.LogError("[SceneBuilder] traineeRig is not assigned - cannot position player.");
+                return;
+            }
+
+            // Preferred: spawn in open ground just outside the generated entrance,
+            // facing the door, so there is a clear walkable approach to breach. The
+            // entrance moves per scenario, so this is derived from the corridor door.
+            if (spawnOutsideEntrance && _hasEntryDoorWorld &&
+                TryComputeEntranceSpawn(out Vector3 outsidePos, out Quaternion outsideRot))
+            {
+                traineeRig.SetPositionAndRotation(outsidePos, outsideRot);
+                _traineeSpawnedOutside = true;
+                Debug.Log($"[SceneBuilder] Trainee spawned outside entrance at {outsidePos:F1}, " +
+                          $"facing the door {_entryDoorWorld:F1}.");
+                PlaceTraineeWeapon();
                 return;
             }
 
@@ -1837,6 +1927,42 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             Debug.Log($"[SceneBuilder] Trainee spawned at Module 1 position {spawnPos:F1} " +
                       $"(entry room, facing {t.facingDirection.ToVector3():F1}).");
             PlaceTraineeWeapon();
+        }
+
+        /// <summary>
+        /// Computes a spawn just outside the entrance door: step out along the door's
+        /// outward wall normal by <see cref="entranceStandoff"/> into open ground,
+        /// facing back at the door. If that spot is obstructed (a template structure
+        /// happens to sit outside the door), step further out until clear. Returns
+        /// false only if no clear spot is found.
+        /// </summary>
+        private bool TryComputeEntranceSpawn(out Vector3 pos, out Quaternion rot)
+        {
+            pos = Vector3.zero; rot = Quaternion.identity;
+
+            Vector2 centre  = new Vector2((_fpMinX + _fpMaxX) * 0.5f, (_fpMinZ + _fpMaxZ) * 0.5f);
+            Vector2 door    = new Vector2(_entryDoorWorld.x, _entryDoorWorld.z);
+            Vector2 outward = OutwardNormal(door - centre);
+            float groundY   = Mathf.Max(traineeRig.position.y, _buildOffset.y);
+
+            Physics.SyncTransforms();
+            Vector3 half  = new Vector3(0.4f, 0.9f, 0.4f);          // ~person-sized probe
+            float boxCy   = groundY + 1.0f;
+
+            // Walk outward from the door until we find clear ground (cap the search).
+            for (float dist = entranceStandoff; dist <= entranceStandoff + 8f; dist += 1f)
+            {
+                Vector3 cand = new Vector3(door.x + outward.x * dist, groundY,
+                                           door.y + outward.y * dist);
+                if (!Physics.CheckBox(new Vector3(cand.x, boxCy, cand.z), half,
+                                      Quaternion.identity, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    pos = cand;
+                    rot = Quaternion.LookRotation(new Vector3(-outward.x, 0f, -outward.y), Vector3.up);
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -1954,6 +2080,402 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             beacon.color  = safeZoneColor;
 
             Debug.Log($"[SceneBuilder] Safe zone created at trainee spawn {pos} (radius {safeZoneRadius}m).");
+        }
+
+        /// <summary>
+        /// Lays a visible "road" on the ground from the trainee's staging start point
+        /// to the building's entrance door, plus direction chevrons pointing the way,
+        /// so the trainee can see exactly where to walk. The route is bent AROUND the
+        /// outside of the building footprint (corridor included) and approaches the
+        /// door from outside, so the road never cuts through the interior. Only drawn
+        /// when a staging start point is used (otherwise the trainee already spawns
+        /// inside). Purely cosmetic: the strip carries no collider and lives outside
+        /// the Rooms container, so it never affects physics or the NavMesh bake.
+        /// </summary>
+        private void BuildGuidePath(ScenarioData scenario)
+        {
+            if (!buildGuidePath || traineeRig == null) return;
+
+            // The path runs from wherever the trainee actually stands to the entrance.
+            // It only makes sense when they spawned OUTSIDE (facing the door) — either
+            // via spawnOutsideEntrance or a fixed staging point.
+            if (!_traineeSpawnedOutside && traineeStartPoint == null) return;
+
+            // Target the outer corridor door if present, else the primary entry point.
+            Vector3 doorPos;
+            bool haveFootprint = _hasEntryDoorWorld;
+            if (_hasEntryDoorWorld)
+            {
+                doorPos = _entryDoorWorld;
+            }
+            else
+            {
+                List<EntryPointData> eps = scenario.layout?.entryPoints;
+                if (eps == null || eps.Count == 0) return;
+                doorPos = World(eps[0].position.ToVector3());
+            }
+
+            Vector3 start = traineeRig.position;
+
+            // Rest the strip on the higher of the staging floor and the building
+            // floor surface so it never sinks beneath either, lifted a hair to
+            // avoid z-fighting with the floor slabs.
+            float groundY = Mathf.Max(start.y, _buildOffset.y + CorridorFloorThickness) + 0.02f;
+
+            Vector3 startG = new Vector3(start.x, groundY, start.z);
+
+            // Aim at a point just OUTSIDE the door (perpendicular to its wall), so the
+            // route ends by stepping into the doorway from outside rather than trying
+            // to path onto the door itself.
+            Vector3 goal;
+            if (haveFootprint)
+            {
+                Vector2 centre  = new Vector2((_fpMinX + _fpMaxX) * 0.5f, (_fpMinZ + _fpMaxZ) * 0.5f);
+                Vector2 outward = OutwardNormal(new Vector2(doorPos.x, doorPos.z) - centre);
+                goal = new Vector3(doorPos.x + outward.x * GuidePathApproach, groundY,
+                                   doorPos.z + outward.y * GuidePathApproach);
+            }
+            else
+            {
+                goal = new Vector3(doorPos.x, groundY, doorPos.z);
+            }
+
+            // Grid-A* around every physical obstacle (template walls, pillars, tables,
+            // the generated building) between the staging point and the door approach.
+            List<Vector3> route = RoutePathAvoidingObstacles(startG, goal, groundY);
+
+            // Final short step from the approach point into the doorway itself.
+            if (haveFootprint)
+                route.Add(new Vector3(doorPos.x, groundY, doorPos.z));
+
+            // Draw a strip per leg, plus a square joint at each interior corner so the
+            // bends read as clean elbows (no gap/overlap where legs meet).
+            float totalLen = 0f;
+            for (int i = 0; i < route.Count - 1; i++)
+            {
+                totalLen += BuildPathLeg(route[i], route[i + 1], groundY);
+                if (i > 0) BuildCornerJoint(route[i], groundY);
+            }
+
+            Debug.Log($"[SceneBuilder] Guide path laid from staging {startG:F1} to entrance {doorPos:F1} " +
+                      $"avoiding obstacles ({route.Count} pts, {totalLen:F1} m).");
+        }
+
+        /// <summary>
+        /// Draws one straight leg of the guide path: a flat unlit strip plus "›"
+        /// direction chevrons marching toward the far end. Returns the leg length.
+        /// </summary>
+        private float BuildPathLeg(Vector3 a, Vector3 b, float groundY)
+        {
+            Vector3 delta = b - a;
+            float length = delta.magnitude;
+            if (length < 0.15f) return 0f;
+
+            Vector3 dir = delta / length;
+            Quaternion look = Quaternion.LookRotation(dir, Vector3.up);
+
+            var strip = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            strip.name = "GuidePath_Strip";
+            strip.transform.SetParent(_guidePathRoot, worldPositionStays: true);
+            strip.transform.SetPositionAndRotation((a + b) * 0.5f, look);
+            strip.transform.localScale = new Vector3(guidePathWidth, 0.02f, length);
+            StripCollider(strip);
+            PaintUnlit(strip, guidePathColor);
+
+            if (guidePathArrowSpacing > 0.1f)
+            {
+                Color arrowCol = Color.Lerp(guidePathColor, Color.white, 0.5f);
+                float barLen = guidePathWidth * 0.55f;
+                float chevY  = groundY + 0.01f;
+                for (float p = guidePathArrowSpacing * 0.5f; p < length - 0.3f; p += guidePathArrowSpacing)
+                {
+                    Vector3 c = a + dir * p; c.y = chevY;
+                    BuildChevron(c, dir, barLen, arrowCol);
+                }
+            }
+            return length;
+        }
+
+        /// <summary>Snaps a direction to the dominant cardinal axis (±X or ±Z),
+        /// giving the outward wall normal for the entrance side.</summary>
+        private static Vector2 OutwardNormal(Vector2 delta)
+        {
+            return Mathf.Abs(delta.x) >= Mathf.Abs(delta.y)
+                ? new Vector2(Mathf.Sign(delta.x), 0f)
+                : new Vector2(0f, Mathf.Sign(delta.y));
+        }
+
+        /// <summary>
+        /// Routes a ground path from <paramref name="startW"/> to <paramref name="goalW"/>
+        /// that steers around EVERY physical obstacle between them — template walls,
+        /// pillars, tables, and the generated building — by rasterising the area into
+        /// a grid, probing each cell with a body-height <see cref="Physics.OverlapBox"/>
+        /// (triggers ignored, the trainee rig and existing path pieces excluded), and
+        /// running A* over the free cells. The grid path is then string-pulled to a
+        /// handful of clean straight legs. Falls back to a direct line if no route is
+        /// found. Read-only w.r.t. the scene — only physics queries, no mutation.
+        /// </summary>
+        private List<Vector3> RoutePathAvoidingObstacles(Vector3 startW, Vector3 goalW, float groundY)
+        {
+            // Freshly built/moved colliders must be registered before we query them.
+            Physics.SyncTransforms();
+
+            var ignore = new HashSet<Collider>();
+            if (traineeRig != null)
+                foreach (var c in traineeRig.GetComponentsInChildren<Collider>(true)) ignore.Add(c);
+            if (_guidePathRoot != null)
+                foreach (var c in _guidePathRoot.GetComponentsInChildren<Collider>(true)) ignore.Add(c);
+
+            float cell   = GuidePathCell;
+            float margin = GuidePathRegionMargin;
+            float minX = Mathf.Min(startW.x, goalW.x) - margin;
+            float maxX = Mathf.Max(startW.x, goalW.x) + margin;
+            float minZ = Mathf.Min(startW.z, goalW.z) - margin;
+            float maxZ = Mathf.Max(startW.z, goalW.z) + margin;
+
+            int nx = Mathf.CeilToInt((maxX - minX) / cell) + 1;
+            int nz = Mathf.CeilToInt((maxZ - minZ) / cell) + 1;
+            const int cap = 200;                       // keep the probe count bounded
+            if (nx > cap || nz > cap)
+            {
+                cell = Mathf.Max((maxX - minX) / cap, (maxZ - minZ) / cap);
+                nx = Mathf.CeilToInt((maxX - minX) / cell) + 1;
+                nz = Mathf.CeilToInt((maxZ - minZ) / cell) + 1;
+            }
+
+            // Overlap box: a body-height slab, inflated in X/Z by half the path width
+            // so the road keeps clearance from whatever it passes.
+            float halfClear = guidePathWidth * 0.5f + 0.15f;
+            Vector3 half = new Vector3(cell * 0.5f + halfClear,
+                                       (GuidePathBodyHigh - GuidePathBodyLow) * 0.5f,
+                                       cell * 0.5f + halfClear);
+            float boxCy = groundY + (GuidePathBodyHigh + GuidePathBodyLow) * 0.5f;
+
+            var blocked = new bool[nx, nz];
+            for (int i = 0; i < nx; i++)
+                for (int j = 0; j < nz; j++)
+                    blocked[i, j] = ObstacleHit(new Vector3(minX + i * cell, boxCy, minZ + j * cell),
+                                                half, ignore);
+
+            int si = Mathf.Clamp(Mathf.RoundToInt((startW.x - minX) / cell), 0, nx - 1);
+            int sj = Mathf.Clamp(Mathf.RoundToInt((startW.z - minZ) / cell), 0, nz - 1);
+            int gi = Mathf.Clamp(Mathf.RoundToInt((goalW.x  - minX) / cell), 0, nx - 1);
+            int gj = Mathf.Clamp(Mathf.RoundToInt((goalW.z  - minZ) / cell), 0, nz - 1);
+
+            // The rig stands among the weapons tables, so clear a small disc around the
+            // start (and the goal cell) to guarantee A* can enter/leave.
+            int clr = Mathf.CeilToInt(1.0f / cell);
+            for (int di = -clr; di <= clr; di++)
+                for (int dj = -clr; dj <= clr; dj++)
+                {
+                    int ci = si + di, cj = sj + dj;
+                    if (ci >= 0 && ci < nx && cj >= 0 && cj < nz) blocked[ci, cj] = false;
+                }
+            blocked[gi, gj] = false;
+
+            List<Vector2Int> cells = AStarGrid(blocked, nx, nz, new Vector2Int(si, sj), new Vector2Int(gi, gj));
+            if (cells == null)
+                return new List<Vector3> { startW, goalW }; // no route — show a direct line
+
+            var pts = new List<Vector3>(cells.Count);
+            foreach (var c in cells)
+                pts.Add(new Vector3(minX + c.x * cell, groundY, minZ + c.y * cell));
+            pts[0] = startW; pts[pts.Count - 1] = goalW;      // snap endpoints to exact spots
+
+            return SmoothPath(pts, boxCy, half, cell, ignore);
+        }
+
+        /// <summary>True when a non-trigger collider (other than the ignored ones)
+        /// overlaps the body-height box at <paramref name="centre"/>.</summary>
+        private static bool ObstacleHit(Vector3 centre, Vector3 half, HashSet<Collider> ignore)
+        {
+            var hits = Physics.OverlapBox(centre, half, Quaternion.identity,
+                                          ~0, QueryTriggerInteraction.Ignore);
+            foreach (var c in hits)
+                if (c != null && !ignore.Contains(c)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// A* over a boolean obstacle grid, 8-connected, without cutting blocked
+        /// corners. Returns the cell path (start→goal inclusive) or null if blocked.
+        /// </summary>
+        private static List<Vector2Int> AStarGrid(bool[,] blocked, int nx, int nz,
+                                                  Vector2Int start, Vector2Int goal)
+        {
+            if (blocked[start.x, start.y] || blocked[goal.x, goal.y]) return null;
+
+            var g       = new float[nx, nz];
+            var f       = new float[nx, nz];
+            var came    = new Vector2Int[nx, nz];
+            var closed  = new bool[nx, nz];
+            var inOpen  = new bool[nx, nz];
+            for (int i = 0; i < nx; i++) for (int j = 0; j < nz; j++) { g[i, j] = float.MaxValue; came[i, j] = new Vector2Int(-1, -1); }
+
+            System.Func<Vector2Int, float> h = c =>
+            {
+                int dx = Mathf.Abs(c.x - goal.x), dy = Mathf.Abs(c.y - goal.y);
+                return (dx + dy) + (1.41421356f - 2f) * Mathf.Min(dx, dy); // octile
+            };
+
+            var open = new List<Vector2Int> { start };
+            g[start.x, start.y] = 0f; f[start.x, start.y] = h(start); inOpen[start.x, start.y] = true;
+
+            int[] dX = { 1, -1, 0, 0, 1, 1, -1, -1 };
+            int[] dY = { 0, 0, 1, -1, 1, -1, 1, -1 };
+
+            while (open.Count > 0)
+            {
+                // Extract the open cell with the lowest f (linear scan; grid is small).
+                int bi = 0; float bf = float.MaxValue;
+                for (int k = 0; k < open.Count; k++) { var c = open[k]; if (f[c.x, c.y] < bf) { bf = f[c.x, c.y]; bi = k; } }
+                Vector2Int cur = open[bi];
+                if (cur == goal)
+                {
+                    var path = new List<Vector2Int>();
+                    for (var at = cur; at.x != -1; at = came[at.x, at.y]) path.Add(at);
+                    path.Reverse();
+                    return path;
+                }
+                open.RemoveAt(bi); inOpen[cur.x, cur.y] = false; closed[cur.x, cur.y] = true;
+
+                for (int d = 0; d < 8; d++)
+                {
+                    int ni = cur.x + dX[d], nj = cur.y + dY[d];
+                    if (ni < 0 || ni >= nx || nj < 0 || nj >= nz) continue;
+                    if (blocked[ni, nj] || closed[ni, nj]) continue;
+                    if (d >= 4 && (blocked[cur.x, nj] || blocked[ni, cur.y])) continue; // no corner cutting
+
+                    float step = d >= 4 ? 1.41421356f : 1f;
+                    float ng = g[cur.x, cur.y] + step;
+                    if (ng < g[ni, nj])
+                    {
+                        g[ni, nj] = ng; f[ni, nj] = ng + h(new Vector2Int(ni, nj));
+                        came[ni, nj] = cur;
+                        if (!inOpen[ni, nj]) { open.Add(new Vector2Int(ni, nj)); inOpen[ni, nj] = true; }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// String-pulls a dense grid path down to the fewest waypoints by greedily
+        /// jumping as far ahead as a clear straight leg allows (checked with the same
+        /// body-height overlap box), giving clean straight legs and minimal bends.
+        /// </summary>
+        private List<Vector3> SmoothPath(List<Vector3> pts, float boxCy, Vector3 half,
+                                         float cell, HashSet<Collider> ignore)
+        {
+            if (pts.Count <= 2) return pts;
+            var outp = new List<Vector3> { pts[0] };
+            int cur = 0;
+            while (cur < pts.Count - 1)
+            {
+                int nxt = pts.Count - 1;
+                for (; nxt > cur + 1; nxt--)
+                    if (LegClear(pts[cur], pts[nxt], boxCy, half, cell, ignore)) break;
+                outp.Add(pts[nxt]);
+                cur = nxt;
+            }
+            return outp;
+        }
+
+        /// <summary>True when the straight leg a→b is free of obstacles, sampled with
+        /// the body-height overlap box every half-cell.</summary>
+        private static bool LegClear(Vector3 a, Vector3 b, float boxCy, Vector3 half,
+                                     float cell, HashSet<Collider> ignore)
+        {
+            Vector3 a0 = new Vector3(a.x, 0f, a.z), b0 = new Vector3(b.x, 0f, b.z);
+            float dist = Vector3.Distance(a0, b0);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(dist / (cell * 0.5f)));
+            for (int k = 0; k <= steps; k++)
+            {
+                Vector3 p = Vector3.Lerp(a, b, (float)k / steps);
+                if (ObstacleHit(new Vector3(p.x, boxCy, p.z), half, ignore)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Fills the elbow where two legs meet with a small square pad so the
+        /// bend reads cleanly (covers the outer gap / inner overlap of mitred strips).</summary>
+        private void BuildCornerJoint(Vector3 corner, float groundY)
+        {
+            var joint = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            joint.name = "GuidePath_Joint";
+            joint.transform.SetParent(_guidePathRoot, worldPositionStays: true);
+            joint.transform.position   = new Vector3(corner.x, groundY, corner.z);
+            joint.transform.localScale = new Vector3(guidePathWidth, 0.02f, guidePathWidth);
+            StripCollider(joint);
+            PaintUnlit(joint, guidePathColor);
+        }
+
+        /// <summary>
+        /// Builds a "›" direction chevron pointing down-path: two thin bars whose
+        /// front ends meet at a shared vertex ahead of <paramref name="centre"/>,
+        /// each swept back 45° off the travel direction. The shared tip makes the
+        /// travel direction unambiguous (versus two bars crossing into an "✕").
+        /// </summary>
+        private void BuildChevron(Vector3 centre, Vector3 dir, float barLen, Color color)
+        {
+            // Vertex sits slightly ahead so both arms trail backward from it.
+            Vector3 vertex = centre + dir * (barLen * 0.4f);
+            Vector3 armFwdA = Quaternion.Euler(0f, +45f, 0f) * dir; // front-then-right
+            Vector3 armFwdB = Quaternion.Euler(0f, -45f, 0f) * dir; // front-then-left
+            BuildChevronArm(vertex, armFwdA, barLen, color);
+            BuildChevronArm(vertex, armFwdB, barLen, color);
+        }
+
+        /// <summary>
+        /// One arm of a chevron: a short thin bar with its FRONT end on
+        /// <paramref name="vertex"/>, extending backward along -<paramref name="armFwd"/>
+        /// so paired arms form a "›".
+        /// </summary>
+        private void BuildChevronArm(Vector3 vertex, Vector3 armFwd, float barLen, Color color)
+        {
+            Quaternion rot = Quaternion.LookRotation(armFwd, Vector3.up);
+            Vector3 centre = vertex - armFwd * (barLen * 0.5f); // bar spans vertex → back
+            var bar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bar.name = "GuidePath_Chevron";
+            bar.transform.SetParent(_guidePathRoot, worldPositionStays: true);
+            bar.transform.SetPositionAndRotation(centre, rot);
+            bar.transform.localScale = new Vector3(0.12f, 0.02f, barLen);
+            StripCollider(bar);
+            PaintUnlit(bar, color);
+        }
+
+        /// <summary>Removes the auto-added collider from a primitive so it stays
+        /// purely visual (no physics, no NavMesh voxelisation).</summary>
+        private static void StripCollider(GameObject go)
+        {
+            var col = go.GetComponent<Collider>();
+            if (col != null)
+            {
+                if (Application.isPlaying) Destroy(col); else DestroyImmediate(col);
+            }
+        }
+
+        /// <summary>
+        /// Paints a primitive with a bright UNLIT material so it stays visible in a
+        /// dark/night scene regardless of lighting. URP-first with built-in fallbacks,
+        /// mirroring <see cref="SafeZoneBeacon"/>.
+        /// </summary>
+        private static void PaintUnlit(GameObject go, Color c)
+        {
+            var rend = go.GetComponent<Renderer>();
+            if (rend == null) return;
+
+            Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Unlit/Color");
+            if (sh == null) sh = Shader.Find("Sprites/Default");
+
+            var mat = new Material(sh);
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c);
+            mat.color = c;
+
+            rend.sharedMaterial = mat;
+            rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            rend.receiveShadows = false;
         }
 
         private void SpawnTerrorists(ScenarioData scenario)
