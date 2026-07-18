@@ -99,6 +99,33 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "corridor reuses the room floor material so it matches the building.")]
         public Material corridorFloorMaterial;
 
+        [Header("Furniture")]
+        [Tooltip("Render the furniture that Module 1 placed in each room. Items are " +
+                 "seed-reproducible, already scaled to the room, and guaranteed to " +
+                 "clear walls, doorways and NPC/hostage spawns. They bake into the " +
+                 "NavMesh as obstacles so NPCs path around them.")]
+        public bool addFurniture = true;
+
+        [Tooltip("Material for the shaped greybox furniture. If empty, a neutral " +
+                 "URP-safe tint is generated at runtime so furniture never renders " +
+                 "as the magenta 'missing shader' colour.")]
+        public Material furnitureMaterial;
+
+        [Tooltip("Use imported furniture models instead of shaped greyboxes. OFF by " +
+                 "default because the bundled prop packs (e.g. PandazoleHome) ship " +
+                 "Built-in-RP materials that render MAGENTA under this project's URP " +
+                 "pipeline. Only turn this on after upgrading those materials to URP " +
+                 "(Edit ▸ Rendering ▸ Materials ▸ Convert Selected…), or after mapping " +
+                 "your own URP-ready prefabs below.")]
+        public bool useFurniturePrefabs = false;
+
+        [Tooltip("OPTIONAL override, honoured whether or not 'Use Furniture Prefabs' " +
+                 "is on. Force a specific prefab for a furniture type (use URP-ready " +
+                 "prefabs to avoid magenta). Prefabs are uniformly scaled to the " +
+                 "generated footprint, so the layout stays collision-correct whatever " +
+                 "the source art's native size.")]
+        public List<FurniturePrefabMapping> furniturePrefabs = new List<FurniturePrefabMapping>();
+
         [Header("NPC Prefabs")]
         [Tooltip("Terrorist prefab. Must have a TerroristController component.")]
         public GameObject terroristPrefab;
@@ -125,10 +152,40 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "existing geometry. Tune this live until the gap looks right.")]
         public Vector3 buildOffset = new Vector3(0f, 0f, 20f);
 
-        [Tooltip("Optional staging spawn. When set, the trainee spawns HERE (e.g. " +
-                 "by the briefing table in your template) instead of inside the " +
-                 "generated building, then walks/teleports over to it. Leave empty " +
-                 "to spawn at the generated entry as before.")]
+        [Tooltip("Automatically nudge the WHOLE generated scenario so its outer " +
+                 "footprint (rooms + perimeter corridor) keeps a clear gap from any " +
+                 "existing base-map collider — the hand-built buildings already in the " +
+                 "scene — instead of letting the two overlap. Applies to both Build " +
+                 "Anchor and Build Offset placement: the resolved origin is shifted " +
+                 "horizontally until the footprint is clear. No-op if the base map has " +
+                 "no colliders on the tested layers.")]
+        public bool avoidBaseMapOverlap = true;
+
+        [Tooltip("Minimum gap (metres) to keep between the generated scenario's outer " +
+                 "footprint and the nearest base-map collider when Avoid Base Map " +
+                 "Overlap is on.")]
+        public float mapClearance = 4f;
+
+        [Tooltip("Which layers count as base-map geometry to stay clear of. Leave as " +
+                 "Everything to test against every existing collider in the scene.")]
+        public LayerMask baseMapLayers = ~0;
+
+        [Tooltip("RECOMMENDED. Spawn the trainee in open ground just outside the " +
+                 "generated building's entrance (facing the door), instead of inside " +
+                 "the building or at a fixed staging point. The entrance moves per " +
+                 "scenario, so this is computed each build — giving a clear, walkable " +
+                 "approach the guide path can follow. Takes priority over Trainee " +
+                 "Start Point.")]
+        public bool spawnOutsideEntrance = true;
+
+        [Tooltip("How far (metres) outside the entrance door the trainee spawns when " +
+                 "Spawn Outside Entrance is on.")]
+        public float entranceStandoff = 8f;
+
+        [Tooltip("Optional staging spawn. When set (and Spawn Outside Entrance is off), " +
+                 "the trainee spawns HERE (e.g. by the briefing table in your template) " +
+                 "instead of inside the generated building. Leave empty to spawn at the " +
+                 "generated entry as before.")]
         public Transform traineeStartPoint;
 
         [Tooltip("When the trainee spawns at a staging point, start the building's " +
@@ -160,6 +217,24 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         [Tooltip("Colour of the safe-spot floor marker.")]
         public Color safeZoneColor = new Color(0.2f, 1f, 0.4f, 1f);
 
+        [Header("Guide Path")]
+        [Tooltip("Lay a visible path/road on the ground from the trainee's staging " +
+                 "start point to the building's entrance door, so the trainee knows " +
+                 "exactly where to walk. Only drawn when a Trainee Start Point is set " +
+                 "(when the trainee spawns inside the building there's nothing to guide to).")]
+        public bool buildGuidePath = true;
+
+        [Tooltip("Width of the guide-path strip (metres).")]
+        public float guidePathWidth = 1.4f;
+
+        [Tooltip("Colour of the guide path. Drawn as a bright unlit strip so it reads " +
+                 "clearly even in a dark/night scene.")]
+        public Color guidePathColor = new Color(1f, 0.85f, 0.2f, 1f);
+
+        [Tooltip("Spacing between the direction chevrons laid along the path (metres). " +
+                 "Set to 0 to draw the strip only, with no arrows.")]
+        public float guidePathArrowSpacing = 2.5f;
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -189,6 +264,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private const string DOORS_ROOT    = "Doors";
         private const string NPCS_ROOT     = "NPCs";
         private const string CORRIDOR_ROOT = "PerimeterCorridor";
+        private const string GUIDE_ROOT    = "GuidePath";
 
         // ── Wall geometry (mirrors ScenePrefabBuilder so walls, floors and doors
         //    line up exactly) ──────────────────────────────────────────────────
@@ -205,6 +281,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Floor slab thickness for the perimeter corridor (matches the room floor
         // prefab's 0.08 m so the corridor floor sits flush with the building floor).
         private const float CorridorFloorThickness = 0.08f;
+
+        // Guide-path routing: how far outside the door the road's final approach
+        // point sits; the A* grid cell size; how far the search region extends past
+        // the start/goal so the road has room to detour around obstacles; and the
+        // vertical body band the obstacle probe sweeps (knee-to-head, so it catches
+        // walls/pillars/tables but ignores the floor and the roof).
+        private const float GuidePathApproach     = 2.5f;
+        private const float GuidePathCell         = 0.5f;
+        private const float GuidePathRegionMargin = 10f;
+        private const float GuidePathBodyLow      = 0.25f;
+        private const float GuidePathBodyHigh     = 1.9f;
 
         // ── Window geometry (carved into solid exterior walls) ────────────────
         private const float WindowWidth      = 1.0f;   // opening width along the wall
@@ -250,6 +337,23 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private Transform _doorsRoot;
         private Transform _npcsRoot;
         private Transform _corridorRoot;
+        private Transform _guidePathRoot;
+
+        // World position of the building's outer entrance door, captured while the
+        // perimeter corridor is built. The guide path targets this so it always ends
+        // at the door the trainee walks through. Reset false each build.
+        private bool    _hasEntryDoorWorld;
+        private Vector3 _entryDoorWorld;
+
+        // True when the trainee was spawned in open ground outside the entrance this
+        // build (via spawnOutsideEntrance); the guide path is drawn only then.
+        private bool _traineeSpawnedOutside;
+
+        // Outer footprint of the building INCLUDING the perimeter corridor, in world
+        // space, captured during the corridor build. The guide path routes around
+        // this rectangle so the road stays outside the walls instead of cutting
+        // through the interior. Valid only when _hasEntryDoorWorld is true.
+        private float _fpMinX, _fpMaxX, _fpMinZ, _fpMaxZ;
 
         private readonly Dictionary<string, GameObject> _roomObjects =
             new Dictionary<string, GameObject>();
@@ -330,6 +434,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 ActiveScenario = scenario;
                 _buildOffset = buildAnchor != null ? buildAnchor.position : buildOffset;
 
+                // Shift the whole layout off any existing base-map geometry BEFORE we
+                // build, so every World()-mapped position (rooms, doors, NPCs, trainee,
+                // NavMesh bake) inherits the cleared offset and the two never overlap.
+                ResolveBaseMapClearance(scenario);
+
                 // Doors record themselves as they're placed; BuildDoorNavLinks links them
                 // after the bake. Reset per build so a rebuild doesn't re-link stale doors.
                 _placedDoors.Clear();
@@ -341,6 +450,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 BuildEntryDoors(scenario);
                 BuildPerimeterCorridor(scenario);
                 PositionTrainee(scenario);
+                BuildGuidePath(scenario);
                 CreateSafeZone(scenario);
                 // Bake BEFORE spawning NPCs: NavMeshAgent attaches to the mesh in
                 // OnEnable, so spawning first throws "Failed to create agent because
@@ -377,6 +487,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
+            DestroyChildren(_guidePathRoot);
 
             if (_safeZone != null)
             {
@@ -401,10 +512,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         private void EnsureContainers()
         {
-            _roomsRoot    = GetOrCreateChild(ROOMS_ROOT);
-            _doorsRoot    = GetOrCreateChild(DOORS_ROOT);
-            _npcsRoot     = GetOrCreateChild(NPCS_ROOT);
-            _corridorRoot = GetOrCreateChild(CORRIDOR_ROOT);
+            _roomsRoot     = GetOrCreateChild(ROOMS_ROOT);
+            _doorsRoot     = GetOrCreateChild(DOORS_ROOT);
+            _npcsRoot      = GetOrCreateChild(NPCS_ROOT);
+            _corridorRoot  = GetOrCreateChild(CORRIDOR_ROOT);
+            _guidePathRoot = GetOrCreateChild(GUIDE_ROOT);
+
+            // The entrance door for this build hasn't been placed yet.
+            _hasEntryDoorWorld = false;
         }
 
         private void BuildRooms(ScenarioData scenario)
@@ -430,7 +545,438 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 _roomObjects[room.id] = go;
 
                 BuildWalls(room, go, scenario.layout.rooms);
+                BuildFurniture(room, go);
             }
+        }
+
+        // ── Furniture ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Instantiates every <see cref="FurnitureData"/> item Module 1 placed in
+        /// the room. Items are parented under the room object (a "Furniture" child)
+        /// so they are voxelised in the room's NavMesh bake and become obstacles
+        /// NPCs path around. Each item is a greybox box scaled to the generated
+        /// footprint, unless a prefab is mapped for its type, in which case the
+        /// prefab is instantiated and scaled to the same footprint so the layout
+        /// stays collision-correct. Positions/rotations come straight from the data,
+        /// so the rendered scene matches the seed-reproducible plan exactly.
+        /// </summary>
+        private void BuildFurniture(RoomData room, GameObject roomGo)
+        {
+            if (!addFurniture || room.furniture == null || room.furniture.Count == 0) return;
+
+            var container = new GameObject("Furniture");
+            container.transform.SetParent(roomGo.transform, worldPositionStays: false);
+
+            Vector3 roomCentre = room.position.ToVector3();
+
+            foreach (FurnitureData f in room.furniture)
+            {
+                if (f?.size == null || f.position == null) continue;
+
+                Vector3 size = f.size.ToVector3();
+                if (size.x <= 0f || size.y <= 0f || size.z <= 0f) continue;
+
+                // Room-local position: the item's floor-plane centre relative to the
+                // room centre (both in layout space), raised so the box rests on the
+                // floor. Mirrors how the procedural walls are parented room-locally.
+                Vector3 local = f.position.ToVector3() - roomCentre;
+                local.y = size.y * 0.5f;
+
+                Quaternion rot = Quaternion.Euler(0f, f.rotationY, 0f);
+
+                GameObject prefab = ResolveFurniturePrefab(f.type, f.id);
+                if (prefab != null)
+                    BuildFurnitureFromPrefab(container.transform, prefab, f, rot, size);
+                else
+                    BuildFurnitureGreybox(container.transform, f, local, rot, size);
+            }
+        }
+
+        /// <summary>
+        /// Greybox item: a small composition of primitives shaped like the furniture
+        /// type (e.g. a tabletop on four legs, a chair with a back, open shelving)
+        /// rather than a featureless block, so rooms read believably without relying
+        /// on any imported art/materials. Built in the item's local frame — X = width,
+        /// Y = height from the floor, Z = depth — under a root placed at the planned
+        /// footprint centre and turned to face into the room. Every part is a solid
+        /// primitive with a collider, so the whole item still blocks the trainee and
+        /// bakes into the NavMesh as an obstacle.
+        /// </summary>
+        private void BuildFurnitureGreybox(Transform parent, FurnitureData f,
+                                           Vector3 local, Quaternion rot, Vector3 size)
+        {
+            var root = new GameObject(f.id);
+            root.transform.SetParent(parent, worldPositionStays: false);
+            root.transform.localRotation = rot;
+            root.transform.localPosition = new Vector3(local.x, 0f, local.z); // sit on floor
+
+            Material mat = ResolveFurnitureMaterial();
+            BuildFurnitureShape(root.transform, f.type, size, mat);
+        }
+
+        /// <summary>Dispatches to a per-type primitive composition. Falls back to a
+        /// plain box for any type without a bespoke shape.</summary>
+        private void BuildFurnitureShape(Transform root, FurnitureType type, Vector3 s, Material mat)
+        {
+            switch (type)
+            {
+                case FurnitureType.Table:
+                case FurnitureType.Desk:
+                case FurnitureType.SideTable:
+                    BuildTableShape(root, s, mat); break;
+                case FurnitureType.Chair:
+                    BuildSeatShape(root, s, mat, withBack: true); break;
+                case FurnitureType.Stool:
+                    BuildSeatShape(root, s, mat, withBack: false); break;
+                case FurnitureType.Shelf:
+                case FurnitureType.Bookshelf:
+                    BuildShelfShape(root, s, mat); break;
+                case FurnitureType.Cabinet:
+                case FurnitureType.Locker:
+                    BuildCabinetShape(root, s, mat); break;
+                case FurnitureType.Bed:
+                    BuildBedShape(root, s, mat); break;
+                case FurnitureType.Sofa:
+                    BuildSofaShape(root, s, mat); break;
+                case FurnitureType.Barrel:
+                    BuildBarrelShape(root, s, mat); break;
+                case FurnitureType.Crate:
+                default:
+                    AddPrim(root, PrimitiveType.Cube, new Vector3(0f, s.y * 0.5f, 0f), s, mat); break;
+            }
+        }
+
+        private void BuildTableShape(Transform root, Vector3 s, Material mat)
+        {
+            float top = Mathf.Clamp(s.y * 0.12f, 0.04f, 0.1f);
+            float legT = Mathf.Clamp(Mathf.Min(s.x, s.z) * 0.12f, 0.05f, 0.12f);
+            float legH = s.y - top;
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, s.y - top * 0.5f, 0f),
+                    new Vector3(s.x, top, s.z), mat);
+            float lx = s.x * 0.5f - legT * 0.5f, lz = s.z * 0.5f - legT * 0.5f;
+            AddLegs(root, lx, lz, legH, legT, mat);
+        }
+
+        private void BuildSeatShape(Transform root, Vector3 s, Material mat, bool withBack)
+        {
+            float seatH = Mathf.Clamp(s.y * (withBack ? 0.5f : 0.9f), 0.28f, 0.5f);
+            float seatT = 0.07f;
+            float legT = Mathf.Clamp(Mathf.Min(s.x, s.z) * 0.14f, 0.04f, 0.1f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, seatH, 0f),
+                    new Vector3(s.x, seatT, s.z), mat);
+            float lx = s.x * 0.5f - legT * 0.5f, lz = s.z * 0.5f - legT * 0.5f;
+            AddLegs(root, lx, lz, seatH - seatT * 0.5f, legT, mat);
+            if (withBack && s.y > seatH + 0.15f)
+            {
+                float backT = 0.06f;
+                AddPrim(root, PrimitiveType.Cube,
+                        new Vector3(0f, seatH + (s.y - seatH) * 0.5f, -(s.z * 0.5f - backT * 0.5f)),
+                        new Vector3(s.x, s.y - seatH, backT), mat);
+            }
+        }
+
+        private void AddLegs(Transform root, float lx, float lz, float legH, float legT, Material mat)
+        {
+            if (legH <= 0.01f) return;
+            var leg = new Vector3(legT, legH, legT);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-lx, legH * 0.5f, -lz), leg, mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3( lx, legH * 0.5f, -lz), leg, mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-lx, legH * 0.5f,  lz), leg, mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3( lx, legH * 0.5f,  lz), leg, mat);
+        }
+
+        private void BuildShelfShape(Transform root, Vector3 s, Material mat)
+        {
+            float panel = Mathf.Clamp(Mathf.Min(s.x, s.z) * 0.1f, 0.04f, 0.08f);
+            // Back and two sides.
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, s.y * 0.5f, -(s.z * 0.5f - panel * 0.5f)),
+                    new Vector3(s.x, s.y, panel), mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-(s.x * 0.5f - panel * 0.5f), s.y * 0.5f, 0f),
+                    new Vector3(panel, s.y, s.z), mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3( s.x * 0.5f - panel * 0.5f, s.y * 0.5f, 0f),
+                    new Vector3(panel, s.y, s.z), mat);
+            // Horizontal shelves (incl. top and bottom).
+            int levels = Mathf.Clamp(Mathf.RoundToInt(s.y / 0.4f), 2, 5);
+            for (int i = 0; i <= levels; i++)
+            {
+                float y = Mathf.Lerp(0.02f, s.y - 0.02f, i / (float)levels);
+                AddPrim(root, PrimitiveType.Cube, new Vector3(0f, y, 0f),
+                        new Vector3(s.x - panel, 0.04f, s.z - panel), mat);
+            }
+        }
+
+        private void BuildCabinetShape(Transform root, Vector3 s, Material mat)
+        {
+            // Solid body on a slight plinth with a small top overhang for shape.
+            float plinth = Mathf.Min(0.08f, s.y * 0.1f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, plinth * 0.5f, 0f),
+                    new Vector3(s.x * 0.96f, plinth, s.z * 0.9f), mat);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, plinth + (s.y - plinth) * 0.5f, 0f),
+                    new Vector3(s.x, s.y - plinth, s.z), mat);
+        }
+
+        private void BuildBedShape(Transform root, Vector3 s, Material mat)
+        {
+            float frame = Mathf.Min(0.3f, s.y * 0.55f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, frame * 0.5f, 0f),
+                    new Vector3(s.x, frame, s.z), mat);                                   // base
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, frame + (s.y - frame) * 0.5f, 0f),
+                    new Vector3(s.x * 0.98f, s.y - frame, s.z * 0.96f), mat);             // mattress
+            AddPrim(root, PrimitiveType.Cube,
+                    new Vector3(0f, s.y + 0.04f, -(s.z * 0.5f - s.z * 0.16f)),
+                    new Vector3(s.x * 0.5f, 0.08f, s.z * 0.22f), mat);                    // pillow
+        }
+
+        private void BuildSofaShape(Transform root, Vector3 s, Material mat)
+        {
+            float baseH = s.y * 0.5f;
+            float arm = Mathf.Clamp(s.x * 0.12f, 0.12f, 0.25f);
+            float backT = Mathf.Clamp(s.z * 0.2f, 0.12f, 0.25f);
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, baseH * 0.5f, 0f),
+                    new Vector3(s.x, baseH, s.z), mat);                                   // seat base
+            AddPrim(root, PrimitiveType.Cube, new Vector3(0f, baseH + (s.y - baseH) * 0.5f, -(s.z * 0.5f - backT * 0.5f)),
+                    new Vector3(s.x, s.y - baseH, backT), mat);                           // backrest
+            AddPrim(root, PrimitiveType.Cube, new Vector3(-(s.x * 0.5f - arm * 0.5f), s.y * 0.45f, 0f),
+                    new Vector3(arm, s.y * 0.9f, s.z), mat);                              // left arm
+            AddPrim(root, PrimitiveType.Cube, new Vector3( s.x * 0.5f - arm * 0.5f, s.y * 0.45f, 0f),
+                    new Vector3(arm, s.y * 0.9f, s.z), mat);                              // right arm
+        }
+
+        private void BuildBarrelShape(Transform root, Vector3 s, Material mat)
+        {
+            float dia = Mathf.Min(s.x, s.z);
+            // Unity's default cylinder is 2 units tall and 1 wide, so scale Y by h/2.
+            AddPrim(root, PrimitiveType.Cylinder, new Vector3(0f, s.y * 0.5f, 0f),
+                    new Vector3(dia, s.y * 0.5f, dia), mat);
+        }
+
+        /// <summary>Adds one primitive part in the item's local frame.</summary>
+        private void AddPrim(Transform root, PrimitiveType prim, Vector3 center, Vector3 scale, Material mat)
+        {
+            scale = new Vector3(Mathf.Max(0.01f, scale.x), Mathf.Max(0.01f, scale.y), Mathf.Max(0.01f, scale.z));
+            var go = GameObject.CreatePrimitive(prim);
+            go.transform.SetParent(root, worldPositionStays: false);
+            go.transform.localPosition = center;
+            go.transform.localScale    = scale;
+            if (mat != null) go.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>Prefab item: instantiate, scale UNIFORMLY so the model fits
+        /// inside the reserved footprint without distorting its proportions, turn it
+        /// to face into the room, then drop it so it rests on the floor with its
+        /// footprint centred on the planned position. Works in world space via the
+        /// live renderer bounds, so any pivot / import scale / internal offset in the
+        /// source art is handled automatically. Falls back to a greybox box if the
+        /// prefab has no measurable renderers.</summary>
+        private void BuildFurnitureFromPrefab(Transform parent, GameObject prefab, FurnitureData f,
+                                              Quaternion rot, Vector3 size)
+        {
+            GameObject go = Instantiate(prefab, parent);
+            go.name = f.id;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale    = prefab.transform.localScale;
+
+            // Natural (unrotated) world size of the art as authored.
+            if (!TryGetWorldBounds(go, out Bounds natural) ||
+                natural.size.x <= 1e-4f || natural.size.z <= 1e-4f)
+            {
+                if (Application.isPlaying) Destroy(go); else DestroyImmediate(go);
+                Vector3 local = World(f.position.ToVector3()) - parent.position;
+                local.y = size.y * 0.5f;
+                BuildFurnitureGreybox(parent, f, local, rot, size);
+                return;
+            }
+
+            // Uniform fit: shrink (never stretch a single axis) so the model's
+            // footprint fits within the reserved width×depth. Cap at 1 so small
+            // props keep their real size rather than being blown up to fill a box.
+            float fit = Mathf.Min(size.x / natural.size.x, size.z / natural.size.z);
+            fit = Mathf.Min(fit, 1f);
+            go.transform.localScale = prefab.transform.localScale * fit;
+
+            // Face into the room, then re-measure the placed bounds.
+            go.transform.localRotation = rot;
+            if (!TryGetWorldBounds(go, out Bounds placed)) placed = natural;
+
+            // Target: footprint centred on the planned world position, base on floor.
+            Vector3 targetWorld = World(f.position.ToVector3());
+            float floorY = parent.position.y;
+
+            Vector3 delta = new Vector3(
+                targetWorld.x - placed.center.x,
+                floorY        - placed.min.y,
+                targetWorld.z - placed.center.z);
+            go.transform.position += delta;
+
+            EnsureFurnitureCollider(go);
+        }
+
+        /// <summary>
+        /// Resolves the prefab to spawn for a furniture item. Priority: (1) an
+        /// explicit inspector mapping; (2) automatic discovery from the project's
+        /// prop packs in the editor, choosing a variant deterministically from the
+        /// item id so the same seed always yields the same look; (3) null → the
+        /// caller draws a greybox box (device builds with no mapping assigned).
+        /// </summary>
+        private GameObject ResolveFurniturePrefab(FurnitureType type, string id)
+        {
+            // An explicit inspector mapping always wins (assumed URP-ready).
+            if (furniturePrefabs != null)
+                foreach (FurniturePrefabMapping m in furniturePrefabs)
+                    if (m != null && m.prefab != null && m.type == type) return m.prefab;
+
+            // Auto-discovery is opt-in: the bundled packs are Built-in-RP and would
+            // render magenta under URP. Off ⇒ caller draws a shaped greybox instead.
+            if (!useFurniturePrefabs) return null;
+
+#if UNITY_EDITOR
+            GameObject[] variants = GetAutoVariants(type);
+            if (variants != null && variants.Length > 0)
+                return variants[(int)(StableHash(id) % (uint)variants.Length)];
+#endif
+            return null;
+        }
+
+        /// <summary>Combined world-space renderer bounds of a hierarchy (skips
+        /// particle renderers). Reflects live pivot, scale and rotation.</summary>
+        private static bool TryGetWorldBounds(GameObject go, out Bounds bounds)
+        {
+            bounds = default;
+            bool has = false;
+            foreach (Renderer r in go.GetComponentsInChildren<Renderer>())
+            {
+                if (r is ParticleSystemRenderer) continue;
+                if (!has) { bounds = r.bounds; has = true; }
+                else bounds.Encapsulate(r.bounds);
+            }
+            return has;
+        }
+
+        /// <summary>Adds a footprint-sized box collider when the art ships without
+        /// one, so the trainee can't walk through furniture. Placed on an unrotated
+        /// child aligned to the world AABB (kept out of the way of any existing
+        /// interaction colliders on the prefab).</summary>
+        private static void EnsureFurnitureCollider(GameObject go)
+        {
+            if (go.GetComponentInChildren<Collider>() != null) return;
+            if (!TryGetWorldBounds(go, out Bounds b)) return;
+
+            var colGo = new GameObject("FurnitureCollider");
+            colGo.transform.SetParent(go.transform.parent, worldPositionStays: true);
+            colGo.transform.position = b.center;
+            var bc = colGo.AddComponent<BoxCollider>();
+            bc.size = b.size;
+        }
+
+        /// <summary>Stable FNV-1a hash so variant choice is reproducible across
+        /// sessions (unlike <see cref="string.GetHashCode"/>, which is randomised).</summary>
+        private static uint StableHash(string s)
+        {
+            uint hash = 2166136261u;
+            if (s != null)
+                foreach (char c in s) { hash ^= c; hash *= 16777619u; }
+            return hash;
+        }
+
+#if UNITY_EDITOR
+        // ── Automatic furniture prefab discovery (editor only) ───────────────
+        // Maps each furniture type to the prop-prefab name prefixes to pull from
+        // the project's art packs, so real furniture appears with no manual wiring.
+        // Every matching variant is used, chosen deterministically per item id.
+        private const string FurniturePrefabFolder =
+            "Assets/XRI Starter Kit/Assets/PandazoleHome/Prefabs";
+
+        private static readonly Dictionary<FurnitureType, string[]> AutoPrefabPrefixes =
+            new Dictionary<FurnitureType, string[]>
+            {
+                { FurnitureType.Table,     new[] { "Prop_Table_" } },
+                { FurnitureType.Desk,      new[] { "Prop_Desk_" } },
+                { FurnitureType.Chair,     new[] { "Prop_Chair_" } },
+                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_" } },
+                { FurnitureType.Barrel,    new[] { "Prop_SmallStorageBox_" } },
+                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_" } },
+                { FurnitureType.Cabinet,   new[] { "Prop_Cabinet_" } },
+                { FurnitureType.Bookshelf, new[] { "Prop_Cabinet_" } },
+                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },
+                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } },
+                { FurnitureType.Locker,    new[] { "Prop_Wardrobe_" } },
+                { FurnitureType.SideTable, new[] { "Prop_KidsTable" } },
+                { FurnitureType.Stool,     new[] { "Prop_Chair_" } },
+            };
+
+        // Every prefab under the art folder, loaded and name-sorted once per build.
+        private List<GameObject> _furniturePrefabCatalog;
+        private Dictionary<FurnitureType, GameObject[]> _autoVariantCache;
+
+        private GameObject[] GetAutoVariants(FurnitureType type)
+        {
+            _autoVariantCache ??= new Dictionary<FurnitureType, GameObject[]>();
+            if (_autoVariantCache.TryGetValue(type, out GameObject[] cached)) return cached;
+
+            EnsureFurniturePrefabCatalog();
+            if (!AutoPrefabPrefixes.TryGetValue(type, out string[] prefixes))
+                return _autoVariantCache[type] = System.Array.Empty<GameObject>();
+
+            var matches = new List<GameObject>();
+            foreach (GameObject go in _furniturePrefabCatalog)
+                foreach (string prefix in prefixes)
+                    if (go.name.StartsWith(prefix, System.StringComparison.Ordinal))
+                    {
+                        matches.Add(go);
+                        break;
+                    }
+
+            // Sort by name so the deterministic per-id index maps to a stable variant.
+            matches.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            return _autoVariantCache[type] = matches.ToArray();
+        }
+
+        private void EnsureFurniturePrefabCatalog()
+        {
+            if (_furniturePrefabCatalog != null) return;
+            _furniturePrefabCatalog = new List<GameObject>();
+
+            if (!UnityEditor.AssetDatabase.IsValidFolder(FurniturePrefabFolder))
+            {
+                Debug.LogWarning($"[SceneBuilder] Furniture prefab folder not found " +
+                                 $"('{FurniturePrefabFolder}'); furniture will render as greyboxes. " +
+                                 $"Assign prefabs on the Furniture list to override.");
+                return;
+            }
+
+            string[] guids = UnityEditor.AssetDatabase.FindAssets(
+                "t:Prefab", new[] { FurniturePrefabFolder });
+            foreach (string guid in guids)
+            {
+                string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guid);
+                var go = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (go != null) _furniturePrefabCatalog.Add(go);
+            }
+        }
+#endif
+
+        // Lazily-created neutral material so greybox furniture reads distinctly
+        // from the walls without requiring the evaluator to assign one.
+        private Material _furnitureMatCache;
+
+        private Material ResolveFurnitureMaterial()
+        {
+            if (furnitureMaterial != null) return furnitureMaterial;
+            if (_furnitureMatCache != null) return _furnitureMatCache;
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return null;
+
+            _furnitureMatCache = new Material(shader) { name = "GeneratedFurnitureMat" };
+            // Warm neutral tone, clearly different from typical wall greys. Set both
+            // the built-in and URP colour properties so it tints under either pipeline.
+            var tint = new Color(0.55f, 0.42f, 0.30f, 1f);
+            _furnitureMatCache.color = tint;
+            if (_furnitureMatCache.HasProperty("_BaseColor"))
+                _furnitureMatCache.SetColor("_BaseColor", tint);
+            return _furnitureMatCache;
         }
 
         /// <summary>
@@ -829,6 +1375,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
+            // Outer footprint (world space) including the corridor band, so the guide
+            // path can route around it and stay outside the building walls.
+            _fpMinX = minX - corridorWidth; _fpMaxX = maxX + corridorWidth;
+            _fpMinZ = minZ - corridorWidth; _fpMaxZ = maxZ + corridorWidth;
+
             const float g = CorridorGrid;
             int cwCells = Mathf.Max(1, Mathf.RoundToInt(corridorWidth / g));
 
@@ -974,6 +1525,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                         : new Vector3(gapPerp, baseY, doorLat);
                     DoorState outerState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
                     PlaceDoor("door_corridor_entry", doorPos, entranceSide, outerState);
+
+                    // Remember where the entrance ended up so the guide path can run to it.
+                    _entryDoorWorld    = doorPos;
+                    _hasEntryDoorWorld = true;
                 }
             }
         }
@@ -1050,6 +1605,140 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 any = true;
             }
             return any;
+        }
+
+        /// <summary>
+        /// Layout-space (pre-offset) bounds of the building: the union of every room's
+        /// outer wall extents, centred on the layout origin. Mirrors
+        /// <see cref="TryComputeFootprint"/> but WITHOUT the world offset, so callers
+        /// can test candidate placements. Y half-extent is returned via
+        /// <paramref name="height"/>.
+        /// </summary>
+        private bool TryComputeLayoutExtents(ScenarioData scenario, out Vector3 centre,
+                                             out Vector3 halfExtents, out float height)
+        {
+            centre = Vector3.zero;
+            halfExtents = Vector3.zero;
+            height = 3f;
+
+            float minX = float.MaxValue, minZ = float.MaxValue;
+            float maxX = float.MinValue, maxZ = float.MinValue;
+            bool any = false;
+
+            foreach (RoomData room in scenario.layout.rooms)
+            {
+                float w = room.size != null && room.size.width  > 0f ? room.size.width  : 6f;
+                float d = room.size != null && room.size.depth  > 0f ? room.size.depth  : 6f;
+                float h = room.size != null && room.size.height > 0f ? room.size.height : 3f;
+
+                float halfW = (w + CorridorGap) * 0.5f;
+                float halfD = (d + CorridorGap) * 0.5f;
+
+                Vector3 c = room.position.ToVector3();
+                minX = Mathf.Min(minX, c.x - halfW); maxX = Mathf.Max(maxX, c.x + halfW);
+                minZ = Mathf.Min(minZ, c.z - halfD); maxZ = Mathf.Max(maxZ, c.z + halfD);
+                height = Mathf.Max(height, h);
+                any = true;
+            }
+
+            if (!any) return false;
+
+            centre = new Vector3((minX + maxX) * 0.5f, 0f, (minZ + maxZ) * 0.5f);
+            halfExtents = new Vector3((maxX - minX) * 0.5f, 0f, (maxZ - minZ) * 0.5f);
+            return true;
+        }
+
+        /// <summary>
+        /// Nudges <see cref="_buildOffset"/> horizontally until the scenario's outer
+        /// footprint (rooms + perimeter corridor + <see cref="mapClearance"/> gap) no
+        /// longer overlaps any existing base-map collider. Runs before the build so
+        /// every World()-mapped position inherits the cleared offset. Uses
+        /// <see cref="Physics.ComputePenetration"/> against each overlapping collider
+        /// to push out along the shortest separation, iterating a few times so corners
+        /// (two adjacent walls) resolve to a diagonal escape. A no-op when the feature
+        /// is off, when the base map has no colliders on <see cref="baseMapLayers"/>,
+        /// or when the placement is already clear.
+        /// </summary>
+        private void ResolveBaseMapClearance(ScenarioData scenario)
+        {
+            if (!avoidBaseMapOverlap) return;
+            if (!TryComputeLayoutExtents(scenario, out Vector3 layoutCentre,
+                                         out Vector3 halfExtents, out float height))
+                return;
+
+            // Outer footprint half-extents: room extents, plus the perimeter corridor
+            // band (only when it's built), plus the requested clearance gap.
+            float band = (buildPerimeterCorridor ? corridorWidth : 0f) + Mathf.Max(0f, mapClearance);
+            Vector3 half = new Vector3(halfExtents.x + band,
+                                       Mathf.Max(0.5f, height * 0.5f),
+                                       halfExtents.z + band);
+
+            // Temp probe collider representing the footprint. Never rendered/saved.
+            var probeGo = new GameObject("~ScenarioClearanceProbe") { hideFlags = HideFlags.HideAndDontSave };
+            var probe = probeGo.AddComponent<BoxCollider>();
+            probe.size      = half * 2f;
+            probe.isTrigger = true;
+
+            Vector3 offset = _buildOffset;
+            const int maxIterations = 32;
+            try
+            {
+                for (int iter = 0; iter < maxIterations; iter++)
+                {
+                    Vector3 centre = layoutCentre + offset;
+                    centre.y = offset.y + half.y;   // box rests on the ground plane
+                    probeGo.transform.SetPositionAndRotation(centre, Quaternion.identity);
+
+                    Collider[] hits = Physics.OverlapBox(centre, half, Quaternion.identity,
+                                                         baseMapLayers, QueryTriggerInteraction.Ignore);
+
+                    Vector3 correction = Vector3.zero;
+                    bool overlapped = false;
+                    foreach (Collider col in hits)
+                    {
+                        if (col == probe) continue;
+                        if (IsOwnOrIgnoredCollider(col)) continue;
+
+                        if (Physics.ComputePenetration(
+                                probe, centre, Quaternion.identity,
+                                col, col.transform.position, col.transform.rotation,
+                                out Vector3 dir, out float dist))
+                        {
+                            dir.y = 0f;   // keep the scenario on the ground
+                            if (dir.sqrMagnitude < 1e-6f || dist <= 0f) continue;
+                            correction += dir.normalized * dist;
+                            overlapped = true;
+                        }
+                    }
+
+                    if (!overlapped) break;
+                    offset += correction;
+                }
+            }
+            finally
+            {
+                if (Application.isPlaying) Destroy(probeGo); else DestroyImmediate(probeGo);
+            }
+
+            Vector3 shift = offset - _buildOffset;
+            if (shift.sqrMagnitude > 1e-4f)
+            {
+                Debug.Log($"[SceneBuilder] Shifted scenario by {shift} (|{shift.magnitude:0.0}| m) " +
+                          $"to keep a {mapClearance:0.#} m gap from base-map geometry.");
+                _buildOffset = offset;
+            }
+        }
+
+        /// <summary>True for colliders the clearance probe must ignore: anything under
+        /// this SceneBuilder, the trainee rig, or the trainee weapon — none of which are
+        /// "base map" and all of which we reposition during the build anyway.</summary>
+        private bool IsOwnOrIgnoredCollider(Collider col)
+        {
+            Transform t = col.transform;
+            if (t.IsChildOf(transform)) return true;
+            if (traineeRig    != null && t.IsChildOf(traineeRig))    return true;
+            if (traineeWeapon != null && t.IsChildOf(traineeWeapon)) return true;
+            return false;
         }
 
         /// <summary>
@@ -1346,9 +2035,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         private void PositionTrainee(ScenarioData scenario)
         {
+            _traineeSpawnedOutside = false;
+
             if (traineeRig == null)
             {
                 Debug.LogError("[SceneBuilder] traineeRig is not assigned - cannot position player.");
+                return;
+            }
+
+            // Preferred: spawn in open ground just outside the generated entrance,
+            // facing the door, so there is a clear walkable approach to breach. The
+            // entrance moves per scenario, so this is derived from the corridor door.
+            if (spawnOutsideEntrance && _hasEntryDoorWorld &&
+                TryComputeEntranceSpawn(out Vector3 outsidePos, out Quaternion outsideRot))
+            {
+                traineeRig.SetPositionAndRotation(outsidePos, outsideRot);
+                _traineeSpawnedOutside = true;
+                Debug.Log($"[SceneBuilder] Trainee spawned outside entrance at {outsidePos:F1}, " +
+                          $"facing the door {_entryDoorWorld:F1}.");
+                PlaceTraineeWeapon();
                 return;
             }
 
@@ -1379,6 +2084,42 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             Debug.Log($"[SceneBuilder] Trainee spawned at Module 1 position {spawnPos:F1} " +
                       $"(entry room, facing {t.facingDirection.ToVector3():F1}).");
             PlaceTraineeWeapon();
+        }
+
+        /// <summary>
+        /// Computes a spawn just outside the entrance door: step out along the door's
+        /// outward wall normal by <see cref="entranceStandoff"/> into open ground,
+        /// facing back at the door. If that spot is obstructed (a template structure
+        /// happens to sit outside the door), step further out until clear. Returns
+        /// false only if no clear spot is found.
+        /// </summary>
+        private bool TryComputeEntranceSpawn(out Vector3 pos, out Quaternion rot)
+        {
+            pos = Vector3.zero; rot = Quaternion.identity;
+
+            Vector2 centre  = new Vector2((_fpMinX + _fpMaxX) * 0.5f, (_fpMinZ + _fpMaxZ) * 0.5f);
+            Vector2 door    = new Vector2(_entryDoorWorld.x, _entryDoorWorld.z);
+            Vector2 outward = OutwardNormal(door - centre);
+            float groundY   = Mathf.Max(traineeRig.position.y, _buildOffset.y);
+
+            Physics.SyncTransforms();
+            Vector3 half  = new Vector3(0.4f, 0.9f, 0.4f);          // ~person-sized probe
+            float boxCy   = groundY + 1.0f;
+
+            // Walk outward from the door until we find clear ground (cap the search).
+            for (float dist = entranceStandoff; dist <= entranceStandoff + 8f; dist += 1f)
+            {
+                Vector3 cand = new Vector3(door.x + outward.x * dist, groundY,
+                                           door.y + outward.y * dist);
+                if (!Physics.CheckBox(new Vector3(cand.x, boxCy, cand.z), half,
+                                      Quaternion.identity, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    pos = cand;
+                    rot = Quaternion.LookRotation(new Vector3(-outward.x, 0f, -outward.y), Vector3.up);
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -1496,6 +2237,402 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             beacon.color  = safeZoneColor;
 
             Debug.Log($"[SceneBuilder] Safe zone created at trainee spawn {pos} (radius {safeZoneRadius}m).");
+        }
+
+        /// <summary>
+        /// Lays a visible "road" on the ground from the trainee's staging start point
+        /// to the building's entrance door, plus direction chevrons pointing the way,
+        /// so the trainee can see exactly where to walk. The route is bent AROUND the
+        /// outside of the building footprint (corridor included) and approaches the
+        /// door from outside, so the road never cuts through the interior. Only drawn
+        /// when a staging start point is used (otherwise the trainee already spawns
+        /// inside). Purely cosmetic: the strip carries no collider and lives outside
+        /// the Rooms container, so it never affects physics or the NavMesh bake.
+        /// </summary>
+        private void BuildGuidePath(ScenarioData scenario)
+        {
+            if (!buildGuidePath || traineeRig == null) return;
+
+            // The path runs from wherever the trainee actually stands to the entrance.
+            // It only makes sense when they spawned OUTSIDE (facing the door) — either
+            // via spawnOutsideEntrance or a fixed staging point.
+            if (!_traineeSpawnedOutside && traineeStartPoint == null) return;
+
+            // Target the outer corridor door if present, else the primary entry point.
+            Vector3 doorPos;
+            bool haveFootprint = _hasEntryDoorWorld;
+            if (_hasEntryDoorWorld)
+            {
+                doorPos = _entryDoorWorld;
+            }
+            else
+            {
+                List<EntryPointData> eps = scenario.layout?.entryPoints;
+                if (eps == null || eps.Count == 0) return;
+                doorPos = World(eps[0].position.ToVector3());
+            }
+
+            Vector3 start = traineeRig.position;
+
+            // Rest the strip on the higher of the staging floor and the building
+            // floor surface so it never sinks beneath either, lifted a hair to
+            // avoid z-fighting with the floor slabs.
+            float groundY = Mathf.Max(start.y, _buildOffset.y + CorridorFloorThickness) + 0.02f;
+
+            Vector3 startG = new Vector3(start.x, groundY, start.z);
+
+            // Aim at a point just OUTSIDE the door (perpendicular to its wall), so the
+            // route ends by stepping into the doorway from outside rather than trying
+            // to path onto the door itself.
+            Vector3 goal;
+            if (haveFootprint)
+            {
+                Vector2 centre  = new Vector2((_fpMinX + _fpMaxX) * 0.5f, (_fpMinZ + _fpMaxZ) * 0.5f);
+                Vector2 outward = OutwardNormal(new Vector2(doorPos.x, doorPos.z) - centre);
+                goal = new Vector3(doorPos.x + outward.x * GuidePathApproach, groundY,
+                                   doorPos.z + outward.y * GuidePathApproach);
+            }
+            else
+            {
+                goal = new Vector3(doorPos.x, groundY, doorPos.z);
+            }
+
+            // Grid-A* around every physical obstacle (template walls, pillars, tables,
+            // the generated building) between the staging point and the door approach.
+            List<Vector3> route = RoutePathAvoidingObstacles(startG, goal, groundY);
+
+            // Final short step from the approach point into the doorway itself.
+            if (haveFootprint)
+                route.Add(new Vector3(doorPos.x, groundY, doorPos.z));
+
+            // Draw a strip per leg, plus a square joint at each interior corner so the
+            // bends read as clean elbows (no gap/overlap where legs meet).
+            float totalLen = 0f;
+            for (int i = 0; i < route.Count - 1; i++)
+            {
+                totalLen += BuildPathLeg(route[i], route[i + 1], groundY);
+                if (i > 0) BuildCornerJoint(route[i], groundY);
+            }
+
+            Debug.Log($"[SceneBuilder] Guide path laid from staging {startG:F1} to entrance {doorPos:F1} " +
+                      $"avoiding obstacles ({route.Count} pts, {totalLen:F1} m).");
+        }
+
+        /// <summary>
+        /// Draws one straight leg of the guide path: a flat unlit strip plus "›"
+        /// direction chevrons marching toward the far end. Returns the leg length.
+        /// </summary>
+        private float BuildPathLeg(Vector3 a, Vector3 b, float groundY)
+        {
+            Vector3 delta = b - a;
+            float length = delta.magnitude;
+            if (length < 0.15f) return 0f;
+
+            Vector3 dir = delta / length;
+            Quaternion look = Quaternion.LookRotation(dir, Vector3.up);
+
+            var strip = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            strip.name = "GuidePath_Strip";
+            strip.transform.SetParent(_guidePathRoot, worldPositionStays: true);
+            strip.transform.SetPositionAndRotation((a + b) * 0.5f, look);
+            strip.transform.localScale = new Vector3(guidePathWidth, 0.02f, length);
+            StripCollider(strip);
+            PaintUnlit(strip, guidePathColor);
+
+            if (guidePathArrowSpacing > 0.1f)
+            {
+                Color arrowCol = Color.Lerp(guidePathColor, Color.white, 0.5f);
+                float barLen = guidePathWidth * 0.55f;
+                float chevY  = groundY + 0.01f;
+                for (float p = guidePathArrowSpacing * 0.5f; p < length - 0.3f; p += guidePathArrowSpacing)
+                {
+                    Vector3 c = a + dir * p; c.y = chevY;
+                    BuildChevron(c, dir, barLen, arrowCol);
+                }
+            }
+            return length;
+        }
+
+        /// <summary>Snaps a direction to the dominant cardinal axis (±X or ±Z),
+        /// giving the outward wall normal for the entrance side.</summary>
+        private static Vector2 OutwardNormal(Vector2 delta)
+        {
+            return Mathf.Abs(delta.x) >= Mathf.Abs(delta.y)
+                ? new Vector2(Mathf.Sign(delta.x), 0f)
+                : new Vector2(0f, Mathf.Sign(delta.y));
+        }
+
+        /// <summary>
+        /// Routes a ground path from <paramref name="startW"/> to <paramref name="goalW"/>
+        /// that steers around EVERY physical obstacle between them — template walls,
+        /// pillars, tables, and the generated building — by rasterising the area into
+        /// a grid, probing each cell with a body-height <see cref="Physics.OverlapBox"/>
+        /// (triggers ignored, the trainee rig and existing path pieces excluded), and
+        /// running A* over the free cells. The grid path is then string-pulled to a
+        /// handful of clean straight legs. Falls back to a direct line if no route is
+        /// found. Read-only w.r.t. the scene — only physics queries, no mutation.
+        /// </summary>
+        private List<Vector3> RoutePathAvoidingObstacles(Vector3 startW, Vector3 goalW, float groundY)
+        {
+            // Freshly built/moved colliders must be registered before we query them.
+            Physics.SyncTransforms();
+
+            var ignore = new HashSet<Collider>();
+            if (traineeRig != null)
+                foreach (var c in traineeRig.GetComponentsInChildren<Collider>(true)) ignore.Add(c);
+            if (_guidePathRoot != null)
+                foreach (var c in _guidePathRoot.GetComponentsInChildren<Collider>(true)) ignore.Add(c);
+
+            float cell   = GuidePathCell;
+            float margin = GuidePathRegionMargin;
+            float minX = Mathf.Min(startW.x, goalW.x) - margin;
+            float maxX = Mathf.Max(startW.x, goalW.x) + margin;
+            float minZ = Mathf.Min(startW.z, goalW.z) - margin;
+            float maxZ = Mathf.Max(startW.z, goalW.z) + margin;
+
+            int nx = Mathf.CeilToInt((maxX - minX) / cell) + 1;
+            int nz = Mathf.CeilToInt((maxZ - minZ) / cell) + 1;
+            const int cap = 200;                       // keep the probe count bounded
+            if (nx > cap || nz > cap)
+            {
+                cell = Mathf.Max((maxX - minX) / cap, (maxZ - minZ) / cap);
+                nx = Mathf.CeilToInt((maxX - minX) / cell) + 1;
+                nz = Mathf.CeilToInt((maxZ - minZ) / cell) + 1;
+            }
+
+            // Overlap box: a body-height slab, inflated in X/Z by half the path width
+            // so the road keeps clearance from whatever it passes.
+            float halfClear = guidePathWidth * 0.5f + 0.15f;
+            Vector3 half = new Vector3(cell * 0.5f + halfClear,
+                                       (GuidePathBodyHigh - GuidePathBodyLow) * 0.5f,
+                                       cell * 0.5f + halfClear);
+            float boxCy = groundY + (GuidePathBodyHigh + GuidePathBodyLow) * 0.5f;
+
+            var blocked = new bool[nx, nz];
+            for (int i = 0; i < nx; i++)
+                for (int j = 0; j < nz; j++)
+                    blocked[i, j] = ObstacleHit(new Vector3(minX + i * cell, boxCy, minZ + j * cell),
+                                                half, ignore);
+
+            int si = Mathf.Clamp(Mathf.RoundToInt((startW.x - minX) / cell), 0, nx - 1);
+            int sj = Mathf.Clamp(Mathf.RoundToInt((startW.z - minZ) / cell), 0, nz - 1);
+            int gi = Mathf.Clamp(Mathf.RoundToInt((goalW.x  - minX) / cell), 0, nx - 1);
+            int gj = Mathf.Clamp(Mathf.RoundToInt((goalW.z  - minZ) / cell), 0, nz - 1);
+
+            // The rig stands among the weapons tables, so clear a small disc around the
+            // start (and the goal cell) to guarantee A* can enter/leave.
+            int clr = Mathf.CeilToInt(1.0f / cell);
+            for (int di = -clr; di <= clr; di++)
+                for (int dj = -clr; dj <= clr; dj++)
+                {
+                    int ci = si + di, cj = sj + dj;
+                    if (ci >= 0 && ci < nx && cj >= 0 && cj < nz) blocked[ci, cj] = false;
+                }
+            blocked[gi, gj] = false;
+
+            List<Vector2Int> cells = AStarGrid(blocked, nx, nz, new Vector2Int(si, sj), new Vector2Int(gi, gj));
+            if (cells == null)
+                return new List<Vector3> { startW, goalW }; // no route — show a direct line
+
+            var pts = new List<Vector3>(cells.Count);
+            foreach (var c in cells)
+                pts.Add(new Vector3(minX + c.x * cell, groundY, minZ + c.y * cell));
+            pts[0] = startW; pts[pts.Count - 1] = goalW;      // snap endpoints to exact spots
+
+            return SmoothPath(pts, boxCy, half, cell, ignore);
+        }
+
+        /// <summary>True when a non-trigger collider (other than the ignored ones)
+        /// overlaps the body-height box at <paramref name="centre"/>.</summary>
+        private static bool ObstacleHit(Vector3 centre, Vector3 half, HashSet<Collider> ignore)
+        {
+            var hits = Physics.OverlapBox(centre, half, Quaternion.identity,
+                                          ~0, QueryTriggerInteraction.Ignore);
+            foreach (var c in hits)
+                if (c != null && !ignore.Contains(c)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// A* over a boolean obstacle grid, 8-connected, without cutting blocked
+        /// corners. Returns the cell path (start→goal inclusive) or null if blocked.
+        /// </summary>
+        private static List<Vector2Int> AStarGrid(bool[,] blocked, int nx, int nz,
+                                                  Vector2Int start, Vector2Int goal)
+        {
+            if (blocked[start.x, start.y] || blocked[goal.x, goal.y]) return null;
+
+            var g       = new float[nx, nz];
+            var f       = new float[nx, nz];
+            var came    = new Vector2Int[nx, nz];
+            var closed  = new bool[nx, nz];
+            var inOpen  = new bool[nx, nz];
+            for (int i = 0; i < nx; i++) for (int j = 0; j < nz; j++) { g[i, j] = float.MaxValue; came[i, j] = new Vector2Int(-1, -1); }
+
+            System.Func<Vector2Int, float> h = c =>
+            {
+                int dx = Mathf.Abs(c.x - goal.x), dy = Mathf.Abs(c.y - goal.y);
+                return (dx + dy) + (1.41421356f - 2f) * Mathf.Min(dx, dy); // octile
+            };
+
+            var open = new List<Vector2Int> { start };
+            g[start.x, start.y] = 0f; f[start.x, start.y] = h(start); inOpen[start.x, start.y] = true;
+
+            int[] dX = { 1, -1, 0, 0, 1, 1, -1, -1 };
+            int[] dY = { 0, 0, 1, -1, 1, -1, 1, -1 };
+
+            while (open.Count > 0)
+            {
+                // Extract the open cell with the lowest f (linear scan; grid is small).
+                int bi = 0; float bf = float.MaxValue;
+                for (int k = 0; k < open.Count; k++) { var c = open[k]; if (f[c.x, c.y] < bf) { bf = f[c.x, c.y]; bi = k; } }
+                Vector2Int cur = open[bi];
+                if (cur == goal)
+                {
+                    var path = new List<Vector2Int>();
+                    for (var at = cur; at.x != -1; at = came[at.x, at.y]) path.Add(at);
+                    path.Reverse();
+                    return path;
+                }
+                open.RemoveAt(bi); inOpen[cur.x, cur.y] = false; closed[cur.x, cur.y] = true;
+
+                for (int d = 0; d < 8; d++)
+                {
+                    int ni = cur.x + dX[d], nj = cur.y + dY[d];
+                    if (ni < 0 || ni >= nx || nj < 0 || nj >= nz) continue;
+                    if (blocked[ni, nj] || closed[ni, nj]) continue;
+                    if (d >= 4 && (blocked[cur.x, nj] || blocked[ni, cur.y])) continue; // no corner cutting
+
+                    float step = d >= 4 ? 1.41421356f : 1f;
+                    float ng = g[cur.x, cur.y] + step;
+                    if (ng < g[ni, nj])
+                    {
+                        g[ni, nj] = ng; f[ni, nj] = ng + h(new Vector2Int(ni, nj));
+                        came[ni, nj] = cur;
+                        if (!inOpen[ni, nj]) { open.Add(new Vector2Int(ni, nj)); inOpen[ni, nj] = true; }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// String-pulls a dense grid path down to the fewest waypoints by greedily
+        /// jumping as far ahead as a clear straight leg allows (checked with the same
+        /// body-height overlap box), giving clean straight legs and minimal bends.
+        /// </summary>
+        private List<Vector3> SmoothPath(List<Vector3> pts, float boxCy, Vector3 half,
+                                         float cell, HashSet<Collider> ignore)
+        {
+            if (pts.Count <= 2) return pts;
+            var outp = new List<Vector3> { pts[0] };
+            int cur = 0;
+            while (cur < pts.Count - 1)
+            {
+                int nxt = pts.Count - 1;
+                for (; nxt > cur + 1; nxt--)
+                    if (LegClear(pts[cur], pts[nxt], boxCy, half, cell, ignore)) break;
+                outp.Add(pts[nxt]);
+                cur = nxt;
+            }
+            return outp;
+        }
+
+        /// <summary>True when the straight leg a→b is free of obstacles, sampled with
+        /// the body-height overlap box every half-cell.</summary>
+        private static bool LegClear(Vector3 a, Vector3 b, float boxCy, Vector3 half,
+                                     float cell, HashSet<Collider> ignore)
+        {
+            Vector3 a0 = new Vector3(a.x, 0f, a.z), b0 = new Vector3(b.x, 0f, b.z);
+            float dist = Vector3.Distance(a0, b0);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(dist / (cell * 0.5f)));
+            for (int k = 0; k <= steps; k++)
+            {
+                Vector3 p = Vector3.Lerp(a, b, (float)k / steps);
+                if (ObstacleHit(new Vector3(p.x, boxCy, p.z), half, ignore)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Fills the elbow where two legs meet with a small square pad so the
+        /// bend reads cleanly (covers the outer gap / inner overlap of mitred strips).</summary>
+        private void BuildCornerJoint(Vector3 corner, float groundY)
+        {
+            var joint = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            joint.name = "GuidePath_Joint";
+            joint.transform.SetParent(_guidePathRoot, worldPositionStays: true);
+            joint.transform.position   = new Vector3(corner.x, groundY, corner.z);
+            joint.transform.localScale = new Vector3(guidePathWidth, 0.02f, guidePathWidth);
+            StripCollider(joint);
+            PaintUnlit(joint, guidePathColor);
+        }
+
+        /// <summary>
+        /// Builds a "›" direction chevron pointing down-path: two thin bars whose
+        /// front ends meet at a shared vertex ahead of <paramref name="centre"/>,
+        /// each swept back 45° off the travel direction. The shared tip makes the
+        /// travel direction unambiguous (versus two bars crossing into an "✕").
+        /// </summary>
+        private void BuildChevron(Vector3 centre, Vector3 dir, float barLen, Color color)
+        {
+            // Vertex sits slightly ahead so both arms trail backward from it.
+            Vector3 vertex = centre + dir * (barLen * 0.4f);
+            Vector3 armFwdA = Quaternion.Euler(0f, +45f, 0f) * dir; // front-then-right
+            Vector3 armFwdB = Quaternion.Euler(0f, -45f, 0f) * dir; // front-then-left
+            BuildChevronArm(vertex, armFwdA, barLen, color);
+            BuildChevronArm(vertex, armFwdB, barLen, color);
+        }
+
+        /// <summary>
+        /// One arm of a chevron: a short thin bar with its FRONT end on
+        /// <paramref name="vertex"/>, extending backward along -<paramref name="armFwd"/>
+        /// so paired arms form a "›".
+        /// </summary>
+        private void BuildChevronArm(Vector3 vertex, Vector3 armFwd, float barLen, Color color)
+        {
+            Quaternion rot = Quaternion.LookRotation(armFwd, Vector3.up);
+            Vector3 centre = vertex - armFwd * (barLen * 0.5f); // bar spans vertex → back
+            var bar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bar.name = "GuidePath_Chevron";
+            bar.transform.SetParent(_guidePathRoot, worldPositionStays: true);
+            bar.transform.SetPositionAndRotation(centre, rot);
+            bar.transform.localScale = new Vector3(0.12f, 0.02f, barLen);
+            StripCollider(bar);
+            PaintUnlit(bar, color);
+        }
+
+        /// <summary>Removes the auto-added collider from a primitive so it stays
+        /// purely visual (no physics, no NavMesh voxelisation).</summary>
+        private static void StripCollider(GameObject go)
+        {
+            var col = go.GetComponent<Collider>();
+            if (col != null)
+            {
+                if (Application.isPlaying) Destroy(col); else DestroyImmediate(col);
+            }
+        }
+
+        /// <summary>
+        /// Paints a primitive with a bright UNLIT material so it stays visible in a
+        /// dark/night scene regardless of lighting. URP-first with built-in fallbacks,
+        /// mirroring <see cref="SafeZoneBeacon"/>.
+        /// </summary>
+        private static void PaintUnlit(GameObject go, Color c)
+        {
+            var rend = go.GetComponent<Renderer>();
+            if (rend == null) return;
+
+            Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Unlit/Color");
+            if (sh == null) sh = Shader.Find("Sprites/Default");
+
+            var mat = new Material(sh);
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c);
+            mat.color = c;
+
+            rend.sharedMaterial = mat;
+            rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            rend.receiveShadows = false;
         }
 
         private void SpawnTerrorists(ScenarioData scenario)
@@ -2020,5 +3157,22 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             UnityEditor.Handles.Label(p + Vector3.up * (radius + 0.4f), label, style);
 #endif
         }
+    }
+
+    /// <summary>
+    /// Inspector-editable mapping from a Module 1 <see cref="FurnitureType"/> to a
+    /// real prefab. Wire entries on the <see cref="SceneBuilder"/> to replace the
+    /// greybox box for that type; any unmapped type keeps its scaled box. Mapped
+    /// prefabs are re-scaled to the generated footprint at build time, so the
+    /// placement stays collision-correct whatever the source art's native size is.
+    /// </summary>
+    [Serializable]
+    public class FurniturePrefabMapping
+    {
+        [Tooltip("Furniture category this prefab represents.")]
+        public FurnitureType type;
+
+        [Tooltip("Prefab to spawn for this type. Scaled to the generated footprint.")]
+        public GameObject prefab;
     }
 }
