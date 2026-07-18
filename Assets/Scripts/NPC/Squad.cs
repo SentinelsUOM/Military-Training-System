@@ -109,8 +109,7 @@ public class Squad
     const float LeadBase       = 5f;   // how far along the escape line the near searcher goes
     const float LeadPerLane    = 1.5f; // extra depth per lateral lane, so it reads as a cone, not a wall
     const float LateralStep    = 3.5f; // sideways gap between adjacent searchers across the escape line
-    const float DoubleBackLead = 6f;   // how far the plank-checker goes the OPPOSITE way (later waves only)
-    const float WidenPerWave   = 3f;   // each empty wave pushes the sweep this much farther out
+    const float WidenPerWave   = 3f;   // each empty wave pushes the search this much farther out
     const float RadialDistance = 6f;   // fallback spread radius when no escape direction is known
 
     float   _nextFanOutAllowedAt = -999f;
@@ -189,23 +188,28 @@ public class Squad
         for (int i = 0; i < searchers.Count; i++)
         {
             Vector3 desired;
-            if (haveDir)
+            if (haveDir && _searchWave == 0)
             {
-                bool plankChecker = _searchWave >= 1 && searchers.Count >= 3 && i == searchers.Count - 1;
-                if (plankChecker)
-                {
-                    // From the second wave on, ONE searcher covers the trainee doubling back.
-                    desired = focus - dir * (DoubleBackLead + widen);
-                }
-                else
-                {
-                    float lat  = LaneLateral(i) * LateralStep;
-                    float lead = LeadBase + widen + Mathf.Abs(LaneLateral(i)) * LeadPerLane;
-                    desired = focus + dir * lead + perp * lat;
-                }
+                // WAVE 0 — CHASE. They saw which way you ran, so everyone sweeps FORWARD along the
+                // escape line, line-abreast, covering its width. Nobody goes backward yet.
+                float lat  = LaneLateral(i) * LateralStep;
+                float lead = LeadBase + Mathf.Abs(LaneLateral(i)) * LeadPerLane;
+                desired = focus + dir * lead + perp * lat;
+            }
+            else if (haveDir)
+            {
+                // WAVE 1+ — DIVIDE. The forward chase didn't find you, so now they split to cover
+                // EVERY approach: each searcher takes a DISTINCT bearing fanned around the escape
+                // direction (straight on, then the sides, then behind), widening each wave, until
+                // someone reacquires or a shot is heard.
+                float baseDeg = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                float ang     = (baseDeg + LaneAngle(i)) * Mathf.Deg2Rad;
+                Vector3 sectorDir = new Vector3(Mathf.Sin(ang), 0f, Mathf.Cos(ang));
+                desired = focus + sectorDir * (LeadBase + widen);
             }
             else
             {
+                // No escape direction at all (a blind gunshot) — spread radially around the point.
                 float ang = (360f / searchers.Count) * i * Mathf.Deg2Rad;
                 desired = focus + new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang)) * (RadialDistance + widen);
             }
@@ -223,6 +227,16 @@ public class Squad
         if (lane == 0) return 0;
         int mag = (lane + 1) / 2;
         return (lane % 2 == 1) ? mag : -mag;
+    }
+
+    // 0°, +60°, -60°, +120°, -120°, +180° … — DIVIDE bearings fanned around the escape direction,
+    // sweeping out to the sides and eventually behind, so the squad covers every approach.
+    static float LaneAngle(int lane)
+    {
+        if (lane == 0) return 0f;
+        int mag = (lane + 1) / 2;              // 1,1,2,2,3,3
+        float deg = Mathf.Min(mag * 60f, 180f); // 60,120,180 — never past a full reversal
+        return (lane % 2 == 1) ? deg : -deg;
     }
 
     /// <summary>Nearest navigable point to <paramref name="desired"/>; if that spot is off the mesh

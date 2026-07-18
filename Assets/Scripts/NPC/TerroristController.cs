@@ -2480,12 +2480,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
     // A squadmate who isn't personally fighting must not just stand there (the old bug),
     // and must not blindly rush the trainee either. He picks ONE of three jobs:
     //
-    //   HELP   — an ally is injured or dead  → go to him NOW (highest priority).
-    //   COVER  — an ally has EYES ON the trainee (Engage) → the location is already known,
-    //            so DON'T sweep rooms. Take the doorway the trainee must come through and
-    //            hold it, weapon up.
-    //   SWEEP  — nobody has contact → clear the area: rooms and doorways near the last
-    //            reported contact.
+    //   HELP    — an ally is injured or dead → go to him NOW (highest priority).
+    //   SUPPORT — an ally has EYES ON the trainee (Engage) → COME to support: move up to the
+    //             contact and take a flanking firing position beside him, so the trainee is caught
+    //             between two angles. Getting LOS flips us to Engage automatically.
+    //   DIVIDE  — nobody has contact (trainee lost) → the squad splits and hunts: wave 0 chases
+    //             the escape direction, later waves fan out across every bearing (Squad.FanOutSearch)
+    //             until someone reacquires or a shot is heard, which pulls everyone onto that spot.
     //
     // Guardians never run this: they never leave the hostage.
 
@@ -2542,30 +2543,34 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
             else if (engaged != null)
             {
-                // ── COVER: a mate has eyes on the trainee. The position is already
-                // known, so stop sweeping — take the doorway he'd come through and hold.
+                // ── SUPPORT: a mate has eyes on the trainee and is fighting. COME to support him:
+                // move up toward the contact and take a firing position near it — offset to one
+                // side of the engaged ally so supporters FLANK rather than stack, and so the
+                // trainee is caught between two angles. The moment we get our own line of sight,
+                // perception flips us to Engage and we open fire. (Old behaviour: hold a far
+                // doorway and never close in — which read as "not helping".)
                 _isInvestigating = false;
                 Vector3 threat = engaged._lastSeenPlayer != null
                     ? engaged._lastSeenPlayer.position
                     : engaged._lastKnownPlayerPos;
+                _lastKnownPlayerPos = threat; // share the contact so a later loss chases the right way
 
-                Transform door = NearestDoorToward(threat);
-                if (door != null)
+                Vector3 toThreat = threat - transform.position; toThreat.y = 0f;
+                if (toThreat.sqrMagnitude > 0.01f)
                 {
-                    // Stand just off the doorway, on our side, weapon on it.
-                    Vector3 toUs = transform.position - door.position; toUs.y = 0f;
-                    Vector3 hold = door.position +
-                                   (toUs.sqrMagnitude > 0.01f ? toUs.normalized : Vector3.zero) * holdDoorDistance;
-                    if (UnityEngine.AI.NavMesh.SamplePosition(hold, out var h, 2f, UnityEngine.AI.NavMesh.AllAreas))
+                    Vector3 inDir = toThreat.normalized;
+                    Vector3 perp  = Vector3.Cross(Vector3.up, inDir);
+                    // Flank to whichever side we're already on relative to the engaged ally.
+                    float side = Vector3.Dot(transform.position - engaged.transform.position, perp) >= 0f ? 1f : -1f;
+                    Vector3 firePos = threat - inDir * preferredStandoffDistance + perp * (side * 2.5f);
+                    if (UnityEngine.AI.NavMesh.SamplePosition(firePos, out var h, 4f, UnityEngine.AI.NavMesh.AllAreas))
                     {
                         agent.isStopped = false;
                         agent.SetDestination(h.position);
                     }
-                    SetLookTarget(threat);   // ResolveLookPosition aims at the door if no LOS
                 }
-                else SetLookTarget(threat);
-
-                yield return new WaitForSeconds(1f);
+                SetLookTarget(threat);
+                yield return new WaitForSeconds(0.8f);
             }
             else
             {
