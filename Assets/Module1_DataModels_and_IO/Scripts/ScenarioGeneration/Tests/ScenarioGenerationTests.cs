@@ -82,6 +82,13 @@ namespace TeamSentinels.ScenarioGeneration.Tests
             RunTest(nameof(VerifyHostageInDeepRoom),      VerifyHostageInDeepRoom);
             RunTest(nameof(VerifyTraineeInEntryRoom),     VerifyTraineeInEntryRoom);
 
+            // Furniture
+            RunTest(nameof(VerifyFurnitureWithinRoomBounds), VerifyFurnitureWithinRoomBounds);
+            RunTest(nameof(VerifyFurnitureClearsDoors),      VerifyFurnitureClearsDoors);
+            RunTest(nameof(VerifyFurnitureClearsEntities),   VerifyFurnitureClearsEntities);
+            RunTest(nameof(VerifyFurnitureNoOverlap),        VerifyFurnitureNoOverlap);
+            RunTest(nameof(VerifyFurnitureSeedReproducible), VerifyFurnitureSeedReproducible);
+
             // Role Assignment
             RunTest(nameof(VerifyHostageGuardianExists),         VerifyHostageGuardianExists);
             RunTest(nameof(VerifyAllTerroristsHaveRoles),        VerifyAllTerroristsHaveRoles);
@@ -479,6 +486,139 @@ namespace TeamSentinels.ScenarioGeneration.Tests
         }
 
         // =====================================================================
+        // Furniture (5 tests)
+        // =====================================================================
+
+        // Mirror of FurniturePlacer's clearance constants, used to assert the
+        // placement guarantees hold on the generated output.
+        private const float FurnitureEdgeInset     = 0.15f;
+        private const float FurnitureDoorKeepout   = 1.35f;
+        private const float FurnitureEntityClear   = 0.6f;
+
+        private void VerifyFurnitureWithinRoomBounds()
+        {
+            foreach (LayoutType type in AllLayoutTypes())
+            {
+                LayoutData layout = PlaceFurniture(type, seed: 7);
+                foreach (RoomData room in layout.rooms)
+                {
+                    float hw = room.size.width * 0.5f - FurnitureEdgeInset + BoundsEpsilon;
+                    float hd = room.size.depth * 0.5f - FurnitureEdgeInset + BoundsEpsilon;
+                    foreach (FurnitureData f in room.furniture)
+                    {
+                        Rect r = Footprint(f);
+                        if (Mathf.Abs(r.center.x - room.position.x) + r.width  * 0.5f > hw ||
+                            Mathf.Abs(r.center.y - room.position.z) + r.height * 0.5f > hd)
+                            throw new Exception(
+                                $"{type}: furniture {f.id} footprint escapes room {room.id} interior");
+                    }
+                }
+            }
+        }
+
+        private void VerifyFurnitureClearsDoors()
+        {
+            foreach (LayoutType type in AllLayoutTypes())
+            {
+                LayoutData layout = PlaceFurniture(type, seed: 7);
+                foreach (RoomData room in layout.rooms)
+                {
+                    foreach (FurnitureData f in room.furniture)
+                    {
+                        Rect r = Footprint(f);
+                        foreach (DoorData d in room.doors)
+                        {
+                            float dist = RectPointDistance(r, d.position.x, d.position.z);
+                            if (dist < FurnitureDoorKeepout - BoundsEpsilon)
+                                throw new Exception(
+                                    $"{type}: furniture {f.id} is {dist:F2}m from door {d.id} " +
+                                    $"(< {FurnitureDoorKeepout}m keep-out) — could block the doorway");
+                        }
+                    }
+                }
+            }
+        }
+
+        private void VerifyFurnitureClearsEntities()
+        {
+            foreach (LayoutType type in AllLayoutTypes())
+            {
+                (LayoutData layout, List<EntityRecord> entities) = PlaceFurnitureWithEntities(type, seed: 7);
+                var byRoom = entities
+                    .GroupBy(e => e.assignedRoom)
+                    .ToDictionary(g => g.Key, g => g.Select(e => e.position.ToVector3()).ToList());
+
+                foreach (RoomData room in layout.rooms)
+                {
+                    if (!byRoom.TryGetValue(room.id, out var pts)) continue;
+                    foreach (FurnitureData f in room.furniture)
+                    {
+                        Rect r = Footprint(f);
+                        foreach (Vector3 p in pts)
+                        {
+                            if (p.x >= r.xMin - FurnitureEntityClear + BoundsEpsilon &&
+                                p.x <= r.xMax + FurnitureEntityClear - BoundsEpsilon &&
+                                p.z >= r.yMin - FurnitureEntityClear + BoundsEpsilon &&
+                                p.z <= r.yMax + FurnitureEntityClear - BoundsEpsilon)
+                                throw new Exception(
+                                    $"{type}: entity at ({p.x:F2},{p.z:F2}) sits inside furniture " +
+                                    $"{f.id} in room {room.id}");
+                        }
+                    }
+                }
+            }
+        }
+
+        private void VerifyFurnitureNoOverlap()
+        {
+            foreach (LayoutType type in AllLayoutTypes())
+            {
+                LayoutData layout = PlaceFurniture(type, seed: 7);
+                foreach (RoomData room in layout.rooms)
+                {
+                    List<FurnitureData> items = room.furniture;
+                    for (int i = 0; i < items.Count; i++)
+                        for (int j = i + 1; j < items.Count; j++)
+                        {
+                            Rect a = Footprint(items[i]);
+                            Rect b = Footprint(items[j]);
+                            if (a.xMin < b.xMax - BoundsEpsilon && a.xMax > b.xMin + BoundsEpsilon &&
+                                a.yMin < b.yMax - BoundsEpsilon && a.yMax > b.yMin + BoundsEpsilon)
+                                throw new Exception(
+                                    $"{type}: furniture {items[i].id} and {items[j].id} overlap in " +
+                                    $"room {room.id}");
+                        }
+                }
+            }
+        }
+
+        private void VerifyFurnitureSeedReproducible()
+        {
+            LayoutData a = PlaceFurniture(LayoutType.Branching, seed: 12345);
+            LayoutData b = PlaceFurniture(LayoutType.Branching, seed: 12345);
+
+            var itemsA = a.rooms.SelectMany(r => r.furniture).OrderBy(f => f.id).ToList();
+            var itemsB = b.rooms.SelectMany(r => r.furniture).OrderBy(f => f.id).ToList();
+
+            if (itemsA.Count != itemsB.Count)
+                throw new Exception($"furniture count differs across runs: {itemsA.Count} vs {itemsB.Count}");
+            if (itemsA.Count == 0)
+                throw new Exception("no furniture generated — expected at least some items");
+
+            for (int i = 0; i < itemsA.Count; i++)
+            {
+                FurnitureData x = itemsA[i], y = itemsB[i];
+                if (x.id != y.id || x.type != y.type ||
+                    Mathf.Abs(x.position.x - y.position.x) > 1e-4f ||
+                    Mathf.Abs(x.position.z - y.position.z) > 1e-4f ||
+                    Mathf.Abs(x.rotationY - y.rotationY) > 1e-4f ||
+                    Mathf.Abs(x.size.x - y.size.x) > 1e-4f ||
+                    Mathf.Abs(x.size.z - y.size.z) > 1e-4f)
+                    throw new Exception($"furniture {x.id} not reproducible for a fixed seed");
+            }
+        }
+
+        // =====================================================================
         // Role Assignment (3 tests)
         // =====================================================================
 
@@ -654,6 +794,53 @@ namespace TeamSentinels.ScenarioGeneration.Tests
             LayoutData lay = new LayoutGenerator().Generate(cfg, rng);
             EntityPlacementResult res = new EntityPlacer().Place(lay, cfg, rng);
             return (lay, res);
+        }
+
+        private static LayoutType[] AllLayoutTypes() => new[]
+        {
+            LayoutType.Linear, LayoutType.Branching, LayoutType.HubAndSpoke, LayoutType.Loop
+        };
+
+        /// <summary>
+        /// Runs layout → entity placement → furniture placement on one shared RNG
+        /// (mirroring <see cref="ScenarioGenerator"/>'s ordering) and returns the
+        /// layout with each room's furniture populated.
+        /// </summary>
+        private static LayoutData PlaceFurniture(LayoutType type, int seed)
+        {
+            return PlaceFurnitureWithEntities(type, seed).layout;
+        }
+
+        private static (LayoutData layout, List<EntityRecord> entities) PlaceFurnitureWithEntities(
+            LayoutType type, int seed)
+        {
+            ScenarioConfig cfg = MakeConfig(type, rooms: 6, seed: seed);
+            var rng = new System.Random(seed);
+            LayoutData layout = new LayoutGenerator().Generate(cfg, rng);
+            EntityPlacementResult placement = new EntityPlacer().Place(layout, cfg, rng);
+            new FurniturePlacer().Place(layout, placement.entities, cfg, rng);
+            return (layout, placement.entities);
+        }
+
+        /// <summary>
+        /// World-space X/Z footprint of a furniture item. A yaw of 90/270° turns
+        /// the item, swapping its width and depth extents. (Rect.y is the Z axis.)
+        /// </summary>
+        private static Rect Footprint(FurnitureData f)
+        {
+            bool turned = Mathf.Abs(Mathf.DeltaAngle(f.rotationY, 90f)) < 1f
+                       || Mathf.Abs(Mathf.DeltaAngle(f.rotationY, 270f)) < 1f;
+            float halfX = (turned ? f.size.z : f.size.x) * 0.5f;
+            float halfZ = (turned ? f.size.x : f.size.z) * 0.5f;
+            return new Rect(f.position.x - halfX, f.position.z - halfZ, halfX * 2f, halfZ * 2f);
+        }
+
+        private static float RectPointDistance(Rect r, float x, float z)
+        {
+            float nx = Mathf.Clamp(x, r.xMin, r.xMax);
+            float nz = Mathf.Clamp(z, r.yMin, r.yMax);
+            float dx = x - nx, dz = z - nz;
+            return Mathf.Sqrt(dx * dx + dz * dz);
         }
 
         /// <summary>
