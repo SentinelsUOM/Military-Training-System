@@ -34,3 +34,6 @@ sysinfo.txt
 
 # Claude Code project instructions (personal, not shared with team)
 CLAUDE.md
+
+# Claude Code local settings (machine-specific paths and permissions)
+.claude/settings.local.json
