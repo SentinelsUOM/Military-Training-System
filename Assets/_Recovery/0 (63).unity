@@ -77429,7 +77429,6 @@ MonoBehaviour:
   playerHealth: {fileID: 0}
   damageMultiplier: 1
   echoToConsole: 1
-  followHead: 1
 --- !u!114 &1370155278
 MonoBehaviour:
   m_ObjectHideFlags: 0

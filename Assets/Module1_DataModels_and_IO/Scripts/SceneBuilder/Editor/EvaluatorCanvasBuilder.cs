@@ -19,6 +19,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using UnityEngine.XR.Interaction.Toolkit.UI;
 
 namespace TeamSentinels.ScenarioGeneration.EditorTools
 {
@@ -41,11 +42,43 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
         private const int   RowFontSize  = 15;
         private const int   HeaderFontSize = 17;
 
+        // World-space sizing. Authored in pixels, scaled down to metres, so
+        // 1000 x 640 px at 0.0013 becomes a 1.30 x 0.83 m panel - readable at the
+        // placer's 1.4 m distance without being so tall the trainee must look up.
+        //
+        // The form is laid out in TWO COLUMNS with no ScrollView. That is deliberate:
+        //  - A ScrollRect's Viewport needs a Mask, and Mask.IsRaycastLocationValid()
+        //    does a screen-point test that does not hold up for a world-space canvas
+        //    hit by a tracked-device ray, so EVERY control inside it becomes unclickable.
+        //  - Anything scrolled out of the viewport is unreachable in VR anyway.
+        // Two columns keep all 24 controls on-panel and directly hittable.
+        private const float PanelWidth       = 1000f;
+        private const float PanelHeight      = 640f;
+        private const float WorldCanvasScale = 0.0013f;
+        private const float ColumnGap        = 16f;
+
         private const string EvaluatorCanvasName = "EvaluatorCanvas";
         private const string EvaluatorPanelName  = "EvaluatorPanel";
 
         [MenuItem(MenuPath, priority = 50)]
         public static void BuildCanvas()
+        {
+            string sbStatus = BuildCanvasCore();
+            EditorUtility.DisplayDialog(
+                "Evaluator Canvas Built",
+                "Canvas + EvaluatorPanel created and wired.\n\n" +
+                sbStatus + "\n\n" +
+                "The panel is world-space so it renders in VR. Point a controller at " +
+                "it and pull the trigger to use it.",
+                "OK");
+        }
+
+        /// <summary>
+        /// Does the actual building and returns a status line. Split out from
+        /// <see cref="BuildCanvas"/> so it can be driven from automation without a
+        /// modal dialog blocking the editor.
+        /// </summary>
+        internal static string BuildCanvasCore()
         {
             // 0. Clean up any previous build (so re-running doesn't pile on duplicates).
             foreach (var existing in Object.FindObjectsOfType<EvaluatorConfigPanel>())
@@ -62,57 +95,72 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             var staleCanvas = GameObject.Find(EvaluatorCanvasName);
             if (staleCanvas != null) Object.DestroyImmediate(staleCanvas);
 
-            // 1. Always create a dedicated screen-space overlay canvas. Do not reuse
-            //    any pre-existing canvas (e.g. the XRI Starter Kit's world-space readme
-            //    canvas) - that puts the panel inside the 3D scene instead of on screen.
+            // 1. Always create a dedicated canvas. Do not reuse any pre-existing
+            //    canvas - that would nest the panel under unrelated UI.
+            //
+            //    The canvas MUST be world-space: Unity never renders a screen-space
+            //    canvas to an HMD, so a ScreenSpaceOverlay panel is invisible in the
+            //    Quest build even though it looks fine in the desktop Game view.
+            //    TrackedDeviceGraphicRaycaster is what lets the XR controller ray
+            //    click it; a plain GraphicRaycaster only understands a mouse.
             var canvasGo = new GameObject(EvaluatorCanvasName,
-                typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+                typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster),
+                typeof(TrackedDeviceGraphicRaycaster), typeof(WorldSpacePanelPlacer));
             Canvas canvas = canvasGo.GetComponent<Canvas>();
-            canvas.renderMode  = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 100; // above any pre-existing screen-space UI
+            canvas.renderMode  = RenderMode.WorldSpace;
+            canvas.sortingOrder = 100;
+            canvas.worldCamera = Camera.main;
+
+            // Authored in pixels, scaled down to metres: 640 x 820 px at
+            // WorldCanvasScale is a ~0.64 x 0.82 m panel, comfortable to read at
+            // the placer's 1.4 m distance.
+            var canvasRt = canvasGo.GetComponent<RectTransform>();
+            canvasRt.sizeDelta  = new Vector2(PanelWidth, PanelHeight);
+            canvasRt.localScale = Vector3.one * WorldCanvasScale;
 
             var scaler = canvasGo.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode          = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution  = new Vector2(1920, 1080);
-            scaler.screenMatchMode      = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
-            scaler.matchWidthOrHeight   = 0.5f;
+            scaler.uiScaleMode          = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.scaleFactor          = 1f;
+            scaler.dynamicPixelsPerUnit = 3f; // keeps text crisp up close in VR
 
             if (Object.FindObjectOfType<EventSystem>() == null)
                 EditorApplication.ExecuteMenuItem("GameObject/UI/Event System");
 
-            // 2. Panel root + title + scroll content
-            GameObject panelGo   = CreatePanel(canvas.transform);
+            // 2. Panel root + title + two columns (no ScrollView - see PanelWidth comment)
+            GameObject panelGo = CreatePanel(canvas.transform);
             CreateTitle(panelGo, "Scenario Configuration");
-            GameObject contentGo = CreateScrollContent(panelGo);
+            GameObject leftCol, rightCol;
+            CreateColumns(panelGo, out leftCol, out rightCol);
 
-            // 3. Build form (rows now go inside the scroll content, not panel root)
+            // 3. Build form. Rows are split across the two columns so everything fits
+            //    on the panel at once and stays within arm's reach of the ray.
             var built = new BuiltControls();
 
-            AddSectionHeader(contentGo, "Mission Structure");
-            built.missionTypeDropdown = AddDropdownRow(contentGo, "Mission Type");
-            built.roomCountMinSlider  = AddSliderRow  (contentGo, "Room Count Min", 3, 20, 5, out built.roomCountMinLabel);
-            built.roomCountMaxSlider  = AddSliderRow  (contentGo, "Room Count Max", 3, 20, 8, out built.roomCountMaxLabel);
-            built.roomSizeDropdown    = AddDropdownRow(contentGo, "Room Size");
-            built.layoutTypeDropdown  = AddDropdownRow(contentGo, "Layout Type");
-            built.entryTypeDropdown   = AddDropdownRow(contentGo, "Entry Type");
+            AddSectionHeader(leftCol, "Mission Structure");
+            built.missionTypeDropdown = AddDropdownRow(leftCol, "Mission Type");
+            built.roomCountMinSlider  = AddSliderRow  (leftCol, "Room Count Min", 3, 20, 5, out built.roomCountMinLabel);
+            built.roomCountMaxSlider  = AddSliderRow  (leftCol, "Room Count Max", 3, 20, 8, out built.roomCountMaxLabel);
+            built.roomSizeDropdown    = AddDropdownRow(leftCol, "Room Size");
+            built.layoutTypeDropdown  = AddDropdownRow(leftCol, "Layout Type");
+            built.entryTypeDropdown   = AddDropdownRow(leftCol, "Entry Type");
 
-            AddSectionHeader(contentGo, "Entity Configuration");
-            built.hostageCountLabel         = AddReadonlyRow(contentGo, "Hostage Count", "1");
-            built.terroristCountSlider      = AddSliderRow  (contentGo, "Terrorist Count", 1, 8, 4, out built.terroristCountLabel);
-            built.placementStrategyDropdown = AddDropdownRow(contentGo, "Placement Strategy");
-            built.hostageRiskLevelDropdown  = AddDropdownRow(contentGo, "Hostage Risk Level");
+            AddSectionHeader(leftCol, "Entity Configuration");
+            built.hostageCountLabel         = AddReadonlyRow(leftCol, "Hostage Count", "1");
+            built.terroristCountSlider      = AddSliderRow  (leftCol, "Terrorist Count", 1, 8, 4, out built.terroristCountLabel);
+            built.placementStrategyDropdown = AddDropdownRow(leftCol, "Placement Strategy");
+            built.hostageRiskLevelDropdown  = AddDropdownRow(leftCol, "Hostage Risk Level");
 
-            AddSectionHeader(contentGo, "Execution Controls");
-            built.difficultySlider   = AddSliderRow  (contentGo, "Difficulty", 1, 5, 3, out built.difficultyLabel);
-            built.randomnessDropdown = AddDropdownRow(contentGo, "Randomness");
-            built.seedInput          = AddInputRow   (contentGo, "Seed (blank = random)");
-            built.timeLimitInput     = AddInputRow   (contentGo, "Time Limit (60-1800 s)");
-            built.customLabelInput   = AddInputRow   (contentGo, "Custom Label");
+            AddSectionHeader(rightCol, "Execution Controls");
+            built.difficultySlider   = AddSliderRow  (rightCol, "Difficulty", 1, 5, 3, out built.difficultyLabel);
+            built.randomnessDropdown = AddDropdownRow(rightCol, "Randomness");
+            built.seedInput          = AddInputRow   (rightCol, "Seed (blank = random)");
+            built.timeLimitInput     = AddInputRow   (rightCol, "Time Limit (60-1800 s)");
+            built.customLabelInput   = AddInputRow   (rightCol, "Custom Label");
 
-            AddSectionHeader(contentGo, "Actions");
-            built.statusText         = AddStatusText(contentGo, "Ready");
-            built.generateButton     = AddButton(contentGo, "Generate Scenario");
-            built.startMissionButton = AddButton(contentGo, "Start Mission");
+            AddSectionHeader(rightCol, "Actions");
+            built.statusText         = AddStatusText(rightCol, "Ready");
+            built.generateButton     = AddButton(rightCol, "Generate Scenario");
+            built.startMissionButton = AddButton(rightCol, "Start Mission");
 
             // 4. Add controller and wire fields
             var panel = panelGo.AddComponent<EvaluatorConfigPanel>();
@@ -122,30 +170,23 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             var sceneBuilder = Object.FindObjectOfType<SceneBuilder>();
             if (sceneBuilder != null) panel.sceneBuilder = sceneBuilder;
 
-            // 6. Force a layout rebuild now so rows / scroll thumb sit correctly
-            //    in the editor before Play is even pressed.
+            // 6. Force a layout rebuild now so rows sit correctly in the editor
+            //    before Play is even pressed.
             Canvas.ForceUpdateCanvases();
-            var contentRt = contentGo.transform as RectTransform;
-            if (contentRt != null)
-                LayoutRebuilder.ForceRebuildLayoutImmediate(contentRt);
+            foreach (var col in new[] { leftCol, rightCol })
+            {
+                var colRt = col.transform as RectTransform;
+                if (colRt != null) LayoutRebuilder.ForceRebuildLayoutImmediate(colRt);
+            }
 
             // 7. Mark scene dirty so the work isn't lost on close
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             Selection.activeGameObject = panelGo;
             EditorGUIUtility.PingObject(panelGo);
 
-            string sbStatus = sceneBuilder != null
+            return sceneBuilder != null
                 ? $"SceneBuilder reference set to '{sceneBuilder.name}'."
                 : "No SceneBuilder found in the scene - assign 'Scene Builder' on the panel manually before clicking Start Mission.";
-
-            EditorUtility.DisplayDialog(
-                "Evaluator Canvas Built",
-                "Canvas + EvaluatorPanel created and wired.\n\n" +
-                sbStatus + "\n\n" +
-                "Press Play to interact with the panel. The first time you " +
-                "create a TMP element in this project, Unity may prompt for " +
-                "TMP Essentials - accept the import.",
-                "OK");
         }
 
         // ── Construction helpers ──────────────────────────────────────────────
@@ -166,11 +207,49 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             rt.anchorMin = new Vector2(0.5f, 0.5f);
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.pivot     = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(640, 820);
+            rt.sizeDelta = new Vector2(PanelWidth, PanelHeight);
             rt.anchoredPosition = Vector2.zero;
 
             var img = go.GetComponent<Image>();
             img.color = new Color(0.06f, 0.08f, 0.11f, 1f); // fully opaque dark
+
+            return go;
+        }
+
+        /// <summary>
+        /// Two side-by-side columns filling the panel below the title. Plain
+        /// RectTransforms with a VerticalLayoutGroup - deliberately no ScrollRect,
+        /// Viewport or Mask, since a Mask silently blocks tracked-device ray casts
+        /// to everything beneath it on a world-space canvas.
+        /// </summary>
+        private static void CreateColumns(GameObject panel, out GameObject left, out GameObject right)
+        {
+            left  = CreateColumn(panel, "ColumnLeft",  0f,   0.5f, ColumnGap * 0.5f);
+            right = CreateColumn(panel, "ColumnRight", 0.5f, 1f,   ColumnGap * 0.5f);
+        }
+
+        private static GameObject CreateColumn(GameObject panel, string name,
+                                               float anchorXMin, float anchorXMax, float innerPad)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(VerticalLayoutGroup));
+            go.transform.SetParent(panel.transform, false);
+
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(anchorXMin, 0f);
+            rt.anchorMax = new Vector2(anchorXMax, 1f);
+            rt.pivot     = new Vector2(0.5f, 1f);
+            // Leave room for the title strip at the top and a margin all round.
+            rt.offsetMin = new Vector2(12f + innerPad, 12f);
+            rt.offsetMax = new Vector2(-(12f + innerPad), -TitleAreaHeight);
+
+            var vlg = go.GetComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(6, 6, 4, 4);
+            vlg.spacing = 5;
+            vlg.childAlignment         = TextAnchor.UpperCenter;
+            vlg.childControlWidth      = true;
+            vlg.childControlHeight     = false;
+            vlg.childForceExpandWidth  = true;
+            vlg.childForceExpandHeight = false;
 
             return go;
         }
@@ -194,126 +273,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             text.fontStyle = FontStyles.Bold;
             text.color     = new Color(0.95f, 0.95f, 1f);
             text.alignment = TextAlignmentOptions.Center;
-        }
-
-        // Build ScrollView + Viewport + Content manually. Avoids
-        // EditorApplication.ExecuteMenuItem("GameObject/UI/Scroll View") because
-        // its child structure varies between Unity versions.
-        private static GameObject CreateScrollContent(GameObject panel)
-        {
-            // ── ScrollView root ──────────────────────────────────────────────
-            var scrollView = new GameObject("ScrollView",
-                typeof(RectTransform), typeof(Image), typeof(ScrollRect));
-            scrollView.transform.SetParent(panel.transform, false);
-
-            var svRt = scrollView.GetComponent<RectTransform>();
-            svRt.anchorMin = new Vector2(0, 0);
-            svRt.anchorMax = new Vector2(1, 1);
-            svRt.pivot     = new Vector2(0.5f, 0.5f);
-            svRt.offsetMin = new Vector2(12, 12);                       // left, bottom margin
-            svRt.offsetMax = new Vector2(-12, -TitleAreaHeight);        // right, top: leave room for title
-
-            var svImg = scrollView.GetComponent<Image>();
-            svImg.color = new Color(0.10f, 0.12f, 0.16f, 1f);
-
-            var scrollRect = scrollView.GetComponent<ScrollRect>();
-            scrollRect.horizontal = false;
-            scrollRect.vertical   = true;
-
-            // ── Viewport ─────────────────────────────────────────────────────
-            var viewport = new GameObject("Viewport",
-                typeof(RectTransform), typeof(Image), typeof(Mask));
-            viewport.transform.SetParent(scrollView.transform, false);
-
-            const float ScrollbarWidth = 18f;
-            var vpRt = viewport.GetComponent<RectTransform>();
-            vpRt.anchorMin = Vector2.zero;
-            vpRt.anchorMax = Vector2.one;
-            vpRt.pivot     = new Vector2(0, 1);
-            vpRt.offsetMin = Vector2.zero;
-            vpRt.offsetMax = new Vector2(-ScrollbarWidth, 0); // leave room on the right for the scrollbar
-
-            var vpImg = viewport.GetComponent<Image>();
-            vpImg.color = Color.white;          // mask requires a graphic, alpha doesn't matter
-
-            var mask = viewport.GetComponent<Mask>();
-            mask.showMaskGraphic = false;
-
-            // ── Vertical scrollbar ───────────────────────────────────────────
-            var scrollbar = new GameObject("Scrollbar Vertical",
-                typeof(RectTransform), typeof(Image), typeof(Scrollbar));
-            scrollbar.transform.SetParent(scrollView.transform, false);
-
-            var sbRt = scrollbar.GetComponent<RectTransform>();
-            sbRt.anchorMin = new Vector2(1, 0);
-            sbRt.anchorMax = new Vector2(1, 1);
-            sbRt.pivot     = new Vector2(1, 1);
-            sbRt.sizeDelta = new Vector2(ScrollbarWidth, 0);
-            sbRt.anchoredPosition = Vector2.zero;
-
-            var sbImg = scrollbar.GetComponent<Image>();
-            sbImg.color = new Color(0.13f, 0.15f, 0.18f, 1f);
-
-            var sbComp = scrollbar.GetComponent<Scrollbar>();
-            sbComp.direction = Scrollbar.Direction.BottomToTop;
-
-            // Sliding Area
-            var slidingArea = new GameObject("Sliding Area", typeof(RectTransform));
-            slidingArea.transform.SetParent(scrollbar.transform, false);
-            var saRt = slidingArea.GetComponent<RectTransform>();
-            saRt.anchorMin = Vector2.zero;
-            saRt.anchorMax = Vector2.one;
-            saRt.offsetMin = new Vector2(2, 2);
-            saRt.offsetMax = new Vector2(-2, -2);
-            saRt.pivot     = new Vector2(0.5f, 0.5f);
-
-            // Handle (the draggable thumb)
-            var handle = new GameObject("Handle", typeof(RectTransform), typeof(Image));
-            handle.transform.SetParent(slidingArea.transform, false);
-            var hRt = handle.GetComponent<RectTransform>();
-            hRt.anchorMin = Vector2.zero;
-            hRt.anchorMax = Vector2.one;
-            hRt.offsetMin = Vector2.zero;
-            hRt.offsetMax = Vector2.zero;
-            var hImg = handle.GetComponent<Image>();
-            hImg.color = new Color(0.50f, 0.55f, 0.62f, 1f);
-
-            sbComp.targetGraphic = hImg;
-            sbComp.handleRect    = hRt;
-
-            // ── Content (the parent every form row will be added to) ─────────
-            var content = new GameObject("Content",
-                typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-            content.transform.SetParent(viewport.transform, false);
-
-            var cRt = content.GetComponent<RectTransform>();
-            cRt.anchorMin = new Vector2(0, 1);
-            cRt.anchorMax = new Vector2(1, 1);
-            cRt.pivot     = new Vector2(0.5f, 1);
-            cRt.anchoredPosition = Vector2.zero;
-            cRt.sizeDelta = new Vector2(0, 0);
-
-            var vlg = content.GetComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(10, 10, 10, 10);
-            vlg.spacing = 6;
-            vlg.childControlWidth      = true;
-            vlg.childControlHeight     = false;
-            vlg.childForceExpandWidth  = true;
-            vlg.childForceExpandHeight = false;
-
-            var fitter = content.GetComponent<ContentSizeFitter>();
-            fitter.verticalFit   = ContentSizeFitter.FitMode.PreferredSize;
-            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-
-            // ── Wire ScrollRect references ───────────────────────────────────
-            scrollRect.viewport                   = vpRt;
-            scrollRect.content                    = cRt;
-            scrollRect.verticalScrollbar          = sbComp;
-            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.Permanent;
-            scrollRect.verticalScrollbarSpacing    = 0f;
-            scrollRect.scrollSensitivity          = 30f; // mouse-wheel speed
-
-            return content;
+            text.raycastTarget = false;
         }
 
         private static void AddSectionHeader(GameObject parent, string title)
@@ -328,6 +288,9 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             text.fontStyle = FontStyles.Bold;
             text.color    = new Color(0.55f, 0.78f, 1f, 1f);
             text.alignment = TextAlignmentOptions.MidlineLeft;
+            // Static text must never swallow the controller ray - otherwise it sits
+            // on top of the control next to it and eats the click.
+            text.raycastTarget = false;
         }
 
         private static GameObject CreateRow(GameObject parent, string name)
@@ -360,6 +323,7 @@ namespace TeamSentinels.ScenarioGeneration.EditorTools
             text.fontSize = RowFontSize;
             text.color    = new Color(0.92f, 0.92f, 0.92f);
             text.alignment = TextAlignmentOptions.MidlineLeft;
+            text.raycastTarget = false;   // see AddSectionHeader
             return text;
         }
 

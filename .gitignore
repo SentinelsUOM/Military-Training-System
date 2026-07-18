@@ -32,6 +32,17 @@ sysinfo.txt
 # Optional: Addressables cache
 [Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
 
+# IL2CPP / Android build scratch (regenerated on every player build)
+.utmp/
+
+# Built players
+*.apk
+*.aab
+
+# Editor screenshots (debug captures, not project assets)
+[Aa]ssets/[Ss]creenshots/
+[Aa]ssets/[Ss]creenshots.meta
+
 # Claude Code project instructions (personal, not shared with team)
 CLAUDE.md
 

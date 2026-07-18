@@ -100,9 +100,28 @@ public class NpcShooterRaycast : MonoBehaviour
     /// </summary>
     public void FireWarningShot()
     {
+        // Deliberately NO raycast and NO damage — it is a warning, not an attack.
+        PlayShotFx();
+    }
+
+    /// <summary>
+    /// The point-blank execution shot. Muzzle flash and gunshot report ONLY — the hostage's
+    /// death is scripted (HostageController.Execute), not simulated, so a raycast here would
+    /// be wrong: at contact distance the barrel is inside the hostage's head and the trace
+    /// could just as easily strike the captor's own arm. Without this the execution was
+    /// completely SILENT — the single most important beat in the mission had no gunshot.
+    /// </summary>
+    public void FireExecutionShot()
+    {
+        PlayShotFx();
+    }
+
+    /// <summary>Muzzle flash + gunshot report, with no ballistics. Shared by every shot whose
+    /// outcome is scripted rather than traced.</summary>
+    void PlayShotFx()
+    {
         if (muzzleFlash != null) muzzleFlash.Play();
         if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
-        // Deliberately NO raycast and NO damage — it is a warning, not an attack.
     }
 
     IEnumerator FireLoop()
@@ -121,6 +140,33 @@ public class NpcShooterRaycast : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Where to actually aim. NOT <see cref="target"/>.position.
+    ///
+    /// TerroristController assigns `target` = the trainee's CAMERA. That is the head, and it is
+    /// the wrong thing to shoot at for two reasons. First, real shooters are trained to engage
+    /// CENTRE-MASS: aiming at the head means half the vertical spread sails harmlessly over the
+    /// trainee. Second — and much worse — outside a headset the XR camera never leaves the rig
+    /// origin, i.e. it sits on the FLOOR, so the NPCs were literally aiming at the trainee's feet
+    /// and only landing hits when random spread happened to kick a round upward. Measured hit rate
+    /// at 8 m was 20%.
+    ///
+    /// Aim at the middle of the trainee's hitbox instead. Correct in a headset, correct on a flat
+    /// screen, and doctrinally right either way.
+    /// </summary>
+    Vector3 ResolveAimPoint()
+    {
+        var health = target.GetComponentInParent<PlayerHealth>();
+        if (health == null) health = target.root.GetComponentInChildren<PlayerHealth>();
+
+        if (health != null)
+        {
+            var body = health.GetComponent<CapsuleCollider>();
+            if (body != null) return body.bounds.center;   // centre-mass
+        }
+        return target.position;                            // fallback: whatever we were given
+    }
+
     void FireOnce()
     {
         if (firePoint == null) { Debug.LogWarning("No firePoint"); return; }
@@ -129,7 +175,7 @@ public class NpcShooterRaycast : MonoBehaviour
         if (muzzleFlash != null) muzzleFlash.Play();
         if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
 
-        Vector3 dir = (target.position - firePoint.position).normalized;
+        Vector3 dir = (ResolveAimPoint() - firePoint.position).normalized;
 
         float angle = spreadDegrees * Mathf.Deg2Rad;
         dir += new Vector3(
@@ -154,7 +200,9 @@ public class NpcShooterRaycast : MonoBehaviour
             if (health == null)
                 health = hit.collider.transform.root.GetComponentInChildren<PlayerHealth>();
 
-            if (health != null) health.TakeDamage(damage);
+            // Pass the MUZZLE position, not the impact point — the trainee needs to know which
+            // direction they are being shot FROM so they can turn and break line of sight.
+            if (health != null) health.TakeDamage(damage, firePoint.position);
         }
     }
 }
