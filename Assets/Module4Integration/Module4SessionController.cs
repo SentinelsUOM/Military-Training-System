@@ -4,8 +4,11 @@
 // both Module 2 (also Assembly-CSharp) and Module 4 (autoReferenced asmdef).
 
 using System.Collections;
+using System.Collections.Generic;
 using TeamSentinels.Module4.Data;
 using TeamSentinels.Module4.Logging;
+using TeamSentinels.ScenarioGeneration.DataModels;
+using TeamSentinels.ScenarioGeneration.Scene;
 using UnityEngine;
 
 /// <summary>
@@ -198,7 +201,60 @@ public class Module4SessionController : MonoBehaviour
         }
 
         SessionLogger.Instance.StartSession(scenarioId);
+        CaptureLayout();
         StartCoroutine(RegisterReplayActorsNextFrame());
+    }
+
+    /// <summary>
+    /// Grabs the built scenario's room/door geometry from SceneBuilder and attaches a
+    /// compact top-down snapshot to the session, so the dashboard can draw walls and the
+    /// 3D replay. No-op (and harmless) if the scene wasn't built from a Module 1 scenario.
+    /// </summary>
+    private void CaptureLayout()
+    {
+        var builder  = FindFirstObjectByType<SceneBuilder>();
+        var scenario = builder != null ? builder.ActiveScenario : null;
+        if (scenario?.layout?.rooms == null)
+        {
+            Debug.Log("[Module4SessionController] No ActiveScenario layout to attach.");
+            return;
+        }
+
+        var snap      = new LayoutSnapshot();
+        var seenDoors = new HashSet<string>();
+
+        foreach (var room in scenario.layout.rooms)
+        {
+            if (room == null) continue;
+            snap.rooms.Add(new RoomBox
+            {
+                id      = room.id,
+                type    = room.type.ToString(),
+                centerX = room.position?.x ?? 0f,
+                centerZ = room.position?.z ?? 0f,
+                width   = room.size?.width  ?? 0f,
+                depth   = room.size?.depth  ?? 0f,
+                height  = room.size?.height ?? 0f,
+            });
+
+            if (room.doors == null) continue;
+            foreach (var d in room.doors)
+            {
+                if (d?.position == null) continue;
+                // A door between two rooms is recorded on both — dedupe by rounded position.
+                string key = Mathf.RoundToInt(d.position.x * 100f) + "_" + Mathf.RoundToInt(d.position.z * 100f);
+                if (!seenDoors.Add(key)) continue;
+                snap.doors.Add(new DoorMark
+                {
+                    x          = d.position.x,
+                    z          = d.position.z,
+                    wallSide   = d.wallSide.ToString(),
+                    isExterior = d.isExterior,
+                });
+            }
+        }
+
+        SessionLogger.Instance.SetLayout(snap);
     }
 
     [ContextMenu("End Session")]

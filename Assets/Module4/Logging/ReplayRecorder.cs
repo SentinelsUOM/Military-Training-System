@@ -33,6 +33,14 @@ namespace TeamSentinels.Module4.Logging
         private Coroutine _recordingCoroutine;
         private bool      _recording;
 
+        /// <summary>
+        /// The inspector-authored recordInterval, captured before TrimIfTooLarge ever doubles it.
+        /// Now that the backoff actually takes effect, the doubling would otherwise persist and a
+        /// second mission in the same play session would start at the previous run's degraded rate.
+        /// </summary>
+        private float _baseRecordInterval;
+        private bool  _baseIntervalCaptured;
+
         private class ActorEntry
         {
             public string         actorId;
@@ -96,10 +104,17 @@ namespace TeamSentinels.Module4.Logging
                 return;
             }
 
+            if (!_baseIntervalCaptured)
+            {
+                _baseRecordInterval   = recordInterval;
+                _baseIntervalCaptured = true;
+            }
+            recordInterval = _baseRecordInterval;   // undo any backoff from a previous run
+
             _frames.Clear();
             _recording = true;
             _recordingCoroutine = StartCoroutine(RecordLoop());
-            Debug.Log("[ReplayRecorder] Recording started.");
+            Debug.Log($"[ReplayRecorder] Recording started at {recordInterval:F2}s intervals.");
         }
 
         /// <summary>
@@ -129,12 +144,16 @@ namespace TeamSentinels.Module4.Logging
 
         private IEnumerator RecordLoop()
         {
-            var wait = new WaitForSeconds(recordInterval);
             while (_recording)
             {
                 CaptureFrame();
                 TrimIfTooLarge();
-                yield return wait;
+
+                // Build the wait each iteration rather than caching it before the loop:
+                // TrimIfTooLarge doubles recordInterval when the cap is hit, and a cached
+                // WaitForSeconds would keep the original delay forever — so the backoff
+                // silently did nothing and the recorder re-trimmed on almost every tick.
+                yield return new WaitForSeconds(recordInterval);
             }
         }
 
@@ -143,16 +162,40 @@ namespace TeamSentinels.Module4.Logging
         /// one real session produced 34,465 frames and an 11.3 MB session JSON, which took
         /// the dashboard 16 MINUTES to POST and then died with ECONNRESET. A replay scatter
         /// plot needs nothing like that resolution. When we hit the cap we halve the data
-        /// (keep every 2nd frame) and halve the sample rate, so the recording keeps running
+        /// (keep every 2nd TICK) and halve the sample rate, so the recording keeps running
         /// at lower resolution instead of growing without bound. Payload stays bounded no
         /// matter how long the mission runs.
+        ///
+        /// Downsampling is by tick, never by frame index. CaptureFrame appends one frame per
+        /// actor per tick, so _frames is interleaved actor-by-actor. Dropping every odd INDEX
+        /// therefore did not halve the time resolution — with an even actor count it deleted
+        /// half the actors from the replay outright (4 actors: keep 0 and 2, lose 1 and 3),
+        /// and with an odd count it mangled every actor's path instead.
         /// </summary>
         private void TrimIfTooLarge()
         {
             if (_frames.Count < maxFrames) return;
 
-            for (int i = _frames.Count - 1; i >= 0; i--)
-                if (i % 2 == 1) _frames.RemoveAt(i);      // drop every other frame
+            // Every actor sampled on the same tick shares a timestamp, so a change of
+            // timestamp marks a tick boundary. Counting ticks this way survives actors
+            // being registered mid-session, which a fixed actors-per-tick divisor would not.
+            int   tickIndex     = -1;
+            float lastTimestamp = float.NaN;
+            var   kept          = new List<ReplayFrame>(_frames.Count / 2 + 1);
+
+            foreach (var frame in _frames)
+            {
+                if (frame.timestamp != lastTimestamp)
+                {
+                    lastTimestamp = frame.timestamp;
+                    tickIndex++;
+                }
+
+                if (tickIndex % 2 == 0) kept.Add(frame);   // keep even ticks, drop odd ones
+            }
+
+            _frames.Clear();
+            _frames.AddRange(kept);
 
             recordInterval *= 2f;                          // and sample half as often from now on
             Debug.Log($"[ReplayRecorder] Replay hit {maxFrames} frames — downsampled to " +

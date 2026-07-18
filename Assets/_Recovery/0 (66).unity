@@ -7133,7 +7133,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7cb41ee6f78f8c44d8ca85d1cde39b18, type: 3}
   m_Name: 
   m_EditorClassIdentifier: TeamSentinels.Module4::TeamSentinels.Module4.Export.DashboardUploader
-  dashboardBaseUrl: https://military-training-system.vercel.app
+  dashboardBaseUrl: http://localhost:3000
   enableUpload: 1
   timeoutSeconds: 15
   logPayload: 0

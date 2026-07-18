@@ -5,6 +5,22 @@ const Vec3Schema = new mongoose.Schema(
   { _id: false }
 )
 
+// Explicit sub-schemas for the layout. Defining these inline (layout: { rooms: [{...}] })
+// makes Mongoose misparse the nested array-of-objects as an array of strings, which throws
+// a CastError on save. Declaring real sub-schemas is the reliable way to nest them.
+const RoomBoxSchema = new mongoose.Schema(
+  { id: String, type: String, centerX: Number, centerZ: Number, width: Number, depth: Number, height: Number },
+  { _id: false }
+)
+const DoorMarkSchema = new mongoose.Schema(
+  { x: Number, z: Number, wallSide: String, isExterior: Boolean },
+  { _id: false }
+)
+const LayoutSchema = new mongoose.Schema(
+  { rooms: [RoomBoxSchema], doors: [DoorMarkSchema] },
+  { _id: false }
+)
+
 const SessionSchema = new mongoose.Schema(
   {
     sessionId:       { type: String, required: true, unique: true, index: true },
@@ -96,7 +112,13 @@ const SessionSchema = new mongoose.Schema(
       rotation:   Vec3Schema,
       currentState:String,
       annotations: [String]
-    }]
+    }],
+
+    // Top-down building geometry of the played scenario (rooms + doors), used to
+    // draw walls behind the 2D dot map and to build the 3D fly-around replay.
+    // Mongoose strict mode drops unknown fields on save, so this must be declared
+    // or the layout Unity uploads would be silently discarded. Null on old sessions.
+    layout: LayoutSchema
   },
   { timestamps: true }
 )

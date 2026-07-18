@@ -49,6 +49,9 @@ namespace TeamSentinels.Module4.Logging
 
         private bool _sessionActive;
 
+        // Building geometry of the played scenario, set by SetLayout() after StartSession.
+        private LayoutSnapshot _layout;
+
         #endregion
 
         #region Events
@@ -88,6 +91,7 @@ namespace TeamSentinels.Module4.Logging
             _scenarioId       = scenarioId;
             _sessionStartTime = Time.time;
             _sessionActive    = true;
+            _layout           = null;   // cleared per session; SetLayout() fills it if a scenario is known
 
             _events.Clear();
             _npcStateChanges.Clear();
@@ -99,6 +103,21 @@ namespace TeamSentinels.Module4.Logging
             _attentionScores.Clear();
 
             Debug.Log($"[SessionLogger] Session started. id={_sessionId} scenario={_scenarioId}");
+        }
+
+        /// <summary>
+        /// Attaches the played scenario's top-down layout (rooms + doors) to the session.
+        /// Call once after StartSession; it is written into the SessionSummary at EndSession
+        /// so the dashboard can draw walls and the 3D replay. Safe to skip — layout is
+        /// optional and null-tolerant downstream.
+        /// </summary>
+        public void SetLayout(LayoutSnapshot layout)
+        {
+            if (!_sessionActive) return;
+            _layout = layout;
+            int rooms = layout?.rooms?.Count ?? 0;
+            int doors = layout?.doors?.Count ?? 0;
+            Debug.Log($"[SessionLogger] Layout attached: {rooms} rooms, {doors} doors.");
         }
 
         /// <summary>Logs a discrete mission event (e.g. ShotFired, DoorOpened).</summary>
@@ -185,7 +204,8 @@ namespace TeamSentinels.Module4.Logging
                 npcStateChanges = new List<NPCStateChange>(_npcStateChanges),
                 hostageHistory  = new List<HostageStateEntry>(_hostageHistory),
                 incidents       = incidents,
-                replayFrames    = new List<ReplayFrame>(_replayFrames)
+                replayFrames    = new List<ReplayFrame>(_replayFrames),
+                layout          = _layout
             };
 
             SaveToJson(summary);
@@ -261,17 +281,39 @@ namespace TeamSentinels.Module4.Logging
             return cog;
         }
 
+        /// <summary>
+        /// Writes the session JSON to persistentDataPath.
+        ///
+        /// This used to write to Application.dataPath, which is the read-only APK on Android —
+        /// so on a Quest build the write threw, and because SaveToJson is called BEFORE
+        /// OnSessionComplete fires, the exception took the whole chain down with it: no result
+        /// screen, no HTML report, no dashboard upload. The mission just ended silently.
+        /// dataPath also meant Editor runs wrote session JSONs into Assets/, which is how ~9 MB
+        /// of test sessions ended up committed and shipping inside the APK.
+        ///
+        /// Never let a disk failure suppress the result screen — a session the trainee cannot
+        /// see is worse than one we cannot persist. Hence the catch: report and carry on.
+        /// </summary>
         private static void SaveToJson(SessionSummary summary)
         {
-            string dir = Path.Combine(Application.dataPath, "Module4", "Resources");
-            Directory.CreateDirectory(dir);
+            try
+            {
+                string dir = Path.Combine(Application.persistentDataPath, "Module4", "Resources");
+                Directory.CreateDirectory(dir);
 
-            string path = Path.Combine(dir, $"session_{summary.sessionId}.json");
-            string json = JsonConvert.SerializeObject(summary, Formatting.Indented,
-                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include });
+                string path = Path.Combine(dir, $"session_{summary.sessionId}.json");
+                string json = JsonConvert.SerializeObject(summary, Formatting.Indented,
+                    new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include });
 
-            File.WriteAllText(path, json);
-            Debug.Log($"[SessionLogger] Saved → {path}");
+                File.WriteAllText(path, json);
+                Debug.Log($"[SessionLogger] Saved → {path}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[SessionLogger] Could not save session JSON: {ex.Message}. " +
+                               "Continuing anyway — the result screen and dashboard upload do not " +
+                               "depend on the file being written.");
+            }
         }
 
         #endregion

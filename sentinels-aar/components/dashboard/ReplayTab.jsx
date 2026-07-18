@@ -1,12 +1,26 @@
 'use client'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
-  ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, Cell
+  ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, Cell, LabelList
 } from 'recharts'
+import dynamic from 'next/dynamic'
 import styles from './ReplayTab.module.css'
 import { formatTime, getActorStateAt, getMissionPhase, stateColor, chartTheme } from '@/lib/utils'
 
+// three.js can't server-render (needs the DOM/WebGL), so load the 3D view client-only.
+const Replay3D = dynamic(() => import('./Replay3D'), {
+  ssr: false,
+  loading: () => <div style={{ padding: 24, color: '#8b949e' }}>Loading 3D replay…</div>,
+})
+
 const SPEEDS = [0.5, 1, 2]
+
+// The trainee (player) is registered in the replay with actorId "trainee_..." and
+// state "Trainee", which isn't in stateColor's map, so it fell through to grey.
+// Give the player a dedicated blue so they stand out from the NPCs on the map.
+const TRAINEE_COLOR = '#1f6feb'
+const isTrainee  = (a) => (a?.actorId || '').toLowerCase().startsWith('trainee') || a?.state === 'Trainee'
+const actorColor = (a) => (isTrainee(a) ? TRAINEE_COLOR : stateColor(a?.state))
 
 export default function ReplayTab({ session }) {
   const duration    = session.performance?.missionDuration || 1
@@ -17,6 +31,29 @@ export default function ReplayTab({ session }) {
   const [time, setTime]   = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
+
+  // Fixed map bounds across the WHOLE replay. Without this, recharts auto-scales
+  // each axis to only the dots visible in the current frame, so actors appear to
+  // teleport as they move and the top-down view can't be read as a map. Computed
+  // once from every frame (x, and z mapped to the vertical axis).
+  const bounds = useMemo(() => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const f of frames) {
+      const x = f.position?.x
+      const y = f.position?.z
+      // Ignore missing / non-finite / clearly-junk coordinates. A single stray huge
+      // value from a mis-captured frame would otherwise blow up the whole axis scale
+      // (e.g. an axis that reads in the hundreds of thousands for a room-sized map).
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      if (Math.abs(x) > 5000 || Math.abs(y) > 5000) continue
+      if (x < minX) minX = x; if (x > maxX) maxX = x
+      if (y < minY) minY = y; if (y > maxY) maxY = y
+    }
+    if (!Number.isFinite(minX)) return null
+    const padX = (maxX - minX) * 0.1 || 1
+    const padY = (maxY - minY) * 0.1 || 1
+    return { x: [minX - padX, maxX + padX], y: [minY - padY, maxY + padY] }
+  }, [frames])
   const rafRef   = useRef(null)
   const lastRef  = useRef(null)
   const timeRef  = useRef(0)
@@ -58,14 +95,22 @@ export default function ReplayTab({ session }) {
   }
 
   // Unity sends one ReplayFrame per actor per tick. Group by actorId and
-  // pick the most recent frame at or before `time` for each actor.
-  const latestByActor = new Map()
+  // pick the most recent frame at or before `time` for each actor. Before an
+  // actor's first sample (e.g. at t=0, since the first tick lands ~0.5s in),
+  // fall back to its earliest frame so the map is never blank at the start.
+  const latestByActor   = new Map()
+  const earliestByActor = new Map()
   for (const f of frames) {
+    const e = earliestByActor.get(f.actorId)
+    if (!e || f.timestamp < e.timestamp) earliestByActor.set(f.actorId, f)
     if (f.timestamp > time) continue
     const existing = latestByActor.get(f.actorId)
     if (!existing || f.timestamp > existing.timestamp) {
       latestByActor.set(f.actorId, f)
     }
+  }
+  for (const [id, f] of earliestByActor) {
+    if (!latestByActor.has(id)) latestByActor.set(id, f)
   }
   const frameActors = [...latestByActor.values()]
 
@@ -83,6 +128,28 @@ export default function ReplayTab({ session }) {
 
   const activeEvents = events.filter(e => Math.abs(e.timestamp - time) <= 2)
   const phase = getMissionPhase(events, time)
+
+  // Always-on label above each dot, coloured to match the actor's state, so you
+  // can read who is who without hovering. Recharts passes x/y (pixel coords of the
+  // point) and index (row in scatterData) to a LabelList content renderer.
+  const renderActorLabel = ({ x, y, index }) => {
+    if (x == null || y == null) return null
+    const entry = scatterData[index]
+    if (!entry) return null
+    return (
+      <text
+        x={x}
+        y={y - 9}
+        textAnchor="middle"
+        fontSize={9}
+        fontWeight={600}
+        fill={actorColor(entry)}
+        style={{ pointerEvents: 'none' }}
+      >
+        {entry.actorId}
+      </text>
+    )
+  }
 
   return (
     <div className={styles.wrap}>
@@ -129,8 +196,10 @@ export default function ReplayTab({ session }) {
           <h3 className={styles.cardTitle}>Positions (top-down)</h3>
           <ResponsiveContainer width="100%" height={320}>
             <ScatterChart margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-              <XAxis type="number" dataKey="x" name="X" tick={{ fill: chartTheme.label, fontSize: 10 }} />
-              <YAxis type="number" dataKey="y" name="Z" tick={{ fill: chartTheme.label, fontSize: 10 }} />
+              <XAxis type="number" dataKey="x" name="X" tick={{ fill: chartTheme.label, fontSize: 10 }}
+                domain={bounds ? bounds.x : ['auto', 'auto']} allowDataOverflow />
+              <YAxis type="number" dataKey="y" name="Z" tick={{ fill: chartTheme.label, fontSize: 10 }}
+                domain={bounds ? bounds.y : ['auto', 'auto']} allowDataOverflow />
               <ZAxis range={[60, 60]} />
               <Tooltip
                 cursor={{ strokeDasharray: '3 3' }}
@@ -147,10 +216,11 @@ export default function ReplayTab({ session }) {
                   )
                 }}
               />
-              <Scatter data={scatterData} name="Actors">
+              <Scatter data={scatterData} name="Actors" isAnimationActive={false}>
                 {scatterData.map((entry, i) => (
-                  <Cell key={i} fill={stateColor(entry.state)} />
+                  <Cell key={i} fill={actorColor(entry)} />
                 ))}
+                <LabelList dataKey="actorId" content={renderActorLabel} />
               </Scatter>
             </ScatterChart>
           </ResponsiveContainer>
@@ -194,6 +264,13 @@ export default function ReplayTab({ session }) {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className={styles.card} style={{ marginTop: 16 }}>
+        <h3 className={styles.cardTitle}>3D Replay — drag to orbit, scroll to zoom, right-drag to pan</h3>
+        <div style={{ width: '100%', height: 440, borderRadius: 8, overflow: 'hidden' }}>
+          <Replay3D frames={frames} time={time} layout={session.layout} />
         </div>
       </div>
     </div>
