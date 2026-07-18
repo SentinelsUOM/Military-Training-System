@@ -152,6 +152,24 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "existing geometry. Tune this live until the gap looks right.")]
         public Vector3 buildOffset = new Vector3(0f, 0f, 20f);
 
+        [Tooltip("Automatically nudge the WHOLE generated scenario so its outer " +
+                 "footprint (rooms + perimeter corridor) keeps a clear gap from any " +
+                 "existing base-map collider — the hand-built buildings already in the " +
+                 "scene — instead of letting the two overlap. Applies to both Build " +
+                 "Anchor and Build Offset placement: the resolved origin is shifted " +
+                 "horizontally until the footprint is clear. No-op if the base map has " +
+                 "no colliders on the tested layers.")]
+        public bool avoidBaseMapOverlap = true;
+
+        [Tooltip("Minimum gap (metres) to keep between the generated scenario's outer " +
+                 "footprint and the nearest base-map collider when Avoid Base Map " +
+                 "Overlap is on.")]
+        public float mapClearance = 4f;
+
+        [Tooltip("Which layers count as base-map geometry to stay clear of. Leave as " +
+                 "Everything to test against every existing collider in the scene.")]
+        public LayerMask baseMapLayers = ~0;
+
         [Tooltip("RECOMMENDED. Spawn the trainee in open ground just outside the " +
                  "generated building's entrance (facing the door), instead of inside " +
                  "the building or at a fixed staging point. The entrance moves per " +
@@ -415,6 +433,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
                 ActiveScenario = scenario;
                 _buildOffset = buildAnchor != null ? buildAnchor.position : buildOffset;
+
+                // Shift the whole layout off any existing base-map geometry BEFORE we
+                // build, so every World()-mapped position (rooms, doors, NPCs, trainee,
+                // NavMesh bake) inherits the cleared offset and the two never overlap.
+                ResolveBaseMapClearance(scenario);
 
                 // Doors record themselves as they're placed; BuildDoorNavLinks links them
                 // after the bake. Reset per build so a rebuild doesn't re-link stale doors.
@@ -1582,6 +1605,140 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 any = true;
             }
             return any;
+        }
+
+        /// <summary>
+        /// Layout-space (pre-offset) bounds of the building: the union of every room's
+        /// outer wall extents, centred on the layout origin. Mirrors
+        /// <see cref="TryComputeFootprint"/> but WITHOUT the world offset, so callers
+        /// can test candidate placements. Y half-extent is returned via
+        /// <paramref name="height"/>.
+        /// </summary>
+        private bool TryComputeLayoutExtents(ScenarioData scenario, out Vector3 centre,
+                                             out Vector3 halfExtents, out float height)
+        {
+            centre = Vector3.zero;
+            halfExtents = Vector3.zero;
+            height = 3f;
+
+            float minX = float.MaxValue, minZ = float.MaxValue;
+            float maxX = float.MinValue, maxZ = float.MinValue;
+            bool any = false;
+
+            foreach (RoomData room in scenario.layout.rooms)
+            {
+                float w = room.size != null && room.size.width  > 0f ? room.size.width  : 6f;
+                float d = room.size != null && room.size.depth  > 0f ? room.size.depth  : 6f;
+                float h = room.size != null && room.size.height > 0f ? room.size.height : 3f;
+
+                float halfW = (w + CorridorGap) * 0.5f;
+                float halfD = (d + CorridorGap) * 0.5f;
+
+                Vector3 c = room.position.ToVector3();
+                minX = Mathf.Min(minX, c.x - halfW); maxX = Mathf.Max(maxX, c.x + halfW);
+                minZ = Mathf.Min(minZ, c.z - halfD); maxZ = Mathf.Max(maxZ, c.z + halfD);
+                height = Mathf.Max(height, h);
+                any = true;
+            }
+
+            if (!any) return false;
+
+            centre = new Vector3((minX + maxX) * 0.5f, 0f, (minZ + maxZ) * 0.5f);
+            halfExtents = new Vector3((maxX - minX) * 0.5f, 0f, (maxZ - minZ) * 0.5f);
+            return true;
+        }
+
+        /// <summary>
+        /// Nudges <see cref="_buildOffset"/> horizontally until the scenario's outer
+        /// footprint (rooms + perimeter corridor + <see cref="mapClearance"/> gap) no
+        /// longer overlaps any existing base-map collider. Runs before the build so
+        /// every World()-mapped position inherits the cleared offset. Uses
+        /// <see cref="Physics.ComputePenetration"/> against each overlapping collider
+        /// to push out along the shortest separation, iterating a few times so corners
+        /// (two adjacent walls) resolve to a diagonal escape. A no-op when the feature
+        /// is off, when the base map has no colliders on <see cref="baseMapLayers"/>,
+        /// or when the placement is already clear.
+        /// </summary>
+        private void ResolveBaseMapClearance(ScenarioData scenario)
+        {
+            if (!avoidBaseMapOverlap) return;
+            if (!TryComputeLayoutExtents(scenario, out Vector3 layoutCentre,
+                                         out Vector3 halfExtents, out float height))
+                return;
+
+            // Outer footprint half-extents: room extents, plus the perimeter corridor
+            // band (only when it's built), plus the requested clearance gap.
+            float band = (buildPerimeterCorridor ? corridorWidth : 0f) + Mathf.Max(0f, mapClearance);
+            Vector3 half = new Vector3(halfExtents.x + band,
+                                       Mathf.Max(0.5f, height * 0.5f),
+                                       halfExtents.z + band);
+
+            // Temp probe collider representing the footprint. Never rendered/saved.
+            var probeGo = new GameObject("~ScenarioClearanceProbe") { hideFlags = HideFlags.HideAndDontSave };
+            var probe = probeGo.AddComponent<BoxCollider>();
+            probe.size      = half * 2f;
+            probe.isTrigger = true;
+
+            Vector3 offset = _buildOffset;
+            const int maxIterations = 32;
+            try
+            {
+                for (int iter = 0; iter < maxIterations; iter++)
+                {
+                    Vector3 centre = layoutCentre + offset;
+                    centre.y = offset.y + half.y;   // box rests on the ground plane
+                    probeGo.transform.SetPositionAndRotation(centre, Quaternion.identity);
+
+                    Collider[] hits = Physics.OverlapBox(centre, half, Quaternion.identity,
+                                                         baseMapLayers, QueryTriggerInteraction.Ignore);
+
+                    Vector3 correction = Vector3.zero;
+                    bool overlapped = false;
+                    foreach (Collider col in hits)
+                    {
+                        if (col == probe) continue;
+                        if (IsOwnOrIgnoredCollider(col)) continue;
+
+                        if (Physics.ComputePenetration(
+                                probe, centre, Quaternion.identity,
+                                col, col.transform.position, col.transform.rotation,
+                                out Vector3 dir, out float dist))
+                        {
+                            dir.y = 0f;   // keep the scenario on the ground
+                            if (dir.sqrMagnitude < 1e-6f || dist <= 0f) continue;
+                            correction += dir.normalized * dist;
+                            overlapped = true;
+                        }
+                    }
+
+                    if (!overlapped) break;
+                    offset += correction;
+                }
+            }
+            finally
+            {
+                if (Application.isPlaying) Destroy(probeGo); else DestroyImmediate(probeGo);
+            }
+
+            Vector3 shift = offset - _buildOffset;
+            if (shift.sqrMagnitude > 1e-4f)
+            {
+                Debug.Log($"[SceneBuilder] Shifted scenario by {shift} (|{shift.magnitude:0.0}| m) " +
+                          $"to keep a {mapClearance:0.#} m gap from base-map geometry.");
+                _buildOffset = offset;
+            }
+        }
+
+        /// <summary>True for colliders the clearance probe must ignore: anything under
+        /// this SceneBuilder, the trainee rig, or the trainee weapon — none of which are
+        /// "base map" and all of which we reposition during the build anyway.</summary>
+        private bool IsOwnOrIgnoredCollider(Collider col)
+        {
+            Transform t = col.transform;
+            if (t.IsChildOf(transform)) return true;
+            if (traineeRig    != null && t.IsChildOf(traineeRig))    return true;
+            if (traineeWeapon != null && t.IsChildOf(traineeWeapon)) return true;
+            return false;
         }
 
         /// <summary>
