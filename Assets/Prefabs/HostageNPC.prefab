@@ -50,7 +50,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
       propertyPath: m_Name
-      value: hostage1
+      value: HostageNPC
       objectReference: {fileID: 0}
     - target: {fileID: 5866666021909216657, guid: 625364ff5a262884a8f72d638fe2eb4e, type: 3}
       propertyPath: m_Controller
@@ -113,6 +113,10 @@ MonoBehaviour:
   panicDistance: 6
   freezeRange: 5
   freezeThreshold: 3
+  walkAnimReferenceSpeed: 1.6
+  followSpeed: 2.2
+  maxHealth: 90
+  injuredThreshold: 45
   currentState: 0
 --- !u!195 &7868975110284730912
 NavMeshAgent:

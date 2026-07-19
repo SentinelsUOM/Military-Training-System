@@ -66,12 +66,14 @@ public class HostageController : MonoBehaviour, INPCResponder
     public float followSpeed = 2.2f;
 
     [Header("Health (the hostage can be shot)")]
-    [Tooltip("Hostage starting health. Friendly-fire from the trainee damages this.")]
-    public float maxHealth = 100f;
+    [Tooltip("Hostage starting health. As fragile as an enemy in terms of shots-to-down: the " +
+             "trainee's rifle does 30/round, so 90 = THREE rounds and the hostage is down. " +
+             "Friendly-fire from the trainee (or any bullet) damages this.")]
+    public float maxHealth = 90f;
 
     [Tooltip("At/below this health (but above 0) the hostage is 'injured' — it switches to a " +
              "limping/injured escort walk instead of the normal scared walk.")]
-    public float injuredThreshold = 50f;
+    public float injuredThreshold = 45f;
 
     [Header("Debug — read-only in Play mode")]
     public HostageState currentState = HostageState.Calm;
@@ -232,6 +234,13 @@ public class HostageController : MonoBehaviour, INPCResponder
 
         if (_currentHealth <= injuredThreshold)
             _injured = true; // Update() pushes this to the animator → injured walk
+
+        // Being shot is terrifying — spike the distress reading to near-max (dashboard), whatever
+        // the FSM state. A hostage NOT under a captor's grip breaks into a fleeing Panic; one held
+        // as a human shield stays the shield (can't flee) but its distress still spikes.
+        if (currentState != HostageState.Held && currentState != HostageState.Panic)
+            TransitionTo(HostageState.Panic, null);
+        LogDistress(DISTRESS_WOUNDED);
     }
 
     // ── Leverage (guardian control) ─────────────────────────────────────────────
@@ -294,12 +303,38 @@ public class HostageController : MonoBehaviour, INPCResponder
     /// Only meaningful while Held.</summary>
     public void SetThreatened(bool on)
     {
+        bool was = _threatened;
         _threatened = on && currentState == HostageState.Held;
         if (_hasThreatenedParam) _animator?.SetBool(_animThreatened, _threatened);
+
+        // The captor's "get back!" warning terrifies the hostage — its distress jumps high (but
+        // below being actually shot). When the trainee backs off and the warning clears, it eases
+        // back to the base captivity (Held) level.
+        if (_threatened && !was)
+            LogDistress(DISTRESS_THREATENED);
+        else if (!_threatened && was && currentState == HostageState.Held)
+            LogDistress(HostageState.Held.ToString());
+    }
+
+    // ── Distress markers ──────────────────────────────────────────────────────
+    // Logged as pseudo-states (NOT real FSM states) purely so the AAR "Distress Index" can spike
+    // for events that don't change the emotional FSM: being shot while held, or the captor's verbal
+    // threat. The dashboard maps these strings to high distress %. The FSM enum is untouched.
+    const string DISTRESS_WOUNDED    = "Wounded";     // shot but alive — near-max distress
+    const string DISTRESS_THREATENED = "Threatened";  // captor's "get back!" — high, below shot
+
+    /// <summary>Log a distress reading to the AAR without changing the FSM state. Used for the
+    /// shot / threatened spikes. Chains from the last logged state so the timeline reads cleanly.</summary>
+    void LogDistress(string label)
+    {
+        string from = string.IsNullOrEmpty(_lastLoggedState) ? currentState.ToString() : _lastLoggedState;
+        TelemetryLogger.Instance?.LogStateChange(NPCId, "Hostage", from, label, null);
+        _lastLoggedState = label;
     }
 
     // ── Private state ─────────────────────────────────────────────────────────
 
+    string      _lastLoggedState;        // last state string sent to telemetry (real or distress marker)
     float       _lastResponseTime = -99f;
     NavMeshAgent _agent;
     Animator    _animator;
@@ -413,8 +448,10 @@ public class HostageController : MonoBehaviour, INPCResponder
 
         // ── Telemetry ─────────────────────────────────────────────────────────
         string notes = regression ? "[REGRESSION]" : "";
+        string from = string.IsNullOrEmpty(_lastLoggedState) ? prev.ToString() : _lastLoggedState;
         TelemetryLogger.Instance?.LogStateChange(
-            NPCId, "Hostage", prev.ToString(), next.ToString(), trigger);
+            NPCId, "Hostage", from, next.ToString(), trigger);
+        _lastLoggedState = next.ToString();
 
         if (regression)
             Debug.LogWarning($"[HostageController] {gameObject.name}: REGRESSION {prev} → {next} " +

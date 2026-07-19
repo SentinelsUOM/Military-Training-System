@@ -1,0 +1,612 @@
+{
+  "scenarioId": "abf45b36-f0b8-4bd8-a41f-16ffcc812778",
+  "missionType": "hostage_rescue",
+  "layout": {
+    "rooms": [
+      {
+        "id": "room_01",
+        "type": "entry",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_02",
+          "room_03"
+        ],
+        "doors": [
+          {
+            "id": "door_01_02",
+            "connectsToRoomId": "room_02",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 4.0
+            },
+            "wallSide": "north",
+            "state": "locked",
+            "isExterior": false
+          },
+          {
+            "id": "door_01_03",
+            "connectsToRoomId": "room_03",
+            "position": {
+              "x": -4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "west",
+            "state": "open",
+            "isExterior": false
+          }
+        ],
+        "furniture": [
+          {
+            "id": "furniture_room_01_01",
+            "type": "shelf",
+            "position": {
+              "x": -2.606373,
+              "y": 0.0,
+              "z": -1.43877625
+            },
+            "size": {
+              "x": 0.9681337,
+              "y": 1.8,
+              "z": 0.3872535
+            },
+            "rotationY": 90.0,
+            "againstWall": "west"
+          },
+          {
+            "id": "furniture_room_01_02",
+            "type": "stool",
+            "position": {
+              "x": -2.33636141,
+              "y": 0.0,
+              "z": 2.59532142
+            },
+            "size": {
+              "x": 0.4093569,
+              "y": 0.5,
+              "z": 0.4093569
+            },
+            "rotationY": 180.0,
+            "againstWall": "north"
+          },
+          {
+            "id": "furniture_room_01_03",
+            "type": "stool",
+            "position": {
+              "x": 2.22076,
+              "y": 0.0,
+              "z": -2.592465
+            },
+            "size": {
+              "x": 0.415070027,
+              "y": 0.5,
+              "z": 0.415070027
+            },
+            "rotationY": 0.0,
+            "againstWall": "south"
+          }
+        ],
+        "depth": 0,
+        "zoneLabel": "Entry Hall"
+      },
+      {
+        "id": "room_02",
+        "type": "hostage_room",
+        "position": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 8.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01"
+        ],
+        "doors": [
+          {
+            "id": "door_01_02",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 4.0
+            },
+            "wallSide": "south",
+            "state": "locked",
+            "isExterior": false
+          }
+        ],
+        "furniture": [
+          {
+            "id": "furniture_room_02_01",
+            "type": "shelf",
+            "position": {
+              "x": -2.60887766,
+              "y": 0.0,
+              "z": 10.2973185
+            },
+            "size": {
+              "x": 0.9556108,
+              "y": 1.8,
+              "z": 0.382244319
+            },
+            "rotationY": 90.0,
+            "againstWall": "west"
+          },
+          {
+            "id": "furniture_room_02_02",
+            "type": "table",
+            "position": {
+              "x": -2.40505052,
+              "y": 0.0,
+              "z": 6.6428833
+            },
+            "size": {
+              "x": 1.38232315,
+              "y": 0.75,
+              "z": 0.789898932
+            },
+            "rotationY": 90.0,
+            "againstWall": "west"
+          },
+          {
+            "id": "furniture_room_02_03",
+            "type": "cabinet",
+            "position": {
+              "x": -1.670918,
+              "y": 0.0,
+              "z": 5.416954
+            },
+            "size": {
+              "x": 0.867815435,
+              "y": 1.6,
+              "z": 0.433907717
+            },
+            "rotationY": 0.0,
+            "againstWall": "south"
+          },
+          {
+            "id": "furniture_room_02_04",
+            "type": "desk",
+            "position": {
+              "x": -0.6965495,
+              "y": 0.0,
+              "z": 10.492341
+            },
+            "size": {
+              "x": 1.230636,
+              "y": 0.75,
+              "z": 0.615318
+            },
+            "rotationY": 180.0,
+            "againstWall": "north"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Back Office"
+      },
+      {
+        "id": "room_03",
+        "type": "hostage_room",
+        "position": {
+          "x": -8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "size": {
+          "width": 6.0,
+          "depth": 6.0,
+          "height": 3.0
+        },
+        "connectedRoomIds": [
+          "room_01"
+        ],
+        "doors": [
+          {
+            "id": "door_01_03",
+            "connectsToRoomId": "room_01",
+            "position": {
+              "x": -4.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "wallSide": "east",
+            "state": "open",
+            "isExterior": false
+          }
+        ],
+        "furniture": [
+          {
+            "id": "furniture_room_03_01",
+            "type": "shelf",
+            "position": {
+              "x": -6.152136,
+              "y": 0.0,
+              "z": -2.60358739
+            },
+            "size": {
+              "x": 0.982062,
+              "y": 1.8,
+              "z": 0.3928248
+            },
+            "rotationY": 0.0,
+            "againstWall": "south"
+          },
+          {
+            "id": "furniture_room_03_02",
+            "type": "cabinet",
+            "position": {
+              "x": -10.5693607,
+              "y": 0.0,
+              "z": -1.45131838
+            },
+            "size": {
+              "x": 0.922556937,
+              "y": 1.6,
+              "z": 0.461278468
+            },
+            "rotationY": 90.0,
+            "againstWall": "west"
+          },
+          {
+            "id": "furniture_room_03_03",
+            "type": "desk",
+            "position": {
+              "x": -10.4878464,
+              "y": 0.0,
+              "z": 1.92567134
+            },
+            "size": {
+              "x": 1.248616,
+              "y": 0.75,
+              "z": 0.624308
+            },
+            "rotationY": 90.0,
+            "againstWall": "west"
+          },
+          {
+            "id": "furniture_room_03_04",
+            "type": "side_table",
+            "position": {
+              "x": -10.558773,
+              "y": 0.0,
+              "z": -0.5092604
+            },
+            "size": {
+              "x": 0.482453883,
+              "y": 0.55,
+              "z": 0.482453883
+            },
+            "rotationY": 90.0,
+            "againstWall": "west"
+          },
+          {
+            "id": "furniture_room_03_05",
+            "type": "cabinet",
+            "position": {
+              "x": -7.5716,
+              "y": 0.0,
+              "z": 2.562634
+            },
+            "size": {
+              "x": 0.949463546,
+              "y": 1.6,
+              "z": 0.474731773
+            },
+            "rotationY": 180.0,
+            "againstWall": "north"
+          }
+        ],
+        "depth": 1,
+        "zoneLabel": "Front Room"
+      }
+    ],
+    "entryPoints": [
+      {
+        "id": "entry_main",
+        "roomId": "room_01",
+        "position": {
+          "x": -4.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "facingDirection": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      }
+    ],
+    "layoutMetadata": {
+      "totalRooms": 3,
+      "layoutType": "branching",
+      "maxDepth": 1,
+      "graphDiameter": 2,
+      "roomSizeCategory": "medium",
+      "entryType": "single",
+      "boundingBox": {
+        "min": {
+          "x": -11.0,
+          "y": 0.0,
+          "z": -3.0
+        },
+        "max": {
+          "x": 3.0,
+          "y": 3.0,
+          "z": 11.0
+        }
+      }
+    }
+  },
+  "spawnPoints": {
+    "trainee": {
+      "roomId": "room_01",
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "facingDirection": {
+        "x": 1.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    },
+    "hostages": [
+      {
+        "entityId": "hostage_01",
+        "roomId": "room_03",
+        "position": {
+          "x": -7.958351,
+          "y": 0.0,
+          "z": 0.27957058
+        },
+        "facingDirection": {
+          "x": -0.653898239,
+          "y": 0.0,
+          "z": 0.7565825
+        }
+      }
+    ],
+    "terrorists": [
+      {
+        "entityId": "terrorist_01",
+        "roomId": "room_02",
+        "position": {
+          "x": -0.013868928,
+          "y": 0.0,
+          "z": 7.7246
+        },
+        "facingDirection": {
+          "x": 0.00372357643,
+          "y": 0.0,
+          "z": -0.9999931
+        }
+      },
+      {
+        "entityId": "terrorist_02",
+        "roomId": "room_03",
+        "position": {
+          "x": -8.843875,
+          "y": 0.0,
+          "z": 2.2
+        },
+        "facingDirection": {
+          "x": 0.910491168,
+          "y": 0.0,
+          "z": -0.413528562
+        }
+      },
+      {
+        "entityId": "terrorist_03",
+        "roomId": "room_03",
+        "position": {
+          "x": -5.8,
+          "y": 0.0,
+          "z": -0.9967787
+        },
+        "facingDirection": {
+          "x": 0.874821067,
+          "y": 0.0,
+          "z": 0.484446079
+        }
+      }
+    ]
+  },
+  "entities": [
+    {
+      "id": "trainee_01",
+      "type": "trainee",
+      "assignedRoom": "room_01",
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "hostage_01",
+      "type": "hostage",
+      "assignedRoom": "room_03",
+      "position": {
+        "x": -7.958351,
+        "y": 0.0,
+        "z": 0.27957058
+      },
+      "metadata": {
+        "initialState": "calm"
+      }
+    },
+    {
+      "id": "terrorist_01",
+      "type": "terrorist",
+      "assignedRoom": "room_02",
+      "position": {
+        "x": -0.013868928,
+        "y": 0.0,
+        "z": 7.7246
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "terrorist_02",
+      "type": "terrorist",
+      "assignedRoom": "room_03",
+      "position": {
+        "x": -8.843875,
+        "y": 0.0,
+        "z": 2.2
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    },
+    {
+      "id": "terrorist_03",
+      "type": "terrorist",
+      "assignedRoom": "room_03",
+      "position": {
+        "x": -5.8,
+        "y": 0.0,
+        "z": -0.9967787
+      },
+      "metadata": {
+        "initialState": "idle"
+      }
+    }
+  ],
+  "roleAssignments": [
+    {
+      "entityId": "terrorist_02",
+      "role": "hostage_guardian",
+      "priorityLevel": 1,
+      "assignedRoomId": "room_03",
+      "navigationContextId": "nav_terrorist_02"
+    },
+    {
+      "entityId": "terrorist_01",
+      "role": "patrol",
+      "priorityLevel": 3,
+      "assignedRoomId": "room_02",
+      "navigationContextId": "nav_terrorist_01"
+    },
+    {
+      "entityId": "terrorist_03",
+      "role": "roaming_guard",
+      "priorityLevel": 2,
+      "assignedRoomId": "room_03",
+      "navigationContextId": "nav_terrorist_03"
+    }
+  ],
+  "navigationContext": {
+    "nav_terrorist_02": {
+      "type": "hostage_guardian",
+      "guardedEntityId": "hostage_01",
+      "hostageRoomId": "room_03",
+      "guardPosition": {
+        "x": -8.843875,
+        "y": 0.0,
+        "z": 2.2
+      },
+      "facingDirection": {
+        "x": 0.910491168,
+        "y": 0.0,
+        "z": -0.413528562
+      }
+    },
+    "nav_terrorist_01": {
+      "type": "patrol",
+      "patrolRoute": [
+        "room_02",
+        "room_02"
+      ],
+      "looping": true,
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 8.0
+        },
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 8.0
+        }
+      ]
+    },
+    "nav_terrorist_03": {
+      "type": "roaming_guard",
+      "roamingRoomIds": [
+        "room_03"
+      ],
+      "anchorRoomId": "room_03",
+      "waypoints": [
+        {
+          "x": -8.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        {
+          "x": -8.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      ]
+    }
+  },
+  "configurationMetadata": {
+    "scenarioConfig": {
+      "schemaVersion": "1.0.0",
+      "missionStructure": {
+        "missionType": "hostage_rescue",
+        "roomCount": {
+          "min": 3,
+          "max": 3
+        },
+        "roomSize": "medium",
+        "layoutType": "branching",
+        "entryType": "single"
+      },
+      "entityConfiguration": {
+        "hostageCount": 1,
+        "terroristCount": 3,
+        "placementStrategy": "dispersed",
+        "hostageRiskLevel": "medium"
+      },
+      "executionControls": {
+        "difficultyLevel": 3,
+        "randomnessLevel": "medium",
+        "seed": null,
+        "timeLimit": null,
+        "customLabel": null
+      }
+    },
+    "generationTimestamp": "2026-07-18T21:21:55.7703312Z",
+    "seedUsed": 7368984,
+    "generatorVersion": "1.0.0",
+    "validationResult": {
+      "passed": true,
+      "checksRun": 10,
+      "checksPassed": 10,
+      "warnings": []
+    }
+  }
+}

@@ -57,7 +57,7 @@ namespace TeamSentinels.Module4.Analysis
             incidents.Add(IncidentRecord.Create(
                 "FirstContact",
                 e.timestamp,
-                $"Enemy first detected trainee in room {e.roomId ?? "unknown"}.",
+                $"Enemy first detected trainee in {Where(e.roomId)}.",
                 Actors(e.sourceActorId, e.targetActorId),
                 "low"));
         }
@@ -71,7 +71,7 @@ namespace TeamSentinels.Module4.Analysis
             incidents.Add(IncidentRecord.Create(
                 "FirstShot",
                 e.timestamp,
-                $"First shot fired by {e.sourceActorId ?? "unknown"} in room {e.roomId ?? "unknown"}.",
+                $"First shot fired by {e.sourceActorId ?? "unknown"} in {Where(e.roomId)}.",
                 Actors(e.sourceActorId),
                 "low"));
         }
@@ -99,7 +99,7 @@ namespace TeamSentinels.Module4.Analysis
                 incidents.Add(IncidentRecord.Create(
                     "TerroristNeutralized",
                     e.timestamp,
-                    $"{e.targetActorId ?? "Terrorist"} neutralized in room {e.roomId ?? "unknown"}.",
+                    $"{e.targetActorId ?? "Terrorist"} neutralized in {Where(e.roomId)}.",
                     Actors(e.sourceActorId, e.targetActorId),
                     "low"));
             }
@@ -178,6 +178,13 @@ namespace TeamSentinels.Module4.Analysis
         private static List<string> Actors(params string[] ids)
         {
             return ids.Where(id => !string.IsNullOrEmpty(id)).ToList();
+        }
+
+        // Readable location phrase. Module4Bridge fills roomId (e.g. "the corridor") from the
+        // event position; if it's still missing the event happened outside any known room.
+        private static string Where(string roomId)
+        {
+            return string.IsNullOrEmpty(roomId) ? "an unknown area" : roomId;
         }
 
         #endregion

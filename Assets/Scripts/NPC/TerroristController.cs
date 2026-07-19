@@ -397,8 +397,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Squad-death events always bypass cooldown — every active NPC must react
         if (e.Type == ScenarioEventType.TerroristDown) return true;
 
-        // Cooldown applies to every other event
-        if (Time.time - _lastResponseTime < responseCooldown) return false;
+        // A gunshot from a MATE at a genuinely NEW location is fresh contact intel — it must
+        // ALWAYS get through, even mid-search, so a man sweeping a stale corner can drop it and
+        // converge. (Repeated shots from the SAME spot are not "new", so they stay throttled and
+        // don't thrash.) Everything else obeys the per-NPC response cooldown.
+        bool freshContact = e.Type == ScenarioEventType.GunshotHeard &&
+                            e.Instigator != gameObject &&
+                            (e.Origin - _lastKnownPlayerPos).sqrMagnitude > 4f; // >2 m from my current target
+        if (!freshContact && Time.time - _lastResponseTime < responseCooldown) return false;
 
         // Filter by event type
         switch (e.Type)
@@ -466,26 +472,30 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // the door. Recording the origin is what actually sends him there (the
                 // NavMesh routes him through the doorways).
                 bool newSpot = (e.Origin - _lastKnownPlayerPos).sqrMagnitude > 4f; // >2m away
+                bool fromMate = e.Instigator != null && e.Instigator != gameObject;
                 _lastKnownPlayerPos = e.Origin;
                 SetLookTarget(e.Origin);
-
-                // FRESH INFORMATION BEATS AN OLD SEARCH. If a mate just fired (that broadcast
-                // carries the trainee's position), a man still sweeping some stale corner must
-                // ABANDON it and re-task to the new spot — otherwise he keeps hunting an empty
-                // corridor while the trainee is somewhere else entirely.
-                if (newSpot && _isInvestigating && !isHostageGuardian)
-                {
-                    Debug.Log($"[TerroristController] {gameObject.name}: fresher contact at {e.Origin:F1} — " +
-                              "abandoning the stale search and re-tasking there.");
-                    if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
-                    _investigateRoutine = null;
-                    _isInvestigating = false;
-                }
 
                 if (currentState == TerroristState.Idle)
                     TransitionTo(TerroristState.Suspicious, e);
                 else if (currentState != TerroristState.Engage)
                     TransitionTo(TerroristState.Alert, e);
+
+                // FRESH INFORMATION BEATS AN OLD SEARCH. A mate firing (or opening fire on sight)
+                // broadcasts the trainee's position. A man still sweeping some stale corner must
+                // ABANDON it and COME to that spot IMMEDIATELY — not keep hunting an empty corridor
+                // and not wait for the next support-routine tick. So: kill the current search and
+                // re-task straight onto the new contact. The look-first phase of the new
+                // investigation keeps it from looking robotic.
+                if (newSpot && fromMate && !isHostageGuardian && currentState != TerroristState.Engage)
+                {
+                    Debug.Log($"[TerroristController] {gameObject.name}: fresh contact from {e.Instigator.name} at " +
+                              $"{e.Origin:F1} — dropping my search and CONVERGING there now.");
+                    if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
+                    _investigateRoutine = null;
+                    _isInvestigating = false;
+                    InvestigatePosition(e.Origin); // walk to the contact now
+                }
                 break;
 
             // ── Spatial ───────────────────────────────────────────────────────
@@ -835,10 +845,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         TransitionTo(TerroristState.Alert, e);
                     // Guardian holds its post — it does NOT chase/search; it keeps
                     // guarding the hostage and re-engages only if the player returns.
-                    // Everyone else CHASES: search ahead along the escape direction (where the
-                    // player was running), not the exact spot they were last standing.
                     if (!isHostageGuardian)
-                        InvestigatePosition(EscapeLeadPoint(escapeLeadDistance));
+                    {
+                        // Tell the squad WHICH WAY the trainee ran, then trigger the collaborative
+                        // chase: everyone sweeps forward along the escape direction (line-abreast).
+                        // The fan-out re-tasks me too (I'm nearest the contact → I take the direct
+                        // line), so I don't also need a separate solo InvestigatePosition here.
+                        var sq = Squad.Get(squadId);
+                        if (sq != null)
+                        {
+                            sq.SetEscapeContext(_lastKnownPlayerPos, _lastKnownPlayerHeading);
+                            sq.FanOutSearch(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
+                        }
+                        else
+                        {
+                            InvestigatePosition(EscapeLeadPoint(escapeLeadDistance));
+                        }
+                    }
                 }
                 break;
         }
@@ -2467,12 +2490,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
     // A squadmate who isn't personally fighting must not just stand there (the old bug),
     // and must not blindly rush the trainee either. He picks ONE of three jobs:
     //
-    //   HELP   — an ally is injured or dead  → go to him NOW (highest priority).
-    //   COVER  — an ally has EYES ON the trainee (Engage) → the location is already known,
-    //            so DON'T sweep rooms. Take the doorway the trainee must come through and
-    //            hold it, weapon up.
-    //   SWEEP  — nobody has contact → clear the area: rooms and doorways near the last
-    //            reported contact.
+    //   HELP    — an ally is injured or dead → go to him NOW (highest priority).
+    //   SUPPORT — an ally has EYES ON the trainee (Engage) → COME to support: move up to the
+    //             contact and take a flanking firing position beside him, so the trainee is caught
+    //             between two angles. Getting LOS flips us to Engage automatically.
+    //   DIVIDE  — nobody has contact (trainee lost) → the squad splits and hunts: wave 0 chases
+    //             the escape direction, later waves fan out across every bearing (Squad.FanOutSearch)
+    //             until someone reacquires or a shot is heard, which pulls everyone onto that spot.
     //
     // Guardians never run this: they never leave the hostage.
 
@@ -2529,30 +2553,34 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
             else if (engaged != null)
             {
-                // ── COVER: a mate has eyes on the trainee. The position is already
-                // known, so stop sweeping — take the doorway he'd come through and hold.
+                // ── SUPPORT: a mate has eyes on the trainee and is fighting. COME to support him:
+                // move up toward the contact and take a firing position near it — offset to one
+                // side of the engaged ally so supporters FLANK rather than stack, and so the
+                // trainee is caught between two angles. The moment we get our own line of sight,
+                // perception flips us to Engage and we open fire. (Old behaviour: hold a far
+                // doorway and never close in — which read as "not helping".)
                 _isInvestigating = false;
                 Vector3 threat = engaged._lastSeenPlayer != null
                     ? engaged._lastSeenPlayer.position
                     : engaged._lastKnownPlayerPos;
+                _lastKnownPlayerPos = threat; // share the contact so a later loss chases the right way
 
-                Transform door = NearestDoorToward(threat);
-                if (door != null)
+                Vector3 toThreat = threat - transform.position; toThreat.y = 0f;
+                if (toThreat.sqrMagnitude > 0.01f)
                 {
-                    // Stand just off the doorway, on our side, weapon on it.
-                    Vector3 toUs = transform.position - door.position; toUs.y = 0f;
-                    Vector3 hold = door.position +
-                                   (toUs.sqrMagnitude > 0.01f ? toUs.normalized : Vector3.zero) * holdDoorDistance;
-                    if (UnityEngine.AI.NavMesh.SamplePosition(hold, out var h, 2f, UnityEngine.AI.NavMesh.AllAreas))
+                    Vector3 inDir = toThreat.normalized;
+                    Vector3 perp  = Vector3.Cross(Vector3.up, inDir);
+                    // Flank to whichever side we're already on relative to the engaged ally.
+                    float side = Vector3.Dot(transform.position - engaged.transform.position, perp) >= 0f ? 1f : -1f;
+                    Vector3 firePos = threat - inDir * preferredStandoffDistance + perp * (side * 2.5f);
+                    if (UnityEngine.AI.NavMesh.SamplePosition(firePos, out var h, 4f, UnityEngine.AI.NavMesh.AllAreas))
                     {
                         agent.isStopped = false;
                         agent.SetDestination(h.position);
                     }
-                    SetLookTarget(threat);   // ResolveLookPosition aims at the door if no LOS
                 }
-                else SetLookTarget(threat);
-
-                yield return new WaitForSeconds(1f);
+                SetLookTarget(threat);
+                yield return new WaitForSeconds(0.8f);
             }
             else
             {
@@ -2561,7 +2589,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // fan out: each searcher gets a DISTINCT room. The call is cooldown-gated, so
                 // whichever supporter calls first re-tasks the whole squad and the rest no-op.
                 if (!_isInvestigating && _lastKnownPlayerPos != Vector3.zero && !string.IsNullOrEmpty(squadId))
-                    Squad.Get(squadId)?.FanOutSearch(_lastKnownPlayerPos, this);
+                    Squad.Get(squadId)?.FanOutSearch(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                 yield return new WaitForSeconds(1.5f);
             }
         }
@@ -3005,7 +3033,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
             //  them. This is the "if they don't find me, they split again" behaviour.)
             Vector3 reFocus = _lastKnownPlayerPos != Vector3.zero ? _lastKnownPlayerPos : soundPos;
             if (!string.IsNullOrEmpty(squadId))
-                Squad.Get(squadId)?.FanOutSearch(reFocus, this);
+                Squad.Get(squadId)?.FanOutSearch(reFocus, _lastKnownPlayerHeading, this);
 
             // If I have PERSONALLY seen the trainee I never give up — stay Alert and I'll get a
             // fresh sector from the fan-out (or, failing that, keep scanning). If I only ever

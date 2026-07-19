@@ -255,6 +255,7 @@ public class Module4SessionController : MonoBehaviour
         }
 
         SessionLogger.Instance.SetLayout(snap);
+        RoomLocator.SetRooms(snap.rooms);   // lets Module4Bridge tag events with their room
     }
 
     [ContextMenu("End Session")]

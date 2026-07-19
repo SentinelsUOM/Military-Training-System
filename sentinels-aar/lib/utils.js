@@ -51,6 +51,11 @@ export const stateColor = (state) => {
     Calm:         '#3fb950',
     Follow:       '#3fb950',
     Freeze:       '#30363d',
+    Held:         '#d29922',   // captivity — amber
+    Threatened:   '#f0883e',   // captor's verbal threat — orange
+    Wounded:      '#da3633',   // shot but alive — crimson
+    Freed:        '#3fb950',   // extracted — green
+    Down:         '#8e1519',   // killed — dark red
     Neutralized:  '#21262d'
   }
   return map[state] || '#8b949e'
