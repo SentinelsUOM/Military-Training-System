@@ -116,6 +116,13 @@ export default function TimelineTab({ session }) {
 
       <div className={styles.card}>
         <h3 className={styles.cardTitle}>Activity Density (10s buckets)</h3>
+        <p style={{ color: chartTheme.label, fontSize: 13, lineHeight: 1.5, margin: '2px 0 10px' }}>
+          How much happened in each 10-second slice of the mission — every shot, sighting, door and state
+          change counted together. <strong>Tall peaks are the intense moments</strong> (a firefight, or the
+          rescue itself); <strong>flat stretches are quiet</strong> — searching, moving or waiting. It’s a fast
+          way to see <em>when</em> the action happened, without scrolling the whole event log below. The biggest
+          spike is usually the climax — trainee reaching the hostage and the final firefight.
+        </p>
         <ResponsiveContainer width="100%" height={160}>
           <AreaChart data={eventsPerMinute} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
             <defs>

@@ -66,6 +66,11 @@ public class Module4Bridge : MonoBehaviour
         string targetId   = e.TargetActorId;
         string roomId     = e.RoomId;
 
+        // Most gameplay events are raised without a room, which left every incident saying
+        // "in room unknown". Derive it from where the event happened so the AAR can say where.
+        if (string.IsNullOrEmpty(roomId))
+            roomId = RoomLocator.RoomLabelAt(e.Origin);
+
         // Convert absolute Time.time → elapsed-since-session-start so the
         // dashboard's timeline can plot events between 0 and missionDuration.
         // MissionEnded uses the same convention, so timestamps are consistent.

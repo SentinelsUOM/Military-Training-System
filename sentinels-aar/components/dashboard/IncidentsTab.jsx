@@ -6,6 +6,13 @@ import { formatTime } from '@/lib/utils'
 
 const SEVERITIES = ['All', 'high', 'medium', 'low']
 
+// What each severity level means — used for the legend and the hover tooltips.
+const SEVERITY_INFO = {
+  high:   'Critical — something went wrong that hurt the mission or endangered the hostage (the hostage panicked, was hit or killed, or friendly fire occurred).',
+  medium: 'Notable — a significant tactical development worth reviewing, e.g. several enemies going on alert together (a coordinated response).',
+  low:    'Routine — an expected milestone or normal event: first shot fired, first contact, an enemy neutralized, the hostage rescued, or mission end.',
+}
+
 export default function IncidentsTab({ session }) {
   const incidents = session.incidents || []
   const [filter, setFilter] = useState('All')
@@ -22,16 +29,32 @@ export default function IncidentsTab({ session }) {
 
   return (
     <div className={styles.wrap}>
+      <p style={{ color: '#8b949e', fontSize: 13, lineHeight: 1.5, margin: '0 0 8px' }}>
+        Incidents are the mission’s <strong>notable moments</strong>, picked out automatically from the event log
+        and ranked by how much they matter. Hover any badge or card for its meaning.
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '0 0 16px' }}>
+        <span style={{ flex: '1 1 280px', minWidth: 240, color: '#8b949e', fontSize: 12.5, lineHeight: 1.4 }}>
+          <span style={{ color: '#f87171', fontWeight: 700 }}>HIGH</span> — critical: hurt the mission or endangered the hostage (panic, a hostage hit, friendly fire).
+        </span>
+        <span style={{ flex: '1 1 280px', minWidth: 240, color: '#8b949e', fontSize: 12.5, lineHeight: 1.4 }}>
+          <span style={{ color: '#fbbf24', fontWeight: 700 }}>MEDIUM</span> — notable: a tactical development to review (e.g. several enemies going on alert together).
+        </span>
+        <span style={{ flex: '1 1 280px', minWidth: 240, color: '#8b949e', fontSize: 12.5, lineHeight: 1.4 }}>
+          <span style={{ color: '#34d399', fontWeight: 700 }}>LOW</span> — routine: an expected milestone (first shot, first contact, an enemy neutralized, mission end).
+        </span>
+      </div>
+
       <div className={styles.statsRow}>
-        <div className={styles.statCard} style={{ borderColor: '#f87171' }}>
+        <div className={styles.statCard} style={{ borderColor: '#f87171', cursor: 'help' }} title={SEVERITY_INFO.high}>
           <span className={styles.statNum} style={{ color: '#f87171' }}>{counts.high}</span>
           <span className={styles.statLabel}>High</span>
         </div>
-        <div className={styles.statCard} style={{ borderColor: '#fbbf24' }}>
+        <div className={styles.statCard} style={{ borderColor: '#fbbf24', cursor: 'help' }} title={SEVERITY_INFO.medium}>
           <span className={styles.statNum} style={{ color: '#fbbf24' }}>{counts.medium}</span>
           <span className={styles.statLabel}>Medium</span>
         </div>
-        <div className={styles.statCard} style={{ borderColor: '#34d399' }}>
+        <div className={styles.statCard} style={{ borderColor: '#34d399', cursor: 'help' }} title={SEVERITY_INFO.low}>
           <span className={styles.statNum} style={{ color: '#34d399' }}>{counts.low}</span>
           <span className={styles.statLabel}>Low</span>
         </div>
@@ -61,7 +84,9 @@ export default function IncidentsTab({ session }) {
           {filtered.map((inc, i) => (
             <div key={inc.incidentId || i} className={styles.incCard}>
               <div className={styles.incHeader}>
-                <Badge label={inc.severity?.toUpperCase() || 'LOW'} variant={inc.severity || 'low'} />
+                <span title={SEVERITY_INFO[inc.severity] || SEVERITY_INFO.low} style={{ cursor: 'help', display: 'inline-flex' }}>
+                  <Badge label={inc.severity?.toUpperCase() || 'LOW'} variant={inc.severity || 'low'} />
+                </span>
                 <span className={styles.incTime}>{formatTime(inc.timestamp)}</span>
                 <span className={styles.incType}>{inc.incidentType}</span>
               </div>

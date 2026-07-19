@@ -22,6 +22,24 @@ const STATE_INFO = {
 }
 const DISTRESS_MAP = Object.fromEntries(Object.entries(STATE_INFO).map(([k, v]) => [k, v.pct / 100]))
 
+// A distinct colour per hostage state, roughly following the distress gradient:
+// safe → green/cyan, rising stress → yellow → amber → orange → red. Kept local so it
+// doesn't disturb stateColor(), which the NPC 3D replay relies on.
+const STATE_COLOR = {
+  Calm:       '#3fb950',  // green — composed
+  Follow:     '#22d3ee',  // cyan — moving to safety
+  Freed:      '#4ade80',  // bright green — safe
+  Fearful:    '#facc15',  // yellow — frightened
+  Scared:     '#facc15',
+  Held:       '#f59e0b',  // amber — captive
+  Freeze:     '#818cf8',  // indigo — frozen
+  Threatened: '#fb923c',  // orange — threatened at gunpoint
+  Panic:      '#f87171',  // red — panic
+  Wounded:    '#dc2626',  // deep red — shot
+  Down:       '#6b7280',  // grey — killed
+}
+const hColor = (s) => STATE_COLOR[s] || '#8b949e'
+
 // Plain-English cause for each trigger event, so the "why" reads like a story.
 const TRIGGER_INFO = {
   GunshotHeard:          'heard gunfire nearby',
@@ -135,7 +153,7 @@ export default function HostageTab({ session }) {
                       key={i}
                       className={styles.segment}
                       title={`${seg.state} — ${formatTime(seg.start)} → ${formatTime(seg.end)} (${STATE_INFO[seg.state]?.desc || ''})`}
-                      style={{ flex: seg.dur, background: stateColor(seg.state), minWidth: 4 }}
+                      style={{ flex: seg.dur, background: hColor(seg.state), minWidth: 4 }}
                     >
                       {seg.dur > duration / 8 && <span className={styles.segLabel}>{seg.state}</span>}
                     </div>
@@ -146,9 +164,9 @@ export default function HostageTab({ session }) {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, margin: '14px 0 4px' }}>
                   {[...new Set(entries.map(e => e.state))].map(state => (
                     <div key={state} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: '1 1 260px', minWidth: 240 }}>
-                      <span style={{ width: 12, height: 12, borderRadius: 3, background: stateColor(state), marginTop: 3, flexShrink: 0 }} />
+                      <span style={{ width: 12, height: 12, borderRadius: 3, background: hColor(state), marginTop: 3, flexShrink: 0 }} />
                       <span style={{ color: chartTheme.label, fontSize: 12.5, lineHeight: 1.4 }}>
-                        <strong style={{ color: stateColor(state) }}>{state}</strong>
+                        <strong style={{ color: hColor(state) }}>{state}</strong>
                         {STATE_INFO[state] ? ` (${STATE_INFO[state].pct}% distress) — ${STATE_INFO[state].desc}` : ''}
                       </span>
                     </div>
@@ -168,7 +186,7 @@ export default function HostageTab({ session }) {
                         return (
                           <tr key={i}>
                             <td className={styles.mono}>{formatTime(e.timestamp)}</td>
-                            <td><span style={{ color: stateColor(e.state) }}>{e.state}</span></td>
+                            <td><span style={{ color: hColor(e.state) }}>{e.state}</span></td>
                             <td className={styles.mono}>{pct}%</td>
                             <td>{cap(whyText(e))} → became <strong>{e.state}</strong></td>
                           </tr>

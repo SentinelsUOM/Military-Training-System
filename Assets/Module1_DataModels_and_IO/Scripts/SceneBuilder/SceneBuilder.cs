@@ -349,6 +349,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // build (via spawnOutsideEntrance); the guide path is drawn only then.
         private bool _traineeSpawnedOutside;
 
+        // Guaranteed building entrance, resolved each build BEFORE walls/corridor are
+        // built. The entry room is the BFS layout origin and is frequently ringed by
+        // other rooms (hub-and-spoke, dense branching), so its own entry point often
+        // sits INSIDE the footprint — carving no exterior opening and sealing the
+        // building. We instead resolve a genuine exterior wall on the perimeter room
+        // nearest the entry room, then align the room breach door, the corridor outer
+        // door, and the trainee spawn to it so there is always a coherent way in.
+        private bool     _entranceResolved;
+        private string   _entranceRoomId;
+        private WallSide _entranceSide;
+        private Vector3  _entranceWallMidWorld;   // midpoint of the breach wall (world)
+
         // Outer footprint of the building INCLUDING the perimeter corridor, in world
         // space, captured during the corridor build. The guide path routes around
         // this rectangle so the road stays outside the walls instead of cutting
@@ -442,6 +454,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 // Doors record themselves as they're placed; BuildDoorNavLinks links them
                 // after the bake. Reset per build so a rebuild doesn't re-link stale doors.
                 _placedDoors.Clear();
+
+                // Resolve a guaranteed exterior entrance now (needs the final build
+                // offset from ResolveBaseMapClearance) so the wall carving, corridor
+                // door, and trainee spawn that follow all agree on the same opening.
+                ResolveEntrance(scenario);
 
                 MeasureDoorPrefab();
                 ComputeEntryOpenings(scenario);
@@ -1277,45 +1294,146 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         }
 
         /// <summary>
-        /// Maps each building entry point to the exterior wall it pierces, so
-        /// BuildWalls can carve an opening there and BuildEntryDoors can place a
-        /// door. Entry points sit exactly on the room's outer wall plane, so the
-        /// wall side is just the dominant axis of (entryPos − roomCentre).
+        /// Resolves a guaranteed building entrance on a TRUE perimeter room — the
+        /// extreme room on one of the four axes (north-/south-/east-/west-most). The
+        /// layout's entry room is the BFS origin, so in hub-and-spoke, loop and dense
+        /// branching layouts it sits in the interior (or inside a courtyard/notch) with
+        /// no outward face on the building boundary. A plain "no adjacent room" test is
+        /// not enough — a room can have an open side that faces an INTERIOR notch, where
+        /// there is no corridor outer wall to cut a door into (this is why Loop layouts
+        /// were coming out sealed). An extreme room's outward wall is guaranteed to sit
+        /// on the building's real boundary, so the perimeter corridor always wraps
+        /// straight past it and a door can always be framed there. We pick the extreme
+        /// room nearest the entry room so the breach lands as close to the intended
+        /// start as the geometry allows, and align the breach door, the corridor outer
+        /// door, and the trainee spawn to it.
+        /// </summary>
+        private void ResolveEntrance(ScenarioData scenario)
+        {
+            _entranceResolved = false;
+
+            List<RoomData> rooms = scenario?.layout?.rooms;
+            if (rooms == null || rooms.Count == 0) return;
+
+            RoomData entryRoom = rooms.Find(r => r.depth == 0) ?? rooms[0];
+            Vector3 entryC = entryRoom.position.ToVector3();
+
+            // The four perimeter rooms: the extreme room on each axis is guaranteed to
+            // lie on the building's outer boundary, so its outward wall always faces the
+            // corridor ring (never an interior notch) and a door can always be cut.
+            RoomData nR = null, sR = null, eR = null, wR = null;
+            float nMax = float.MinValue, sMin = float.MaxValue, eMax = float.MinValue, wMin = float.MaxValue;
+            foreach (RoomData r in rooms)
+            {
+                Vector3 c = r.position.ToVector3();
+                float hw = HalfExtentW(r), hd = HalfExtentD(r);
+                if (c.z + hd > nMax) { nMax = c.z + hd; nR = r; }
+                if (c.z - hd < sMin) { sMin = c.z - hd; sR = r; }
+                if (c.x + hw > eMax) { eMax = c.x + hw; eR = r; }
+                if (c.x - hw < wMin) { wMin = c.x - hw; wR = r; }
+            }
+
+            RoomData[] cr = { nR, sR, eR, wR };
+            WallSide[] cs = { WallSide.North, WallSide.South, WallSide.East, WallSide.West };
+
+            // Pick the perimeter entrance nearest the entry room so we breach close to
+            // the intended start (ties broken by side order N,S,E,W).
+            RoomData bestRoom = null; WallSide bestSide = WallSide.West; float bestDist = float.MaxValue;
+            for (int i = 0; i < 4; i++)
+            {
+                if (cr[i] == null) continue;
+                float d = (cr[i].position.ToVector3() - entryC).sqrMagnitude;
+                if (d < bestDist) { bestDist = d; bestRoom = cr[i]; bestSide = cs[i]; }
+            }
+            if (bestRoom == null) return;
+
+            _entranceRoomId       = bestRoom.id;
+            _entranceSide         = bestSide;
+            _entranceWallMidWorld = World(WallMidpoint(bestRoom, bestSide));
+            _entranceResolved     = true;
+
+            if (bestRoom.id != entryRoom.id)
+                Debug.Log($"[SceneBuilder] Entry room '{entryRoom.id}' is not on the building " +
+                          $"perimeter; entrance resolved to '{bestRoom.id}' on its {bestSide} wall.");
+        }
+
+        /// <summary>Half-extent (incl. corridor gap) of a room along X.</summary>
+        private static float HalfExtentW(RoomData r)
+        {
+            float w = r.size != null && r.size.width > 0f ? r.size.width : 6f;
+            return (w + CorridorGap) * 0.5f;
+        }
+
+        /// <summary>Half-extent (incl. corridor gap) of a room along Z.</summary>
+        private static float HalfExtentD(RoomData r)
+        {
+            float d = r.size != null && r.size.depth > 0f ? r.size.depth : 6f;
+            return (d + CorridorGap) * 0.5f;
+        }
+
+        /// <summary>Layout-space midpoint of a room's outer wall on the given side.</summary>
+        private static Vector3 WallMidpoint(RoomData room, WallSide side)
+        {
+            Vector3 c = room.position.ToVector3();
+            float w = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float d = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float halfW = (w + CorridorGap) * 0.5f;
+            float halfD = (d + CorridorGap) * 0.5f;
+            switch (side)
+            {
+                case WallSide.North: return new Vector3(c.x, c.y, c.z + halfD);
+                case WallSide.South: return new Vector3(c.x, c.y, c.z - halfD);
+                case WallSide.East:  return new Vector3(c.x + halfW, c.y, c.z);
+                default:             return new Vector3(c.x - halfW, c.y, c.z); // West
+            }
+        }
+
+        /// <summary>
+        /// Maps building entry openings to the exterior walls they pierce, so
+        /// BuildWalls can carve an opening there and BuildEntryDoors can place a door.
+        /// The resolved guaranteed entrance is always included first; the layout's own
+        /// entry points are added only where they land on a genuine exterior wall, so
+        /// an interior/mis-placed entry point can never punch a hole between two rooms.
         /// </summary>
         private void ComputeEntryOpenings(ScenarioData scenario)
         {
             _entryOpenings.Clear();
 
-            List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
-            if (entryPoints == null) return;
-
-            foreach (EntryPointData ep in entryPoints)
+            void Add(string roomId, WallSide side, Vector3 worldPos, string id)
             {
-                if (ep == null || string.IsNullOrEmpty(ep.roomId)) continue;
-
-                RoomData room = scenario.layout.rooms.Find(r => r.id == ep.roomId);
-                if (room == null) continue;
-
-                Vector3 delta = ep.position.ToVector3() - room.position.ToVector3();
-                WallSide side = WallSideFromDelta(delta);
-
-                // If a neighbouring room already sits on this side (interior door
-                // present), the wall is not exterior — skip to avoid two doors
-                // overlapping in the same opening.
-                if (room.doors != null && room.doors.Exists(d => d.wallSide == side))
-                    continue;
-
-                if (!_entryOpenings.TryGetValue(ep.roomId, out List<EntryOpening> list))
+                if (!_entryOpenings.TryGetValue(roomId, out List<EntryOpening> list))
                 {
                     list = new List<EntryOpening>();
-                    _entryOpenings[ep.roomId] = list;
+                    _entryOpenings[roomId] = list;
                 }
-                list.Add(new EntryOpening
+                if (list.Exists(e => e.side == side)) return; // one opening per side
+                list.Add(new EntryOpening { side = side, position = worldPos, id = id });
+            }
+
+            // 1) Guaranteed exterior breach (the primary way in).
+            if (_entranceResolved)
+                Add(_entranceRoomId, _entranceSide, _entranceWallMidWorld, "main");
+
+            // 2) Optional extra entry points from the layout — only when genuinely exterior.
+            List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
+            if (entryPoints != null)
+            {
+                foreach (EntryPointData ep in entryPoints)
                 {
-                    side     = side,
-                    position = World(ep.position.ToVector3()),
-                    id       = ep.id
-                });
+                    if (ep == null || string.IsNullOrEmpty(ep.roomId)) continue;
+
+                    RoomData room = scenario.layout.rooms.Find(r => r.id == ep.roomId);
+                    if (room == null) continue;
+
+                    WallSide side = WallSideFromDelta(ep.position.ToVector3() - room.position.ToVector3());
+
+                    // Never carve an interior wall: skip if a neighbouring room sits
+                    // beyond this side, or an interior door already occupies it.
+                    if (!IsExteriorWall(room, side, scenario.layout.rooms)) continue;
+                    if (room.doors != null && room.doors.Exists(d => d.wallSide == side)) continue;
+
+                    Add(ep.roomId, side, World(ep.position.ToVector3()), ep.id);
+                }
             }
         }
 
@@ -1759,42 +1877,57 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             float g     = CorridorGrid;
 
             float lateralX, lateralZ;
-            List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
-            if (entryPoints != null && entryPoints.Count > 0)
+
+            // Prefer the guaranteed entrance resolved from real exterior geometry, so
+            // the corridor's outer door lines up with the room breach door across the
+            // ring. Fall back to the layout entry point only if resolution failed.
+            if (_entranceResolved)
             {
-                Vector3 ep = World(entryPoints[0].position.ToVector3());
-                var centre = new Vector3((minX + maxX) * 0.5f, ep.y, (minZ + maxZ) * 0.5f);
-                side = WallSideFromDelta(ep - centre);
-                lateralX = ep.x;
-                lateralZ = ep.z;
+                side     = _entranceSide;
+                lateralX = _entranceWallMidWorld.x;
+                lateralZ = _entranceWallMidWorld.z;
             }
             else
             {
-                side = WallSide.South;
-                lateralX = (minX + maxX) * 0.5f;
-                lateralZ = minZ;
+                List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
+                if (entryPoints != null && entryPoints.Count > 0)
+                {
+                    Vector3 ep = World(entryPoints[0].position.ToVector3());
+                    var centre = new Vector3((minX + maxX) * 0.5f, ep.y, (minZ + maxZ) * 0.5f);
+                    side = WallSideFromDelta(ep - centre);
+                    lateralX = ep.x;
+                    lateralZ = ep.z;
+                }
+                else
+                {
+                    side = WallSide.South;
+                    lateralX = (minX + maxX) * 0.5f;
+                    lateralZ = minZ;
+                }
             }
 
-            // The opening rect spans the door width laterally and reaches from the
-            // building edge out past the corridor's outer wall, so every outer-wall
-            // segment in front of the entry is suppressed.
+            // The opening rect spans the door width laterally and reaches from just
+            // inside the building edge out past the corridor's outer wall (using the
+            // true footprint bound on the entrance side), so the outer-wall segment at
+            // the entrance lateral coordinate is always suppressed — even when the
+            // entrance room is not on the extreme edge of the footprint.
             switch (side)
             {
                 case WallSide.North:
-                    openingRect = Rect.MinMaxRect(lateralX - openW * 0.5f, lateralZ,
-                                                  lateralX + openW * 0.5f, lateralZ + cw + g);
+                    openingRect = Rect.MinMaxRect(lateralX - openW * 0.5f, maxZ - g,
+                                                  lateralX + openW * 0.5f, maxZ + cw + g);
                     break;
                 case WallSide.South:
-                    openingRect = Rect.MinMaxRect(lateralX - openW * 0.5f, lateralZ - cw - g,
-                                                  lateralX + openW * 0.5f, lateralZ);
+                    openingRect = Rect.MinMaxRect(lateralX - openW * 0.5f, minZ - cw - g,
+                                                  lateralX + openW * 0.5f, minZ + g);
                     break;
                 case WallSide.East:
-                    openingRect = Rect.MinMaxRect(lateralX, lateralZ - openW * 0.5f,
-                                                  lateralX + cw + g, lateralZ + openW * 0.5f);
+                    openingRect = Rect.MinMaxRect(maxX - g, lateralZ - openW * 0.5f,
+                                                  maxX + cw + g, lateralZ + openW * 0.5f);
                     break;
                 default: // West
-                    openingRect = Rect.MinMaxRect(lateralX - cw - g, lateralZ - openW * 0.5f,
-                                                  lateralX, lateralZ + openW * 0.5f);
+                    openingRect = Rect.MinMaxRect(minX - cw - g, lateralZ - openW * 0.5f,
+                                                  minX + g, lateralZ + openW * 0.5f);
                     break;
             }
         }
@@ -2043,19 +2176,29 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            // Preferred: spawn in open ground just outside the generated entrance,
-            // facing the door, so there is a clear walkable approach to breach. The
-            // entrance moves per scenario, so this is derived from the corridor door.
-            if (spawnOutsideEntrance && _hasEntryDoorWorld &&
-                TryComputeEntranceSpawn(out Vector3 outsidePos, out Quaternion outsideRot))
+            // Preferred and, when this mode is on, MANDATORY: spawn in open ground
+            // just outside the generated entrance, facing the door, at the head of
+            // the yellow guide path. The trainee must NEVER start inside the building
+            // surrounded by terrorists, so TryComputeEntranceSpawn is written to
+            // always resolve an outside spot (it derives the entrance from the layout
+            // entry point when no corridor door was captured, and keeps the trainee
+            // outside at max standoff when no perfectly clear ground is found). The
+            // entrance moves per scenario, so this is computed each build.
+            if (spawnOutsideEntrance &&
+                TryComputeEntranceSpawn(scenario, out Vector3 outsidePos, out Quaternion outsideRot))
             {
                 traineeRig.SetPositionAndRotation(outsidePos, outsideRot);
                 _traineeSpawnedOutside = true;
                 Debug.Log($"[SceneBuilder] Trainee spawned outside entrance at {outsidePos:F1}, " +
-                          $"facing the door {_entryDoorWorld:F1}.");
+                          $"at the head of the guide path facing the door.");
                 PlaceTraineeWeapon();
                 return;
             }
+
+            if (spawnOutsideEntrance)
+                Debug.LogWarning("[SceneBuilder] spawnOutsideEntrance is on but no entrance " +
+                                 "could be resolved (no corridor door and no layout entry point). " +
+                                 "Falling back to staging / interior spawn.");
 
             // Staging spawn: start the trainee at a fixed point (e.g. by the
             // briefing table) and let them move to the generated building. Use a
@@ -2087,39 +2230,111 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         }
 
         /// <summary>
-        /// Computes a spawn just outside the entrance door: step out along the door's
-        /// outward wall normal by <see cref="entranceStandoff"/> into open ground,
-        /// facing back at the door. If that spot is obstructed (a template structure
-        /// happens to sit outside the door), step further out until clear. Returns
-        /// false only if no clear spot is found.
+        /// Computes a spawn just outside the entrance, at the head of the yellow guide
+        /// path: step out along the entrance's outward wall normal by
+        /// <see cref="entranceStandoff"/> into open ground, facing back at the door. If
+        /// that spot is obstructed (a template structure sits outside the door), step
+        /// further out until clear.
+        ///
+        /// This is deliberately robust so the trainee is NEVER dropped inside the
+        /// building among the terrorists when <see cref="spawnOutsideEntrance"/> is on:
+        ///  • the entrance target comes from the captured corridor door when available,
+        ///    otherwise it is derived from the layout's primary entry point;
+        ///  • if no perfectly clear ground is found within the search window, the spawn
+        ///    is still placed OUTSIDE at maximum standoff rather than giving up.
+        /// Returns false only when there is no usable entrance reference at all
+        /// (no corridor door AND no layout entry point).
         /// </summary>
-        private bool TryComputeEntranceSpawn(out Vector3 pos, out Quaternion rot)
+        private bool TryComputeEntranceSpawn(ScenarioData scenario, out Vector3 pos, out Quaternion rot)
         {
             pos = Vector3.zero; rot = Quaternion.identity;
 
-            Vector2 centre  = new Vector2((_fpMinX + _fpMaxX) * 0.5f, (_fpMinZ + _fpMaxZ) * 0.5f);
-            Vector2 door    = new Vector2(_entryDoorWorld.x, _entryDoorWorld.z);
-            Vector2 outward = OutwardNormal(door - centre);
-            float groundY   = Mathf.Max(traineeRig.position.y, _buildOffset.y);
+            // ── Resolve the entrance target + outward direction ──────────────────
+            Vector3 door;
+            Vector2 outward;
+
+            // Resolve the outer footprint (building + corridor ring). Set during the
+            // corridor build; recompute here if the corridor was skipped so the
+            // boundary-based fallback below still has real bounds to work with.
+            float fpMinX = _fpMinX, fpMaxX = _fpMaxX, fpMinZ = _fpMinZ, fpMaxZ = _fpMaxZ;
+            bool haveFootprint = fpMaxX > fpMinX && fpMaxZ > fpMinZ;
+            if (!haveFootprint &&
+                TryComputeFootprint(scenario, out float bMinX, out float bMaxX,
+                                    out float bMinZ, out float bMaxZ, out float _))
+            {
+                fpMinX = bMinX - corridorWidth; fpMaxX = bMaxX + corridorWidth;
+                fpMinZ = bMinZ - corridorWidth; fpMaxZ = bMaxZ + corridorWidth;
+                haveFootprint = fpMaxX > fpMinX && fpMaxZ > fpMinZ;
+            }
+
+            if (_hasEntryDoorWorld && haveFootprint)
+            {
+                // Best case: step straight out from the captured corridor door.
+                door = _entryDoorWorld;
+                Vector2 centre = new Vector2((fpMinX + fpMaxX) * 0.5f, (fpMinZ + fpMaxZ) * 0.5f);
+                outward = OutwardNormal(new Vector2(door.x, door.z) - centre);
+            }
+            else if (haveFootprint)
+            {
+                // No corridor door captured (a fully enclosed layout). The layout entry
+                // point can sit INSIDE the footprint (the entry room is the BFS origin
+                // and is often ringed by other rooms), so never step out from it.
+                // Instead, project the entry room onto the NEAREST outer footprint edge
+                // — a guaranteed-exterior boundary — and step out from there. This keeps
+                // the trainee outside the building envelope in every layout.
+                RoomData entryRoom = scenario?.layout?.rooms?.Find(r => r.depth == 0)
+                                     ?? scenario?.layout?.rooms?[0];
+                Vector3 er = entryRoom != null ? World(entryRoom.position.ToVector3())
+                                               : new Vector3((fpMinX + fpMaxX) * 0.5f, 0f,
+                                                             (fpMinZ + fpMaxZ) * 0.5f);
+
+                float dW = er.x - fpMinX, dE = fpMaxX - er.x;
+                float dS = er.z - fpMinZ, dN = fpMaxZ - er.z;
+                float min = Mathf.Min(Mathf.Min(dW, dE), Mathf.Min(dS, dN));
+
+                if (min == dW)      { door = new Vector3(fpMinX, er.y, er.z); outward = new Vector2(-1f, 0f); }
+                else if (min == dE) { door = new Vector3(fpMaxX, er.y, er.z); outward = new Vector2( 1f, 0f); }
+                else if (min == dS) { door = new Vector3(er.x, er.y, fpMinZ); outward = new Vector2(0f, -1f); }
+                else                { door = new Vector3(er.x, er.y, fpMaxZ); outward = new Vector2(0f,  1f); }
+            }
+            else
+            {
+                // No footprint at all (no rooms) — nothing sensible to resolve.
+                return false;
+            }
+            if (outward.sqrMagnitude < 1e-4f)
+                outward = new Vector2(-1f, 0f);   // safe default: step out to the west
+
+            float groundY = Mathf.Max(traineeRig.position.y, _buildOffset.y);
+            rot = Quaternion.LookRotation(new Vector3(-outward.x, 0f, -outward.y), Vector3.up);
 
             Physics.SyncTransforms();
             Vector3 half  = new Vector3(0.4f, 0.9f, 0.4f);          // ~person-sized probe
             float boxCy   = groundY + 1.0f;
 
             // Walk outward from the door until we find clear ground (cap the search).
-            for (float dist = entranceStandoff; dist <= entranceStandoff + 8f; dist += 1f)
+            const float extraSearch = 12f;
+            for (float dist = entranceStandoff; dist <= entranceStandoff + extraSearch; dist += 1f)
             {
                 Vector3 cand = new Vector3(door.x + outward.x * dist, groundY,
-                                           door.y + outward.y * dist);
+                                           door.z + outward.y * dist);
                 if (!Physics.CheckBox(new Vector3(cand.x, boxCy, cand.z), half,
                                       Quaternion.identity, ~0, QueryTriggerInteraction.Ignore))
                 {
                     pos = cand;
-                    rot = Quaternion.LookRotation(new Vector3(-outward.x, 0f, -outward.y), Vector3.up);
                     return true;
                 }
             }
-            return false;
+
+            // No fully clear spot on the entrance side — keep the trainee OUTSIDE at
+            // max standoff rather than falling back to the interior spawn. Being just
+            // outside near an obstacle is always preferable to spawning among the
+            // terrorists inside.
+            pos = new Vector3(door.x + outward.x * (entranceStandoff + extraSearch), groundY,
+                              door.z + outward.y * (entranceStandoff + extraSearch));
+            Debug.LogWarning("[SceneBuilder] No fully clear ground found outside the entrance; " +
+                             "spawning at max standoff so the trainee still starts outside.");
+            return true;
         }
 
         /// <summary>
