@@ -39779,6 +39779,81 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 715201206}
   m_CullTransparentMesh: 0
+--- !u!1 &716184334
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 716184336}
+  - component: {fileID: 716184335}
+  - component: {fileID: 716184337}
+  m_Layer: 0
+  m_Name: Cognitive Movement HUD
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &716184335
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 716184334}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8561dd9a9076c4add9dd7872da2f911c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TeamSentinels.CognitiveTracking.CognitiveMirrorHud
+  headSource: {fileID: 0}
+  leftHandSource: {fileID: 0}
+  rightHandSource: {fileID: 0}
+  hudDistance: 0.55
+  playerWidgetPos: {x: -0.32, y: -0.205}
+  compassPos: {x: 0, y: -0.27}
+  weaponWidgetPos: {x: 0.32, y: -0.205}
+  dummyScale: 0.075
+  bodyColor: {r: 0.15, g: 0.85, b: 0.3, a: 1}
+  panelColor: {r: 0.02, g: 0.05, b: 0.03, a: 0.55}
+  accentColor: {r: 0.4, g: 0.95, b: 0.5, a: 0.85}
+  textColor: {r: 0.72, g: 1, b: 0.8, a: 1}
+  renderOnTop: 1
+  showBaseDisc: 1
+  maxLeanOffset: 0.35
+--- !u!4 &716184336
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 716184334}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &716184337
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 716184334}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dcd8d104380b24f2bb55dfa71999b78c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TeamSentinels.CognitiveTracking.CognitiveMovementRecorder
+  sampleRateHz: 5
+  movingSpeedThreshold: 0.15
+  crouchThreshold: 0.35
 --- !u!1 &716612234
 GameObject:
   m_ObjectHideFlags: 0
@@ -115958,11 +116033,22 @@ MonoBehaviour:
   buildPerimeterCorridor: 1
   corridorWidth: 3
   corridorFloorMaterial: {fileID: 0}
+  addFurniture: 1
+  furnitureMaterial: {fileID: 0}
+  useFurniturePrefabs: 0
+  furniturePrefabs: []
   terroristPrefab: {fileID: 384703117076225491, guid: 43367c24b95a3b0459bc95476f492316, type: 3}
   hostagePrefab: {fileID: 1989400882266563527, guid: e5bacbcfc73eea24994cfba02f4d6774, type: 3}
   traineeRig: {fileID: 268884717}
   buildAnchor: {fileID: 0}
   buildOffset: {x: 0, y: 0, z: 10}
+  avoidBaseMapOverlap: 1
+  mapClearance: 4
+  baseMapLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  spawnOutsideEntrance: 1
+  entranceStandoff: 8
   traineeStartPoint: {fileID: 0}
   entryDoorStartsOpen: 1
   traineeWeapon: {fileID: 840338492}
@@ -115970,6 +116056,10 @@ MonoBehaviour:
   createSafeZone: 1
   safeZoneRadius: 2.5
   safeZoneColor: {r: 0.2, g: 1, b: 0.4, a: 1}
+  buildGuidePath: 1
+  guidePathWidth: 1.4
+  guidePathColor: {r: 1, g: 0.85, b: 0.2, a: 1}
+  guidePathArrowSpacing: 2.5
   showSpawnGizmos: 1
 --- !u!4 &1956214084
 Transform:
@@ -138398,3 +138488,4 @@ SceneRoots:
   - {fileID: 761756218}
   - {fileID: 132151390}
   - {fileID: 661396167}
+  - {fileID: 716184336}

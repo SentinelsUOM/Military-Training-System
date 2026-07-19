@@ -49,6 +49,11 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("layout")]
         public LayoutSnapshot layout;
 
+        /// <summary>Timestamped body-movement track (head/hands/crouch/scanning),
+        /// recorded by CognitiveMovementRecorder. Null when no recorder ran.</summary>
+        [JsonProperty("movementTrack")]
+        public MovementTrack movementTrack;
+
         #endregion
 
         #region Public API

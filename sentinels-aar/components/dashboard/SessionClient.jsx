@@ -7,6 +7,7 @@ import TimelineTab from './TimelineTab'
 import IncidentsTab from './IncidentsTab'
 import HostageTab from './HostageTab'
 import ReplayTab from './ReplayTab'
+import MovementTab from './MovementTab'
 import styles from './SessionClient.module.css'
 import { formatDate, formatTime, scoreColor, scorePercent } from '@/lib/utils'
 
@@ -15,6 +16,7 @@ const TABS = [
   { id: 'timeline',  label: 'Timeline' },
   { id: 'incidents', label: 'Incidents' },
   { id: 'hostage',   label: 'Hostage' },
+  { id: 'movement',  label: 'Movement' },
   { id: 'replay',    label: 'Replay' },
 ]
 
@@ -40,6 +42,7 @@ export default function SessionClient({ session }) {
   const tabsWithCount = TABS.map(t => {
     if (t.id === 'incidents') return { ...t, count: s.incidents?.length || 0 }
     if (t.id === 'timeline')  return { ...t, count: s.events?.length || 0 }
+    if (t.id === 'movement')  return { ...t, count: s.movementTrack?.samples?.length || 0 }
     return t
   })
 
@@ -96,6 +99,7 @@ export default function SessionClient({ session }) {
         {activeTab === 'timeline'  && <TimelineTab session={s} />}
         {activeTab === 'incidents' && <IncidentsTab session={s} />}
         {activeTab === 'hostage'   && <HostageTab session={s} />}
+        {activeTab === 'movement'  && <MovementTab session={s} />}
         {activeTab === 'replay'    && <ReplayTab session={s} />}
       </div>
     </div>
