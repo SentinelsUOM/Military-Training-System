@@ -1,0 +1,286 @@
+'use client'
+import { useMemo } from 'react'
+import {
+  AreaChart, Area, Line, XAxis, YAxis, Tooltip,
+  CartesianGrid, ResponsiveContainer
+} from 'recharts'
+import MetricCard from '@/components/ui/MetricCard'
+import styles from './MovementTab.module.css'
+import { formatTime, chartTheme } from '@/lib/utils'
+
+const CROUCH_THRESHOLD = 0.35
+
+// Downsample to keep charts responsive on long sessions.
+function downsample(samples, maxPoints = 400) {
+  if (!samples || samples.length <= maxPoints) return samples || []
+  const step = Math.ceil(samples.length / maxPoints)
+  return samples.filter((_, i) => i % step === 0)
+}
+
+function ChartCard({ title, children }) {
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>{title}</h3>
+      <div className={styles.chartWrap}>{children}</div>
+    </div>
+  )
+}
+
+const axisProps = {
+  stroke: chartTheme.label,
+  tick: { fill: chartTheme.label, fontSize: 11 },
+  tickLine: false,
+}
+
+const tooltipProps = {
+  contentStyle: {
+    background: chartTheme.tooltip,
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    fontSize: 12,
+  },
+  labelFormatter: (t) => `t = ${formatTime(t)}`,
+}
+
+export default function MovementTab({ session }) {
+  const track = session.movementTrack
+  const samples = track?.samples || []
+  const stats = track?.stats || {}
+  const duration = session.performance?.missionDuration || (samples.length ? samples[samples.length - 1].t : 1)
+
+  const chartData = useMemo(
+    () => downsample(samples).map(s => ({
+      t: s.t,
+      headY: s.head?.y ?? 0,
+      speed: s.speed ?? 0,
+      angSpeed: s.angSpeed ?? 0,
+      crouch: s.crouch ?? 0,
+      hp: (s.hp ?? 1) * 100,
+      pitch: s.pitch ?? 0,
+    })),
+    [samples]
+  )
+
+  if (!samples.length) {
+    return (
+      <div className={styles.wrap}>
+        <div className={styles.card}>
+          <h3 className={styles.cardTitle}>Movement Data</h3>
+          <p className={styles.empty}>
+            No movement data was recorded for this session. Sessions played with the
+            Cognitive Tracking module active upload a full body-movement track here.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const weaponPct = duration > 0 ? Math.round(((stats.timeWeaponHeld || 0) / duration) * 100) : 0
+  const movingPct = duration > 0 ? Math.round(((stats.timeMoving || 0) / duration) * 100) : 0
+  const handTravel = (stats.leftHandDistance || 0) + (stats.rightHandDistance || 0)
+
+  return (
+    <div className={styles.wrap}>
+      <div className={styles.metricGrid}>
+        <MetricCard
+          label="Distance Moved"
+          value={(stats.totalDistance || 0).toFixed(1)}
+          unit=" m"
+          color="var(--accent)"
+          subtitle={`moving ${movingPct}% of mission`}
+        />
+        <MetricCard
+          label="Avg Speed"
+          value={(stats.avgSpeed || 0).toFixed(2)}
+          unit=" m/s"
+          color="var(--accent)"
+          subtitle={`peak ${(stats.maxSpeed || 0).toFixed(2)} m/s`}
+        />
+        <MetricCard
+          label="Time Crouched"
+          value={formatTime(stats.timeCrouched)}
+          unit=""
+          color="#d29922"
+          subtitle={`${stats.crouchCount || 0} crouch events`}
+        />
+        <MetricCard
+          label="Head Scanning"
+          value={Math.round(stats.totalHeadYawDeg || 0)}
+          unit="°"
+          color="#bc8cff"
+          subtitle={`avg ${(stats.avgAngSpeed || 0).toFixed(0)}°/s · peak ${(stats.peakAngSpeed || 0).toFixed(0)}°/s`}
+        />
+        <MetricCard
+          label="Weapon In Hand"
+          value={formatTime(stats.timeWeaponHeld)}
+          unit=""
+          color="#3fb950"
+          subtitle={`${weaponPct}% of mission`}
+        />
+        <MetricCard
+          label="Hand Travel"
+          value={handTravel.toFixed(1)}
+          unit=" m"
+          color="#58a6ff"
+          subtitle={`L ${(stats.leftHandDistance || 0).toFixed(1)} m · R ${(stats.rightHandDistance || 0).toFixed(1)} m`}
+        />
+      </div>
+
+      <PathMap samples={samples} layout={session.layout} />
+
+      <div className={styles.chartGrid}>
+        <ChartCard title="Movement Speed (m/s)">
+          <ResponsiveContainer width="100%" height={180}>
+            <AreaChart data={chartData}>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="t" tickFormatter={formatTime} {...axisProps} />
+              <YAxis width={36} {...axisProps} />
+              <Tooltip {...tooltipProps} formatter={(v) => [`${v.toFixed(2)} m/s`, 'speed']} />
+              <Area type="monotone" dataKey="speed" stroke={chartTheme.accent}
+                    fill={chartTheme.accent} fillOpacity={0.25} strokeWidth={1.5} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Posture — Head Height (m) & Crouch">
+          <ResponsiveContainer width="100%" height={180}>
+            <AreaChart data={chartData}>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="t" tickFormatter={formatTime} {...axisProps} />
+              <YAxis yAxisId="h" width={36} domain={[0, 'auto']} {...axisProps} />
+              <YAxis yAxisId="c" orientation="right" width={30} domain={[0, 1]} hide />
+              <Tooltip {...tooltipProps}
+                formatter={(v, name) => name === 'crouch'
+                  ? [`${Math.round(v * 100)}%`, 'crouch']
+                  : [`${v.toFixed(2)} m`, 'head height']} />
+              <Area yAxisId="c" type="step" dataKey="crouch" stroke="#d29922"
+                    fill="#d29922" fillOpacity={0.15} strokeWidth={1} isAnimationActive={false} />
+              <Line yAxisId="h" type="monotone" dataKey="headY" stroke="#3fb950"
+                    dot={false} strokeWidth={1.5} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Head Scanning Speed (°/s)">
+          <ResponsiveContainer width="100%" height={180}>
+            <AreaChart data={chartData}>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="t" tickFormatter={formatTime} {...axisProps} />
+              <YAxis width={36} {...axisProps} />
+              <Tooltip {...tooltipProps} formatter={(v) => [`${v.toFixed(0)}°/s`, 'scanning']} />
+              <Area type="monotone" dataKey="angSpeed" stroke="#bc8cff"
+                    fill="#bc8cff" fillOpacity={0.2} strokeWidth={1.5} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Health Over Time (%)">
+          <ResponsiveContainer width="100%" height={180}>
+            <AreaChart data={chartData}>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="t" tickFormatter={formatTime} {...axisProps} />
+              <YAxis width={36} domain={[0, 100]} {...axisProps} />
+              <Tooltip {...tooltipProps} formatter={(v) => [`${Math.round(v)}%`, 'health']} />
+              <Area type="step" dataKey="hp" stroke="#f85149"
+                    fill="#f85149" fillOpacity={0.2} strokeWidth={1.5} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+    </div>
+  )
+}
+
+/** Top-down movement path over the scenario floor plan. */
+function PathMap({ samples, layout }) {
+  const rooms = layout?.rooms || []
+  const doors = layout?.doors || []
+
+  const { minX, maxX, minZ, maxZ } = useMemo(() => {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+    for (const r of rooms) {
+      minX = Math.min(minX, r.centerX - r.width / 2)
+      maxX = Math.max(maxX, r.centerX + r.width / 2)
+      minZ = Math.min(minZ, r.centerZ - r.depth / 2)
+      maxZ = Math.max(maxZ, r.centerZ + r.depth / 2)
+    }
+    for (const s of samples) {
+      minX = Math.min(minX, s.head.x); maxX = Math.max(maxX, s.head.x)
+      minZ = Math.min(minZ, s.head.z); maxZ = Math.max(maxZ, s.head.z)
+    }
+    if (!isFinite(minX)) { minX = -1; maxX = 1; minZ = -1; maxZ = 1 }
+    return { minX, maxX, minZ, maxZ }
+  }, [rooms, samples])
+
+  const PAD = 2
+  const w = Math.max(1, maxX - minX) + PAD * 2
+  const h = Math.max(1, maxZ - minZ) + PAD * 2
+  // World → SVG: x maps directly, z flips so +Z (north) points up.
+  const sx = (x) => x - minX + PAD
+  const sy = (z) => maxZ - z + PAD
+
+  const pts = useMemo(() => downsample(samples, 800), [samples])
+  const walkPts = []
+  const crouchSegs = []
+  let seg = null
+  for (const s of pts) {
+    walkPts.push(`${sx(s.head.x).toFixed(2)},${sy(s.head.z).toFixed(2)}`)
+    if ((s.crouch ?? 0) > CROUCH_THRESHOLD) {
+      if (!seg) seg = []
+      seg.push(`${sx(s.head.x).toFixed(2)},${sy(s.head.z).toFixed(2)}`)
+    } else if (seg) {
+      if (seg.length > 1) crouchSegs.push(seg)
+      seg = null
+    }
+  }
+  if (seg && seg.length > 1) crouchSegs.push(seg)
+
+  const start = pts[0], end = pts[pts.length - 1]
+  const strokeW = Math.max(w, h) / 220
+
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>
+        Movement Path
+        <span className={styles.legend}>
+          <span className={styles.legendItem}><i style={{ background: '#1f6feb' }} /> walking</span>
+          <span className={styles.legendItem}><i style={{ background: '#d29922' }} /> crouched</span>
+          <span className={styles.legendItem}><i style={{ background: '#3fb950' }} /> start</span>
+          <span className={styles.legendItem}><i style={{ background: '#f85149' }} /> end</span>
+        </span>
+      </h3>
+      <div className={styles.mapWrap}>
+        <svg viewBox={`0 0 ${w} ${h}`} className={styles.mapSvg} preserveAspectRatio="xMidYMid meet">
+          {rooms.map((r, i) => (
+            <rect key={i}
+              x={sx(r.centerX - r.width / 2)} y={sy(r.centerZ + r.depth / 2)}
+              width={r.width} height={r.depth}
+              fill="rgba(88, 166, 255, 0.05)" stroke="var(--border)" strokeWidth={strokeW * 0.8} />
+          ))}
+          {doors.map((d, i) => (
+            <circle key={i} cx={sx(d.x)} cy={sy(d.z)} r={strokeW * 2}
+              fill="none" stroke="#8b949e" strokeWidth={strokeW * 0.6} />
+          ))}
+          {walkPts.length > 1 && (
+            <polyline points={walkPts.join(' ')} fill="none"
+              stroke="#1f6feb" strokeWidth={strokeW * 1.6}
+              strokeLinejoin="round" strokeLinecap="round" opacity={0.9} />
+          )}
+          {crouchSegs.map((s, i) => (
+            <polyline key={i} points={s.join(' ')} fill="none"
+              stroke="#d29922" strokeWidth={strokeW * 2.2}
+              strokeLinejoin="round" strokeLinecap="round" />
+          ))}
+          {start && (
+            <circle cx={sx(start.head.x)} cy={sy(start.head.z)} r={strokeW * 3}
+              fill="#3fb950" stroke="#0d1117" strokeWidth={strokeW * 0.8} />
+          )}
+          {end && (
+            <circle cx={sx(end.head.x)} cy={sy(end.head.z)} r={strokeW * 3}
+              fill="#f85149" stroke="#0d1117" strokeWidth={strokeW * 0.8} />
+          )}
+        </svg>
+      </div>
+    </div>
+  )
+}

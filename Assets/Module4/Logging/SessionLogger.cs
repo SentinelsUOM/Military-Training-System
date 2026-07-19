@@ -52,6 +52,11 @@ namespace TeamSentinels.Module4.Logging
         // Building geometry of the played scenario, set by SetLayout() after StartSession.
         private LayoutSnapshot _layout;
 
+        // Live body-movement track, registered by CognitiveMovementRecorder at the
+        // start of recording. The recorder keeps appending samples to this same
+        // instance, so whatever is in it at EndSession() is what gets serialised.
+        private MovementTrack _movementTrack;
+
         #endregion
 
         #region Events
@@ -92,6 +97,7 @@ namespace TeamSentinels.Module4.Logging
             _sessionStartTime = Time.time;
             _sessionActive    = true;
             _layout           = null;   // cleared per session; SetLayout() fills it if a scenario is known
+            _movementTrack    = null;   // cleared per session; SetMovementTrack() re-registers
 
             _events.Clear();
             _npcStateChanges.Clear();
@@ -118,6 +124,20 @@ namespace TeamSentinels.Module4.Logging
             int rooms = layout?.rooms?.Count ?? 0;
             int doors = layout?.doors?.Count ?? 0;
             Debug.Log($"[SessionLogger] Layout attached: {rooms} rooms, {doors} doors.");
+        }
+
+        /// <summary>
+        /// Registers the live body-movement track for this session. Called once by
+        /// CognitiveMovementRecorder when recording starts; the recorder then keeps
+        /// appending samples to the same instance until the session ends, so the
+        /// summary always serialises the complete track. Optional and
+        /// null-tolerant downstream, like SetLayout.
+        /// </summary>
+        public void SetMovementTrack(MovementTrack track)
+        {
+            if (!_sessionActive) return;
+            _movementTrack = track;
+            Debug.Log("[SessionLogger] Movement track registered.");
         }
 
         /// <summary>Logs a discrete mission event (e.g. ShotFired, DoorOpened).</summary>
@@ -205,7 +225,8 @@ namespace TeamSentinels.Module4.Logging
                 hostageHistory  = new List<HostageStateEntry>(_hostageHistory),
                 incidents       = incidents,
                 replayFrames    = new List<ReplayFrame>(_replayFrames),
-                layout          = _layout
+                layout          = _layout,
+                movementTrack   = _movementTrack
             };
 
             SaveToJson(summary);

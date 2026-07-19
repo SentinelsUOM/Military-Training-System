@@ -53,7 +53,7 @@ export async function GET(request) {
 
     const [sessions, total] = await Promise.all([
       Session.find({})
-        .select('-events -replayFrames -npcStateChanges -hostageHistory -incidents')
+        .select('-events -replayFrames -npcStateChanges -hostageHistory -incidents -movementTrack')
         // Sort by _id, not createdAt: _id is ALWAYS indexed (default index) and ObjectIds
         // are time-ordered, so this gives the same newest-first order but is served from an
         // index — it can never hit the 32MB in-memory-sort limit that createdAt (unindexed)

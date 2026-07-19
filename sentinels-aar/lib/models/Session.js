@@ -21,6 +21,51 @@ const LayoutSchema = new mongoose.Schema(
   { _id: false }
 )
 
+// Body-movement track uploaded by Unity's CognitiveMovementRecorder: fixed-rate
+// timestamped samples of head/hand tracking plus session-level aggregates.
+// Declared as real sub-schemas for the same reason as LayoutSchema above.
+const MovementSampleSchema = new mongoose.Schema(
+  {
+    t:        Number,     // seconds since session start (same clock as events)
+    head:     Vec3Schema, // world-space positions, same space as replayFrames
+    lHand:    Vec3Schema,
+    rHand:    Vec3Schema,
+    yaw:      Number,     // head heading, degrees
+    pitch:    Number,     // head pitch, degrees (positive = up)
+    speed:    Number,     // horizontal head speed m/s
+    angSpeed: Number,     // head yaw angular speed deg/s
+    crouch:   Number,     // 0 standing → 1 fully crouched
+    gun:      Number,     // bitmask: 1 = left hand weapon, 2 = right
+    hp:       Number      // health fraction 0–1
+  },
+  { _id: false }
+)
+const MovementStatsSchema = new mongoose.Schema(
+  {
+    sampleRateHz:      Number,
+    totalDistance:     Number,
+    avgSpeed:          Number,
+    maxSpeed:          Number,
+    timeMoving:        Number,
+    timeStill:         Number,
+    timeCrouched:      Number,
+    crouchCount:       Number,
+    avgHeadHeight:     Number,
+    minHeadHeight:     Number,
+    totalHeadYawDeg:   Number,
+    avgAngSpeed:       Number,
+    peakAngSpeed:      Number,
+    leftHandDistance:  Number,
+    rightHandDistance: Number,
+    timeWeaponHeld:    Number
+  },
+  { _id: false }
+)
+const MovementTrackSchema = new mongoose.Schema(
+  { stats: MovementStatsSchema, samples: [MovementSampleSchema] },
+  { _id: false }
+)
+
 const SessionSchema = new mongoose.Schema(
   {
     sessionId:       { type: String, required: true, unique: true, index: true },
@@ -118,7 +163,12 @@ const SessionSchema = new mongoose.Schema(
     // draw walls behind the 2D dot map and to build the 3D fly-around replay.
     // Mongoose strict mode drops unknown fields on save, so this must be declared
     // or the layout Unity uploads would be silently discarded. Null on old sessions.
-    layout: LayoutSchema
+    layout: LayoutSchema,
+
+    // Timestamped body-movement track (head/hands/crouch/scanning) recorded by
+    // the CognitiveTracking module. Must be declared or strict mode drops it on
+    // save, like layout above. Null on sessions recorded before this existed.
+    movementTrack: MovementTrackSchema
   },
   { timestamps: true }
 )
