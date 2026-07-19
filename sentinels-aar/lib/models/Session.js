@@ -61,8 +61,42 @@ const MovementStatsSchema = new mongoose.Schema(
   },
   { _id: false }
 )
+// One threat stimulus → trainee response measurement from ReactionTimeTracker.
+const ReactionSampleSchema = new mongoose.Schema(
+  {
+    t:             Number, // stimulus time, seconds since session start
+    stimulus:      String, // PlayerSeen | GunshotHeard | TargetConfirmed
+    actor:         String, // enemy that caused it
+    angleToThreat: Number, // gaze offset to threat at stimulus, degrees
+    reactionTime:  Number, // seconds; -1 = no response within window
+    channel:       String  // head | hands | movement | trigger | none
+  },
+  { _id: false }
+)
+const ReactionStatsSchema = new mongoose.Schema(
+  {
+    stimulusCount:      Number,
+    respondedCount:     Number,
+    missedCount:        Number,
+    avgReactionTime:    Number,
+    medianReactionTime: Number,
+    bestReactionTime:   Number,
+    worstReactionTime:  Number,
+    avgAngleToThreat:   Number,
+    headResponses:      Number,
+    handResponses:      Number,
+    moveResponses:      Number,
+    triggerResponses:   Number
+  },
+  { _id: false }
+)
 const MovementTrackSchema = new mongoose.Schema(
-  { stats: MovementStatsSchema, samples: [MovementSampleSchema] },
+  {
+    stats:         MovementStatsSchema,
+    samples:       [MovementSampleSchema],
+    reactionStats: ReactionStatsSchema,
+    reactions:     [ReactionSampleSchema]
+  },
   { _id: false }
 )
 
