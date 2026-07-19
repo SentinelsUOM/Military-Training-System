@@ -176,6 +176,17 @@ namespace TeamSentinels.Module4.Logging
             _attentionScores.Add(attention);
         }
 
+        /// <summary>
+        /// Records a single measured reaction time (seconds) from the
+        /// stimulus→response tracker. Feeds cognitiveSummary.averageReactionTime /
+        /// peakReactionTime without touching the other Module 3 accumulators.
+        /// </summary>
+        public void LogReactionTime(float seconds)
+        {
+            if (!_sessionActive || seconds < 0f) return;
+            _reactionTimes.Add(seconds);
+        }
+
         /// <summary>Accepts a pre-built ReplayFrame from ReplayRecorder.</summary>
         public void AddReplayFrames(List<ReplayFrame> frames)
         {

@@ -39790,6 +39790,7 @@ GameObject:
   - component: {fileID: 716184336}
   - component: {fileID: 716184335}
   - component: {fileID: 716184337}
+  - component: {fileID: 716184338}
   m_Layer: 0
   m_Name: Cognitive Movement HUD
   m_TagString: Untagged
@@ -39854,6 +39855,24 @@ MonoBehaviour:
   sampleRateHz: 5
   movingSpeedThreshold: 0.15
   crouchThreshold: 0.35
+--- !u!114 &716184338
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 716184334}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0643885fbd9bb428396b51304fcc239f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TeamSentinels.CognitiveTracking.ReactionTimeTracker
+  responseWindow: 3
+  cooldown: 2
+  headTurnThreshold: 90
+  gazeAcquireAngle: 25
+  handSpeedThreshold: 1
+  moveSpeedThreshold: 0.6
 --- !u!1 &716612234
 GameObject:
   m_ObjectHideFlags: 0

@@ -65,7 +65,52 @@ namespace TeamSentinels.Module4.Data
     }
 
     /// <summary>
-    /// Full body-movement record of a session: per-sample track plus aggregates.
+    /// One stimulus → response measurement, produced by ReactionTimeTracker.
+    /// A stimulus is an enemy-caused event (spotted, shot at, engaged); the
+    /// response is the trainee's first movement reaction to it.
+    /// </summary>
+    public class ReactionSample
+    {
+        /// <summary>Stimulus time — seconds since StartSession (same clock as events).</summary>
+        [JsonProperty("t")] public float t;
+
+        /// <summary>Stimulus event type: PlayerSeen, GunshotHeard, TargetConfirmed.</summary>
+        [JsonProperty("stimulus")] public string stimulus;
+
+        /// <summary>Actor that caused the stimulus (e.g. terrorist_02).</summary>
+        [JsonProperty("actor")] public string actor;
+
+        /// <summary>Angle between trainee gaze and the threat at stimulus time (deg).
+        /// 0 = already looking straight at it, 180 = directly behind.</summary>
+        [JsonProperty("angleToThreat")] public float angleToThreat;
+
+        /// <summary>Seconds from stimulus to first response. -1 = no response in window.</summary>
+        [JsonProperty("reactionTime")] public float reactionTime;
+
+        /// <summary>Which channel responded first: head, hands, movement, trigger, none.</summary>
+        [JsonProperty("channel")] public string channel;
+    }
+
+    /// <summary>Aggregates over all reaction measurements in the session.</summary>
+    public class ReactionStats
+    {
+        [JsonProperty("stimulusCount")]  public int   stimulusCount;
+        [JsonProperty("respondedCount")] public int   respondedCount;
+        [JsonProperty("missedCount")]    public int   missedCount;
+        [JsonProperty("avgReactionTime")]    public float avgReactionTime;
+        [JsonProperty("medianReactionTime")] public float medianReactionTime;
+        [JsonProperty("bestReactionTime")]   public float bestReactionTime;
+        [JsonProperty("worstReactionTime")]  public float worstReactionTime;
+        [JsonProperty("avgAngleToThreat")]   public float avgAngleToThreat;
+        [JsonProperty("headResponses")]      public int   headResponses;
+        [JsonProperty("handResponses")]      public int   handResponses;
+        [JsonProperty("moveResponses")]      public int   moveResponses;
+        [JsonProperty("triggerResponses")]   public int   triggerResponses;
+    }
+
+    /// <summary>
+    /// Full body-movement record of a session: per-sample track plus aggregates,
+    /// and the stimulus→response reaction-time measurements taken during play.
     /// Attached to SessionSummary as "movementTrack" and stored by the AAR
     /// dashboard alongside the rest of the session document.
     /// </summary>
@@ -73,5 +118,8 @@ namespace TeamSentinels.Module4.Data
     {
         [JsonProperty("stats")]   public MovementStats stats = new MovementStats();
         [JsonProperty("samples")] public List<MovementSample> samples = new List<MovementSample>();
+
+        [JsonProperty("reactionStats")] public ReactionStats reactionStats = new ReactionStats();
+        [JsonProperty("reactions")]     public List<ReactionSample> reactions = new List<ReactionSample>();
     }
 }

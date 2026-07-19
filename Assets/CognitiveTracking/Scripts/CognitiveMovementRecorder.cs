@@ -33,6 +33,11 @@ namespace TeamSentinels.CognitiveTracking
 
         MovementTrack _track;
         bool _recording;
+
+        /// <summary>The live track for the active session (null when not recording).
+        /// ReactionTimeTracker appends its reaction measurements here so they ride
+        /// along in the same movementTrack upload.</summary>
+        public MovementTrack CurrentTrack => _recording ? _track : null;
         float _nextSampleTime;
 
         // Per-session accumulators / previous-sample state

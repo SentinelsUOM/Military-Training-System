@@ -2,7 +2,7 @@
 import { useMemo } from 'react'
 import {
   AreaChart, Area, Line, XAxis, YAxis, Tooltip,
-  CartesianGrid, ResponsiveContainer
+  CartesianGrid, ResponsiveContainer, ScatterChart, Scatter, ReferenceLine
 } from 'recharts'
 import MetricCard from '@/components/ui/MetricCard'
 import styles from './MovementTab.module.css'
@@ -126,6 +126,8 @@ export default function MovementTab({ session }) {
         />
       </div>
 
+      <ReactionSection track={track} />
+
       <PathMap samples={samples} layout={session.layout} />
 
       <div className={styles.chartGrid}>
@@ -188,6 +190,130 @@ export default function MovementTab({ session }) {
         </ChartCard>
       </div>
     </div>
+  )
+}
+
+const CHANNEL_COLORS = {
+  head:     '#bc8cff',
+  hands:    '#58a6ff',
+  movement: '#d29922',
+  trigger:  '#3fb950',
+}
+const CHANNEL_LABELS = {
+  head:     'Head turn',
+  hands:    'Weapon raise',
+  movement: 'Moved to cover',
+  trigger:  'Fired back',
+}
+
+/**
+ * Reaction time to threat stimuli. Each dot is one enemy stimulus (spotted /
+ * shot at / engaged); its height is how long the trainee took to respond and
+ * its color shows which body channel responded first.
+ */
+function ReactionSection({ track }) {
+  const reactions = track?.reactions || []
+  const rs = track?.reactionStats || {}
+
+  if (!reactions.length) {
+    return (
+      <div className={styles.card}>
+        <h3 className={styles.cardTitle}>Reaction Time</h3>
+        <p className={styles.empty}>
+          No threat stimuli were recorded for this session, so no reaction times
+          could be measured.
+        </p>
+      </div>
+    )
+  }
+
+  const responded = reactions.filter(r => r.reactionTime >= 0)
+  const byChannel = ['head', 'hands', 'movement', 'trigger'].map(ch => ({
+    channel: ch,
+    data: responded
+      .filter(r => r.channel === ch)
+      .map(r => ({ t: r.t, rt: r.reactionTime, stimulus: r.stimulus, actor: r.actor, angle: r.angleToThreat })),
+  })).filter(g => g.data.length > 0)
+
+  const channelCounts = [
+    ['Head turn', rs.headResponses],
+    ['Weapon raise', rs.handResponses],
+    ['Moved', rs.moveResponses],
+    ['Fired', rs.triggerResponses],
+  ].filter(([, n]) => n > 0)
+  const primary = channelCounts.sort((a, b) => b[1] - a[1])[0]
+
+  return (
+    <>
+      <div className={styles.metricGrid}>
+        <MetricCard
+          label="Avg Reaction Time"
+          value={(rs.avgReactionTime || 0).toFixed(2)}
+          unit=" s"
+          color="var(--accent)"
+          subtitle={`median ${(rs.medianReactionTime || 0).toFixed(2)} s`}
+        />
+        <MetricCard
+          label="Best Reaction"
+          value={(rs.bestReactionTime || 0).toFixed(2)}
+          unit=" s"
+          color="#3fb950"
+          subtitle={`slowest ${(rs.worstReactionTime || 0).toFixed(2)} s`}
+        />
+        <MetricCard
+          label="Threats Responded"
+          value={`${rs.respondedCount || 0}/${rs.stimulusCount || 0}`}
+          unit=""
+          color={rs.missedCount > 0 ? '#d29922' : '#3fb950'}
+          subtitle={`${rs.missedCount || 0} missed · avg gaze offset ${Math.round(rs.avgAngleToThreat || 0)}°`}
+        />
+        <MetricCard
+          label="Primary Response"
+          value={primary ? primary[0] : '—'}
+          unit=""
+          color="#bc8cff"
+          subtitle={channelCounts.map(([l, n]) => `${l} ${n}`).join(' · ')}
+        />
+      </div>
+
+      <div className={styles.card}>
+        <h3 className={styles.cardTitle}>
+          Reaction Time per Threat
+          <span className={styles.legend}>
+            {Object.entries(CHANNEL_LABELS).map(([ch, label]) => (
+              <span key={ch} className={styles.legendItem}>
+                <i style={{ background: CHANNEL_COLORS[ch] }} /> {label}
+              </span>
+            ))}
+          </span>
+        </h3>
+        <div className={styles.chartWrap}>
+          <ResponsiveContainer width="100%" height={220}>
+            <ScatterChart>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+              <XAxis dataKey="t" name="time" type="number" domain={['dataMin', 'dataMax']}
+                     tickFormatter={formatTime} {...axisProps} />
+              <YAxis dataKey="rt" name="reaction" type="number" width={40}
+                     unit="s" domain={[0, 'auto']} {...axisProps} />
+              {rs.avgReactionTime > 0 && (
+                <ReferenceLine y={rs.avgReactionTime} stroke={chartTheme.label}
+                               strokeDasharray="4 4"
+                               label={{ value: 'avg', fill: chartTheme.label, fontSize: 10, position: 'right' }} />
+              )}
+              <Tooltip
+                {...tooltipProps}
+                cursor={{ strokeDasharray: '3 3' }}
+                formatter={(v, name) => name === 'reaction' ? [`${v.toFixed(2)} s`, 'reaction'] : [formatTime(v), 'at']}
+              />
+              {byChannel.map(g => (
+                <Scatter key={g.channel} name={CHANNEL_LABELS[g.channel]}
+                         data={g.data} fill={CHANNEL_COLORS[g.channel]} isAnimationActive={false} />
+              ))}
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </>
   )
 }
 
