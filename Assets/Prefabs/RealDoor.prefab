@@ -744,7 +744,7 @@ MonoBehaviour:
   - {fileID: 3257458875230346067}
   openAngle: 90
   openThreshold: 15
-  npcDriveSpeed: 3
+  npcDriveSpeed: 5
   sensorCenter: {x: 0, y: 1.1, z: 0}
   sensorHalfExtents: {x: 1.6, y: 1.1, z: 1.4}
 --- !u!1 &2382674574473999785
@@ -2168,7 +2168,7 @@ MonoBehaviour:
   m_BackKnob: {fileID: 3257458875230346067}
   m_UseSpringToClose: 1
   m_SpringForce: 10
-  m_SpringDamper: 2
+  m_SpringDamper: 8
   m_LockWhenAngleLessThan: 2
   lockDoorSound: {fileID: 5596642928504725758}
   unlockDoorSound: {fileID: 4023674042021534380}
