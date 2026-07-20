@@ -15,6 +15,13 @@ using UnityEngine;
 /// When the trainee is inside the zone AND at least one Following hostage's
 /// transform is inside the zone's bounds, that hostage is marked Freed.
 ///
+/// Reveal behaviour: the zone's visual marker (SafeZoneBeacon, if present)
+/// starts disabled and is only enabled here once a hostage is actually being
+/// escorted (Follow) or already delivered (Freed) — so the trainee has to find
+/// the hostage first; the extraction point isn't given away up front. The
+/// trigger/detection logic itself is always live regardless of the marker's
+/// visibility.
+///
 /// Setup
 ///   1. Place an empty GameObject at the extraction point.
 ///   2. Add a BoxCollider or SphereCollider. Set isTrigger = true. Size it
@@ -35,8 +42,10 @@ public class ExtractionZone : MonoBehaviour
     [SerializeField] private Color gizmoColor = new Color(0.2f, 1f, 0.4f, 0.25f);
 
     private bool _playerInside;
+    private bool _revealed;
     private float _nextPoll;
     private Collider _zoneCollider;
+    private SafeZoneBeacon _beacon;
     private readonly HashSet<HostageController> _alreadyFreed = new HashSet<HostageController>();
 
     private void Reset()
@@ -52,12 +61,34 @@ public class ExtractionZone : MonoBehaviour
             Debug.LogWarning($"[ExtractionZone] {name}: collider is not set to isTrigger.");
     }
 
+    private void Start()
+    {
+        // Looked up in Start (not Awake): SceneBuilder adds this component BEFORE
+        // SafeZoneBeacon on the same GameObject in the same frame, and
+        // AddComponent invokes Awake() synchronously — so GetComponent here
+        // would still find nothing if done in Awake(). Start() runs after every
+        // sibling component on the object has been added and Awoken.
+        _beacon = GetComponent<SafeZoneBeacon>();
+
+        // If the marker already came in enabled (e.g. hand-placed in a scene,
+        // not spawned by SceneBuilder with it pre-disabled), don't fight that.
+        if (_beacon != null && _beacon.enabled) _revealed = true;
+    }
+
     private PlayerHealth _cachedPlayer;
 
     private void Update()
     {
         if (Time.time < _nextPoll) return;
         _nextPoll = Time.time + pollInterval;
+
+        if (!_revealed && AnyHostageEscortedOrDelivered())
+        {
+            _revealed = true;
+            if (_beacon != null) _beacon.enabled = true;
+            if (echoToConsole)
+                Debug.Log("[ExtractionZone] Hostage secured — safe zone marker revealed.");
+        }
 
         // Determine "player inside" by POLLING the player's position — VR rig
         // trigger callbacks (OnTriggerEnter/Exit) are unreliable, so we test the
@@ -69,6 +100,19 @@ public class ExtractionZone : MonoBehaviour
             Debug.Log($"[ExtractionZone] Trainee {(_playerInside ? "entered" : "left")} safe zone.");
 
         if (_playerInside) EvaluateRescue();
+    }
+
+    /// <summary>True once any hostage has started being escorted (or already
+    /// been delivered) — the signal that the marker should reveal itself.</summary>
+    private static bool AnyHostageEscortedOrDelivered()
+    {
+        foreach (var hc in FindObjectsByType<HostageController>(FindObjectsSortMode.None))
+        {
+            if (hc == null) continue;
+            if (hc.currentState == HostageState.Follow || hc.currentState == HostageState.Freed)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Player position: head camera first (always moves in VR), else the PlayerHealth rig.</summary>

@@ -52,7 +52,7 @@ public class MissionResultUI : MonoBehaviour
         // New Input System: Keyboard.current is null (no throw) if the legacy-only
         // backend is active, so this is safe regardless of project input settings.
         if (_panel != null && Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
-            Restart();
+            GoToLobby();
     }
 
     private void HandleSessionComplete(SessionSummary summary)
@@ -99,11 +99,35 @@ public class MissionResultUI : MonoBehaviour
         EnsureEventSystem();
 
         var cam = Camera.main;
-        Vector3 pos = cam != null ? cam.transform.position + cam.transform.forward * distance
-                                  : new Vector3(0, 1.6f, 2f);
-        Quaternion rot = cam != null
-            ? Quaternion.LookRotation(pos - cam.transform.position, Vector3.up)
-            : Quaternion.identity;
+        Vector3 pos;
+        Quaternion rot;
+        if (cam != null)
+        {
+            // Flatten to yaw only — ignore pitch/roll entirely. The trainee could die
+            // while looking down at cover, up, or tilted; using the raw 3D forward
+            // vector then placed the panel embedded in the floor/ceiling or at a steep
+            // angle, which reads as "the mission-failed screen never showed up" when it
+            // actually built, just somewhere the trainee couldn't see or make sense of.
+            Vector3 flatForward = cam.transform.forward;
+            flatForward.y = 0f;
+            if (flatForward.sqrMagnitude < 1e-4f)
+            {
+                // Looking almost straight up/down — forward has no useful flat
+                // component, so fall back to the flattened up axis instead.
+                flatForward = cam.transform.up;
+                flatForward.y = 0f;
+                if (flatForward.sqrMagnitude < 1e-4f) flatForward = Vector3.forward;
+            }
+            flatForward.Normalize();
+
+            pos = cam.transform.position + flatForward * distance;
+            rot = Quaternion.LookRotation(flatForward, Vector3.up);
+        }
+        else
+        {
+            pos = new Vector3(0, 1.6f, 2f);
+            rot = Quaternion.identity;
+        }
 
         _panel = new GameObject("MissionResultCanvas");
         _panel.transform.SetPositionAndRotation(pos, rot);
@@ -155,26 +179,24 @@ public class MissionResultUI : MonoBehaviour
                 30, FontStyle.Normal, new Color(0.78f, 0.80f, 0.86f),
                 TextAnchor.UpperCenter, new Vector2(0.18f, 0.26f), new Vector2(0.82f, 0.56f));
 
-        // Restart button
-        BuildRestartButton(_panel.transform);
+        // Lobby button
+        BuildLobbyButton(_panel.transform);
 
         // Hint
         AddText(_panel.transform, "Full after-action review available on the dashboard.",
                 22, FontStyle.Italic, new Color(0.55f, 0.58f, 0.66f),
                 TextAnchor.MiddleCenter, new Vector2(0.05f, 0.02f), new Vector2(0.95f, 0.09f));
 
-        // The whole panel must live on the UI layer. On a player_down ending, PlayerDamageFeedback
-        // blacks the world out by culling every layer EXCEPT UI — anything left on the Default
-        // layer (which is what `new GameObject()` gives you) would be culled away with it, and the
-        // trainee would fade to black and then just sit there staring at nothing.
+        // The whole panel lives on the UI layer so it's never affected by any other system's
+        // camera/layer setup — a cheap, harmless guarantee regardless of the mission outcome.
         SetLayerRecursively(_panel, LayerMask.NameToLayer("UI"));
 
         Debug.Log($"[MissionResultUI] Shown — {(success ? "SUCCESS" : "FAIL")} ({reason}).");
     }
 
-    private void BuildRestartButton(Transform parent)
+    private void BuildLobbyButton(Transform parent)
     {
-        var go = new GameObject("RestartButton", typeof(RectTransform));
+        var go = new GameObject("LobbyButton", typeof(RectTransform));
         go.transform.SetParent(parent, false);
         var brt = go.GetComponent<RectTransform>();
         brt.anchorMin = new Vector2(0.34f, 0.11f);
@@ -190,16 +212,16 @@ public class MissionResultUI : MonoBehaviour
         colors.highlightedColor = new Color(0.26f, 0.55f, 0.95f);
         colors.pressedColor = new Color(0.10f, 0.30f, 0.65f);
         btn.colors = colors;
-        btn.onClick.AddListener(Restart);
+        btn.onClick.AddListener(GoToLobby);
 
-        AddText(go.transform, "RESTART  (R)",
+        AddText(go.transform, "GO TO LOBBY  (R)",
                 30, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter,
                 Vector2.zero, Vector2.one);
     }
 
-    private void Restart()
+    private void GoToLobby()
     {
-        Debug.Log("[MissionResultUI] Restart requested — reloading scene.");
+        Debug.Log("[MissionResultUI] Returning to lobby — reloading scene.");
         if (_panel != null) Destroy(_panel);
         _panel = null;
         var scene = SceneManager.GetActiveScene();

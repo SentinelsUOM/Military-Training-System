@@ -147,8 +147,13 @@ public class HostageController : MonoBehaviour, INPCResponder
 
                 if (currentState == HostageState.Follow)
                 {
-                    // Regression — hostile sound during escort
-                    TransitionTo(HostageState.Fearful, e, regression: true);
+                    // Regression — hostile sound during escort. Only CLOSE gunfire
+                    // breaks the escort: the rescuer's own suppressing fire from a
+                    // distance shouldn't make the hostage abandon them (that made
+                    // "the hostage keeps stopping" — every shot anywhere reset the
+                    // follow). Re-grab the hostage's hand to resume after a scare.
+                    if (dist <= freezeRange)
+                        TransitionTo(HostageState.Fearful, e, regression: true);
                 }
                 else if (currentState == HostageState.Fearful && dist <= freezeRange)
                 {
@@ -183,7 +188,11 @@ public class HostageController : MonoBehaviour, INPCResponder
                 break;
 
             case ScenarioEventType.RoomCleared:
-                if (currentState != HostageState.Freed)
+                // Calm the hostage — but NEVER cancel an active escort: RoomCleared
+                // arriving mid-walk silently dropped the hostage out of Follow and
+                // left them standing (one of the "hostage stops following" causes).
+                if (currentState != HostageState.Freed &&
+                    currentState != HostageState.Follow)
                     TransitionTo(HostageState.Calm, e);
                 break;
 

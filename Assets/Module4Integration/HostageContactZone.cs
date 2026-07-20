@@ -6,8 +6,15 @@ using UnityEngine;
 
 /// <summary>
 /// Proximity zone that fires HostageContactStarted when the trainee walks
-/// within range of the hostage. After that, the hostage's Module 2 FSM
-/// transitions to Follow and the NavMeshAgent escorts the trainee.
+/// within range of the hostage — no grab, no button, just find the hostage and
+/// approach. After that, the hostage's Module 2 FSM transitions to Follow
+/// (which also calms it — SetScared(false)) and the NavMeshAgent escorts the
+/// trainee to the safe zone.
+///
+/// Safety gate: contact only fires once every terrorist in the scenario is
+/// Down. The area must actually be clear before the hostage will approach and
+/// follow — "go find the hostage" is a post-firefight objective, not something
+/// that can shortcut a live gunfight.
 ///
 /// Detection method
 ///   Polls every contactCheckInterval seconds. Finds the player by looking up
@@ -18,7 +25,7 @@ using UnityEngine;
 /// Setup
 ///   1. Add a child GameObject to the hostage (e.g. "ContactZone").
 ///   2. Place it at chest height — Y=1 works.
-///   3. Add this component. Set the radius in the Inspector (default 3.0m).
+///   3. Add this component. Set the radius in the Inspector (default 2.5m).
 /// </summary>
 public class HostageContactZone : MonoBehaviour
 {
@@ -26,8 +33,8 @@ public class HostageContactZone : MonoBehaviour
     [SerializeField] private HostageController hostage;
 
     [Tooltip("Radius in metres. Trainee must come within this distance of the contact " +
-             "zone to start the escort. 3.0m works for VR-scale rooms.")]
-    [SerializeField] private float radius = 3.0f;
+             "zone to start the escort. 2.5m reads as \"walked right up to them\".")]
+    [SerializeField] private float radius = 2.5f;
 
     [Tooltip("Polling interval in seconds. 0.25s feels instant and is cheap.")]
     [SerializeField] private float checkInterval = 0.25f;
@@ -36,6 +43,10 @@ public class HostageContactZone : MonoBehaviour
              "re-establishes if the hostage is scared off (regresses to Fearful) and you " +
              "approach again. The hostage's own response cooldown prevents spam.")]
     [SerializeField] private bool fireOnce = false;
+
+    [Tooltip("Require every terrorist in the scenario to be Down before contact can fire. " +
+             "The hostage won't calm down and follow while the area still isn't safe.")]
+    [SerializeField] private bool requireAllTerroristsDown = true;
 
     [Tooltip("Print contact events to the Console.")]
     [SerializeField] private bool echoToConsole = true;
@@ -46,6 +57,7 @@ public class HostageContactZone : MonoBehaviour
     private bool _fired;
     private float _nextCheck;
     private PlayerHealth _cachedPlayer;
+    private bool _loggedUnsafe;
 
     private void Awake()
     {
@@ -90,6 +102,18 @@ public class HostageContactZone : MonoBehaviour
             hostage.currentState == HostageState.Freed)
             return;
 
+        if (requireAllTerroristsDown && !AreAllTerroristsDown())
+        {
+            if (echoToConsole && !_loggedUnsafe)
+            {
+                _loggedUnsafe = true;
+                Debug.Log($"[HostageContactZone] {name}: trainee is close but the area isn't " +
+                          "clear yet — hostage stays put until every terrorist is down.");
+            }
+            return;
+        }
+        _loggedUnsafe = false;
+
         // Trainee is within range — fire the contact event.
         if (EventManager.Instance == null)
         {
@@ -115,9 +139,22 @@ public class HostageContactZone : MonoBehaviour
         _fired = true;
 
         if (echoToConsole)
-            Debug.Log($"[HostageContactZone] {name}: trainee within {dist:F2}m of {hostage.NPCId} — contact established, hostage now following.");
+            Debug.Log($"[HostageContactZone] {name}: trainee within {dist:F2}m of {hostage.NPCId} — area clear, hostage calmed and now following.");
 
         if (fireOnce) enabled = false;
+    }
+
+    /// <summary>True once every TerroristController in the scene is in the Down state
+    /// (or none exist at all — an all-hostage/no-threat scenario is trivially "safe").</summary>
+    private static bool AreAllTerroristsDown()
+    {
+        var terrorists = FindObjectsByType<TerroristController>(FindObjectsSortMode.None);
+        foreach (var t in terrorists)
+        {
+            if (t == null) continue;
+            if (t.currentState != TerroristState.Down) return false;
+        }
+        return true;
     }
 
     private void OnDrawGizmos()
