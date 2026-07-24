@@ -8,6 +8,7 @@ import IncidentsTab from './IncidentsTab'
 import HostageTab from './HostageTab'
 import ReplayTab from './ReplayTab'
 import MovementTab from './MovementTab'
+import SimTlxTab from './SimTlxTab'
 import styles from './SessionClient.module.css'
 import { formatDate, formatTime, scoreColor, scorePercent } from '@/lib/utils'
 
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'incidents', label: 'Incidents' },
   { id: 'hostage',   label: 'Hostage' },
   { id: 'movement',  label: 'Movement' },
+  { id: 'simtlx',    label: 'Workload' },
   { id: 'replay',    label: 'Replay' },
 ]
 
@@ -100,6 +102,7 @@ export default function SessionClient({ session }) {
         {activeTab === 'incidents' && <IncidentsTab session={s} />}
         {activeTab === 'hostage'   && <HostageTab session={s} />}
         {activeTab === 'movement'  && <MovementTab session={s} />}
+        {activeTab === 'simtlx'    && <SimTlxTab session={s} />}
         {activeTab === 'replay'    && <ReplayTab session={s} />}
       </div>
     </div>

@@ -100,6 +100,35 @@ const MovementTrackSchema = new mongoose.Schema(
   { _id: false }
 )
 
+// Post-mission SIM-TLX questionnaire (Harris, Wilson & Vine 2020) filled in on
+// the dashboard after the session uploads. ratings are the raw 0-20 answers on
+// the nine validated subscales; derived holds the 0-100 composite indices
+// computed server-side in /api/sessions/[id]/simtlx (see lib/simTlx.js).
+const SimTlxSchema = new mongoose.Schema(
+  {
+    completedAt: Date,
+    ratings: {
+      mentalDemands:     Number,
+      physicalDemands:   Number,
+      temporalDemands:   Number,
+      frustration:       Number,
+      taskComplexity:    Number,
+      situationalStress: Number,
+      distraction:       Number,
+      perceptualStrain:  Number,
+      taskControl:       Number
+    },
+    derived: {
+      mentalPhysical:      Number, // Mental & Physical Demands, 0-100
+      temporalFrustration: Number, // Temporal Demands & Frustration, 0-100
+      complexityStress:    Number, // Task Complexity & Situational Stress, 0-100
+      overallWorkload:     Number, // mean of all nine subscales, 0-100
+      workloadLevel:       String  // Low | Moderate | High | Very High
+    }
+  },
+  { _id: false }
+)
+
 const SessionSchema = new mongoose.Schema(
   {
     sessionId:       { type: String, required: true, unique: true, index: true },
@@ -202,7 +231,12 @@ const SessionSchema = new mongoose.Schema(
     // Timestamped body-movement track (head/hands/crouch/scanning) recorded by
     // the CognitiveTracking module. Must be declared or strict mode drops it on
     // save, like layout above. Null on sessions recorded before this existed.
-    movementTrack: MovementTrackSchema
+    movementTrack: MovementTrackSchema,
+
+    // Post-mission subjective workload questionnaire. Null until the trainee
+    // completes it on the dashboard; its absence is what marks a session as
+    // "pending SIM-TLX" for the auto-redirect flow.
+    simTlx: SimTlxSchema
   },
   { timestamps: true }
 )

@@ -1,11 +1,18 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import MetricCard from '@/components/ui/MetricCard'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import MissionLauncher from '@/components/MissionLauncher'
+import SimTlxTrend from '@/components/SimTlxTrend'
+import { dismissedSessionIds } from '@/components/simtlx/SimTlxClient'
 import styles from './HomeClient.module.css'
 import { formatDate, formatTime, scoreColor, scorePercent } from '@/lib/utils'
+import { workloadColor } from '@/lib/simTlx'
+
+// How often the dashboard checks whether a just-finished mission is waiting
+// for its SIM-TLX questionnaire.
+const SIMTLX_POLL_MS = 5000
 
 export default function HomeClient({ initialSessions, initialStats, total: initialTotal }) {
   const router = useRouter()
@@ -18,6 +25,28 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
   const [launcherOpen, setLauncherOpen] = useState(false)
 
   const LIMIT = 20
+
+  // Auto-redirect into the SIM-TLX questionnaire when a mission has just
+  // completed (or failed): Unity uploads the session at mission end, and this
+  // poll notices the fresh session that has no questionnaire yet. Sessions the
+  // trainee explicitly skipped are excluded via localStorage.
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      if (document.hidden) return
+      try {
+        const res = await fetch('/api/sessions/pending-simtlx')
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled || !data.sessionId) return
+        if (dismissedSessionIds().includes(data.sessionId)) return
+        router.push(`/simtlx/${data.sessionId}`)
+      } catch { /* dashboard offline / API hiccup — try again next tick */ }
+    }
+    check()
+    const timer = setInterval(check, SIMTLX_POLL_MS)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [router])
 
   const fetchPage = useCallback(async (p) => {
     setLoading(true)
@@ -118,8 +147,17 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
             unit="s"
             color="var(--muted)"
           />
+          <MetricCard
+            label="Avg Workload"
+            value={stats.averageWorkload != null ? stats.averageWorkload.toFixed(1) : '—'}
+            unit={stats.averageWorkload != null ? '/100' : ''}
+            color={stats.averageWorkload != null ? workloadColor(stats.averageWorkload) : 'var(--muted)'}
+            subtitle={`${stats.simTlxCount || 0} assessment${(stats.simTlxCount || 0) === 1 ? '' : 's'}`}
+          />
         </section>
       )}
+
+      <SimTlxTrend sessions={sessions} />
 
       <section className={styles.tableSection}>
         <div className={styles.tableHeader}>
@@ -145,6 +183,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
                   <th>Overall</th>
                   <th>Safety</th>
                   <th>Accuracy</th>
+                  <th>Workload</th>
                   <th>Mission</th>
                 </tr>
               </thead>
@@ -172,6 +211,15 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
                       <span style={{ color: scoreColor(s.performance?.accuracyScore) }}>
                         {scorePercent(s.performance?.accuracyScore)}%
                       </span>
+                    </td>
+                    <td>
+                      {s.simTlx?.derived?.overallWorkload != null ? (
+                        <span style={{ color: workloadColor(s.simTlx.derived.overallWorkload) }}>
+                          {s.simTlx.derived.overallWorkload.toFixed(0)}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--muted)' }}>—</span>
+                      )}
                     </td>
                     <td>
                       <span className={s.performance?.missionSuccess ? styles.success : styles.fail}>

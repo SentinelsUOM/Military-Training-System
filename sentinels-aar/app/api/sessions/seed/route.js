@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { connectDB } from '@/lib/mongodb'
 import Session from '@/lib/models/Session'
+import { computeSimTlxDerived } from '@/lib/simTlx'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -315,6 +316,28 @@ export async function POST() {
         ]
       }
     ]
+
+    // Attach completed SIM-TLX questionnaires to every seed session. Besides
+    // making the workload charts demo-able, this keeps seeded sessions out of
+    // the pending-simtlx poll (a fresh session without simTlx auto-redirects
+    // the dashboard into the questionnaire).
+    const seedRatings = {
+      // success, medium difficulty — moderate, balanced load
+      'SEN-2026-0045': { mentalDemands: 11, physicalDemands: 8,  temporalDemands: 9,  frustration: 6,  taskComplexity: 10, situationalStress: 9,  distraction: 5, perceptualStrain: 4, taskControl: 5 },
+      // smoother run — lighter load
+      'SEN-2026-0046': { mentalDemands: 7,  physicalDemands: 6,  temporalDemands: 5,  frustration: 3,  taskComplexity: 6,  situationalStress: 5,  distraction: 3, perceptualStrain: 3, taskControl: 4 },
+      // failed mission, trainee overwhelmed — heavy load, high frustration
+      'SEN-2026-0047': { mentalDemands: 17, physicalDemands: 12, temporalDemands: 16, frustration: 18, taskComplexity: 15, situationalStress: 17, distraction: 12, perceptualStrain: 8, taskControl: 10 }
+    }
+    for (const s of sessions) {
+      const ratings = seedRatings[s.sessionId]
+      if (!ratings) continue
+      s.simTlx = {
+        completedAt: new Date(new Date(s.timestamp).getTime() + 5 * 60 * 1000),
+        ratings,
+        derived: computeSimTlxDerived(ratings)
+      }
+    }
 
     try {
       await Session.insertMany(sessions, { ordered: false })
