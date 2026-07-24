@@ -71,11 +71,20 @@ public class NpcDoorAssist : MonoBehaviour
     [Tooltip("Half-extents of the NPC detection box.")]
     public Vector3 sensorHalfExtents = new Vector3(1.6f, 1.1f, 1.4f);
 
+    [Header("Trainee usability")]
+    [Tooltip("Keep the hinge permanently unlatched so the trainee can pull the door " +
+             "open by its handle (or push it) WITHOUT first twisting the knob 90°+. " +
+             "The XRI Door's hard latch (limits clamped to 0..0) made closed doors " +
+             "feel jammed in VR; the auto-close spring still shuts them realistically.")]
+    public bool keepUnlatched = true;
+
     // ── Internal ─────────────────────────────────────────────────────────────
     private Quaternion _closedLocalRot;
     private Quaternion _openLocalRot;
     private bool _npcDriving;
     private bool _wasKinematic;
+    private JointLimits _authoredLimits;   // inspector limits captured before Door.Start clamps them
+    private bool _limitsCaptured;
 
     private Transform Leaf =>
         leafBody != null ? leafBody.transform :
@@ -97,6 +106,44 @@ public class NpcDoorAssist : MonoBehaviour
         Vector3 axis = hinge != null ? hinge.axis : Vector3.up;
         if (axis.sqrMagnitude < 1e-6f) axis = Vector3.up;
         _openLocalRot = _closedLocalRot * Quaternion.AngleAxis(openAngle, axis.normalized);
+
+        // Capture the authored hinge swing range before the XRI Door's Start()
+        // clamps the joint to 0..0 (its "latched" state). This is the range the
+        // Update() unlatch re-applies. Fall back to ±openAngle if the authored
+        // limits are degenerate.
+        if (hinge != null)
+        {
+            _authoredLimits = hinge.limits;
+            _limitsCaptured = _authoredLimits.max - _authoredLimits.min > 5f;
+            if (!_limitsCaptured)
+            {
+                float span = Mathf.Max(30f, Mathf.Abs(openAngle));
+                _authoredLimits.min = -span;
+                _authoredLimits.max = span;
+                _limitsCaptured = true;
+            }
+        }
+
+        // The carving obstacle is a trap: with the NavMesh severed at a shut
+        // door, agents can never PATH to the doorway — so they never reach the
+        // sensor that would open it, and the building is not traversable (the
+        // hostage stops following the moment a closed door separates you). The
+        // NavMesh stays connected; this assist swings the leaf open in time.
+        if (navObstacle != null) navObstacle.enabled = false;
+
+        // Disarm the XRI Door's per-tick RE-LOCK: its FixedUpdate clamps the
+        // hinge back to 0..0 whenever the handle is up and the leaf is near
+        // closed, which kept closed doors permanently jammed for the trainee
+        // (the knob had to be held at a full twist while pulling). Raising the
+        // private re-lock threshold above the knob's max value disables that
+        // branch; with the one-shot unlatch in Update(), doors become realistic
+        // push/pull doors the auto-close spring still swings shut behind you.
+        if (keepUnlatched && door != null)
+        {
+            var closeField = typeof(Door).GetField("m_HandleCloseValue",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            closeField?.SetValue(door, 99f);
+        }
     }
 
     /// <summary>
@@ -115,6 +162,16 @@ public class NpcDoorAssist : MonoBehaviour
 
     private void Update()
     {
+        // The XRI Door re-latches (limits 0..0) on Start and whenever it fully
+        // closes. Re-open the swing range every time so the trainee can always
+        // pull/push the leaf without the fiddly full knob twist; the auto-close
+        // spring still keeps the door shut until someone moves it.
+        if (keepUnlatched && _limitsCaptured && hinge != null &&
+            hinge.useLimits && hinge.limits.max == 0f && hinge.limits.min == 0f)
+        {
+            hinge.limits = _authoredLimits;
+        }
+
         bool traineeHolding = false;
         if (knobs != null)
             foreach (XRKnob k in knobs)
@@ -124,8 +181,6 @@ public class NpcDoorAssist : MonoBehaviour
 
         if (wantNpcOpen)      DriveNpcOpen();
         else if (_npcDriving) ReleaseNpcDrive();
-
-        UpdateBlocking(CurrentAngle());
     }
 
     private void DriveNpcOpen()
@@ -166,13 +221,13 @@ public class NpcDoorAssist : MonoBehaviour
         }
     }
 
-    // Carving obstacle tracks the open state so NPC pathing matches the visible
-    // door: blocking while shut, released once the leaf swings past the threshold.
+    // The carving obstacle stays OFF permanently (see Awake) — carving severed
+    // the NavMesh at shut doors, so agents could never path to the doorway that
+    // would have opened for them, trapping NPCs and breaking hostage escort.
     private void UpdateBlocking(float angle)
     {
-        bool open = angle >= openThreshold;
-        if (navObstacle != null && navObstacle.enabled == open)
-            navObstacle.enabled = !open;
+        if (navObstacle != null && navObstacle.enabled)
+            navObstacle.enabled = false;
     }
 
     private float CurrentAngle() => Quaternion.Angle(Leaf.localRotation, _closedLocalRot);

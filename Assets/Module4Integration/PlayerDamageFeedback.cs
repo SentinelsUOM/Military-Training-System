@@ -1,6 +1,5 @@
 // Module 4 Integration | Sentinels | University of Moratuwa | 2026
 
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -23,9 +22,11 @@ using UnityEngine.XR.Interaction.Toolkit.Inputs.Haptics;
 ///   3. DIRECTIONAL   — a red arc at the edge of vision pointing at the shooter. Turns "I'm being
 ///      INDICATOR       shot" into "I'm being shot from THERE", which is the actionable version.
 ///
-/// Death is a fade to black — the camera is never moved. Forcibly translating or rotating a
-/// player's head in VR is a well-known cause of motion sickness, so there is no collapse
-/// animation; the world simply goes dark, input is released, and the result panel appears.
+/// Death does not move or black out the camera — forcibly translating/rotating a player's
+/// head in VR is a well-known cause of motion sickness, and cutting the world to black reads
+/// as a crash rather than a training debrief. Instead locomotion is simply released (so the
+/// corpse doesn't keep walking) and the world stays visible, exactly like a mission success,
+/// while MissionResultUI shows the MISSION FAILED panel in front of the trainee.
 ///
 /// Everything is built procedurally at runtime (same approach as MissionResultUI), so there is no
 /// scene wiring to forget. World-space canvases throughout: a screen-space canvas does not render
@@ -70,23 +71,13 @@ public class PlayerDamageFeedback : MonoBehaviour
     [Range(0f, 1f)][SerializeField] private float hapticAmplitude = 0.6f;
     [SerializeField] private float hapticDuration = 0.12f;
 
-    [Header("Death")]
-    [Tooltip("Seconds to fade to black once the trainee is killed.")]
-    [SerializeField] private float fadeToBlackSeconds = 1.0f;
-
-    [Tooltip("Seconds to hold on black before the result panel appears — a beat to let the death " +
-             "land, rather than snapping straight to a scoreboard.")]
-    [SerializeField] private float holdBlackSeconds = 0.5f;
-
     // ── runtime ────────────────────────────────────────────────────────────────
     private Camera    _cam;
     private Transform _camT;
 
     private Canvas _hudCanvas;      // vignette + directional arcs (0.6 m)
-    private Canvas _fadeCanvas;     // death fade (0.4 m — closer, so it covers the HUD)
 
     private Image _vignette;
-    private Image _fade;
 
     private Sprite _vignetteSprite;
     private Sprite _arcSprite;
@@ -132,7 +123,6 @@ public class PlayerDamageFeedback : MonoBehaviour
         _arcSprite      = BuildArcSprite();
 
         BuildHud();
-        BuildFade();
 
         // The rig's haptic players — same component the archery/climbing features drive.
         _haptics.AddRange(FindObjectsByType<HapticImpulsePlayer>(FindObjectsSortMode.None));
@@ -198,17 +188,19 @@ public class PlayerDamageFeedback : MonoBehaviour
     {
         // Keep both canvases locked to the real frustum. Cheap, and it survives XR swapping in the
         // HMD's true FOV after startup.
-        FitCanvasToFov(_hudCanvas.transform,  HudDistance,  HudOverfill);
-        FitCanvasToFov(_fadeCanvas.transform, FadeDistance, FadeOverfill);
+        FitCanvasToFov(_hudCanvas.transform, HudDistance, HudOverfill);
 
         if (_flash > 0f) _flash = Mathf.Max(0f, _flash - hitFlashDecay * Time.deltaTime);
 
         // Vignette: sustained component from how hurt you are, plus the per-hit pulse.
         // They're combined with Max (not added) so a hit at full health still reads clearly,
         // and a hit at low health doesn't blow out to a solid red screen you can't see through.
+        // At 0 health (dead) this naturally settles at maxSustainedAlpha — a heavy but still
+        // see-through red tint, not a hard cut to black. The world (and the mission-result
+        // panel MissionResultUI shows next to it) stays visible, same as a mission success.
         float hurt      = Mathf.InverseLerp(vignetteOnsetHealth, 0f, playerHealth.HealthFraction);
         float sustained = hurt * maxSustainedAlpha;
-        float alpha     = _dying ? 0f : Mathf.Max(sustained, _flash);
+        float alpha     = Mathf.Max(sustained, _flash);
 
         var c = damageColor; c.a = alpha;
         _vignette.color = c;
@@ -223,7 +215,7 @@ public class PlayerDamageFeedback : MonoBehaviour
             var ind = _indicators[i];
             float age = Time.time - ind.bornAt;
 
-            if (_dying || age >= indicatorLifetime)
+            if (age >= indicatorLifetime)
             {
                 ind.image.gameObject.SetActive(false);
                 _indicators.RemoveAt(i);
@@ -255,44 +247,12 @@ public class PlayerDamageFeedback : MonoBehaviour
     {
         if (_dying) return;
         _dying = true;
-        StartCoroutine(DeathSequence());
-    }
 
-    private IEnumerator DeathSequence()
-    {
+        // Stop the corpse moving/shooting, but leave the world fully visible and rendering
+        // normally — same as any other mission-end reason. MissionResultUI is already
+        // listening for the session-complete event and will build the panel in front of
+        // the trainee (in red, MISSION FAILED) exactly like it does for a success.
         ReleasePlayerControl();
-
-        // 1) Fade to black. The camera is NOT moved — see the class summary.
-        float t = 0f;
-        while (t < fadeToBlackSeconds)
-        {
-            t += Time.deltaTime;
-            var c = Color.black;
-            c.a = Mathf.Clamp01(t / Mathf.Max(0.01f, fadeToBlackSeconds));
-            _fade.color = c;
-            yield return null;
-        }
-        _fade.color = Color.black;
-
-        yield return new WaitForSeconds(holdBlackSeconds);
-
-        // 2) Now make the blackout permanent by rendering NOTHING but UI. This is what lets the
-        //    result panel sit against pure black: a fade quad alone can't do it, because it has to
-        //    live at some fixed distance from the eye, and any scenery (or the trainee's own
-        //    rifle) nearer than that would still poke through in front of it.
-        _hudCanvas.gameObject.SetActive(false);
-        _fadeCanvas.gameObject.SetActive(false);
-
-        _cam.clearFlags      = CameraClearFlags.SolidColor;
-        _cam.backgroundColor = Color.black;
-        _cam.cullingMask     = LayerMask.GetMask(UILayerName);
-
-        // Keep the XR pointer ray visible so the trainee can actually aim at the Restart button —
-        // the line renderers live on the rig's own layer, which we have just culled away.
-        PromoteXRPointersToUI();
-
-        // MissionResultUI is already listening for the session-complete event and will build the
-        // panel on the UI layer, so it draws against the black.
     }
 
     /// <summary>Stop the corpse walking around. Locomotion providers are disabled rather than the
@@ -316,21 +276,10 @@ public class PlayerDamageFeedback : MonoBehaviour
         }
     }
 
-    private void PromoteXRPointersToUI()
-    {
-        int ui = LayerMask.NameToLayer(UILayerName);
-        if (ui < 0) return;
-
-        var rig = _camT.root;
-        foreach (var lr in rig.GetComponentsInChildren<LineRenderer>(true))
-            if (lr != null) lr.gameObject.layer = ui;
-    }
-
     // ── procedural UI construction ─────────────────────────────────────────────
 
     private const string UILayerName = "UI";
     private const float  HudDistance  = 0.60f;   // metres in front of the eye
-    private const float  FadeDistance = 0.40f;   // closer than the HUD, so it covers it
 
     // The HUD must match the camera's ACTUAL field of view. The first version simply scaled the
     // quad to 6x its distance, which made it roughly three times wider than the visible frustum —
@@ -339,7 +288,6 @@ public class PlayerDamageFeedback : MonoBehaviour
     // damage feedback appeared to be missing entirely when in fact it was drawing perfectly,
     // just off-screen. Hug the frustum instead.
     private const float  HudOverfill  = 1.02f;   // vignette: hug the frustum edge exactly
-    private const float  FadeOverfill = 2.0f;    // fade: solid black, so spill past the corners
 
     /// <summary>Scale a camera-parented world-space canvas so it exactly spans the frustum at its
     /// distance. Recomputed every frame because XR only fills in the real HMD field of view AFTER
@@ -370,21 +318,6 @@ public class PlayerDamageFeedback : MonoBehaviour
         _vignette.sprite        = _vignetteSprite;
         _vignette.raycastTarget = false;
         _vignette.color         = new Color(damageColor.r, damageColor.g, damageColor.b, 0f);
-    }
-
-    private void BuildFade()
-    {
-        _fadeCanvas = BuildCanvas("PlayerDeathFade", FadeDistance);
-
-        var go = new GameObject("FadeToBlack", typeof(RectTransform));
-        go.transform.SetParent(_fadeCanvas.transform, false);
-        var rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
-        rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
-
-        _fade = go.AddComponent<Image>();
-        _fade.raycastTarget = false;
-        _fade.color = new Color(0f, 0f, 0f, 0f);
     }
 
     private Canvas BuildCanvas(string name, float distance)

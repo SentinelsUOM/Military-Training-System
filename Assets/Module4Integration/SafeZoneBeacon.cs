@@ -5,87 +5,105 @@
 using UnityEngine;
 
 /// <summary>
-/// Builds and animates a clearly-visible "safe spot" beacon for the extraction
-/// point, so the trainee can SEE where to bring a rescued hostage — in the Game
-/// view / VR, not just as an editor gizmo.
+/// Draws the extraction point as a clearly-visible CIRCULAR ZONE on the ground —
+/// a translucent disc with a bright pulsing ring outline and a floating label —
+/// so the trainee can see exactly where to bring a rescued hostage. Reads as a
+/// marked zone on the floor (military LZ style) rather than the old light
+/// beam / bar.
 ///
-/// Visuals (all built in Start from the public fields, so a spawner can set
-/// radius/colour right after AddComponent):
-///   • a bright UNLIT floor pad (visible regardless of room lighting)
-///   • a tall translucent light beam, visible from across the level
-///   • a billboarded "HOSTAGE SAFE ZONE" label that always faces the player
-///
-/// Attach alongside an ExtractionZone + trigger collider. SceneBuilder adds this
-/// automatically to the safe zone it spawns at the trainee start position.
+/// All visuals are built in Start() from the public fields, so a spawner can set
+/// radius/colour right after AddComponent. Attach alongside an ExtractionZone +
+/// trigger collider; SceneBuilder adds this automatically at the trainee's
+/// actual mission start position.
 /// </summary>
 public class SafeZoneBeacon : MonoBehaviour
 {
-    [Tooltip("Radius of the floor pad (metres). Match the ExtractionZone trigger radius.")]
+    [Tooltip("Radius of the zone circle (metres). Match the ExtractionZone trigger radius.")]
     public float radius = 2.5f;
 
-    [Tooltip("Beacon colour.")]
+    [Tooltip("Zone colour.")]
     public Color color = new Color(0.2f, 1f, 0.4f, 1f);
 
-    [Tooltip("Height of the vertical light beam (metres).")]
-    public float beamHeight = 6f;
+    [Tooltip("Floating label text shown above the zone centre.")]
+    public string label = "SAFE ZONE";
 
-    [Tooltip("Floating label text shown above the beacon.")]
-    public string label = "HOSTAGE SAFE ZONE";
-
-    [Tooltip("Gentle pulse speed of the floor pad.")]
+    [Tooltip("Pulse speed of the ring outline.")]
     public float pulseSpeed = 2f;
 
+    [Tooltip("Width of the ring outline (metres).")]
+    public float ringWidth = 0.12f;
+
+    const int RingSegments = 64;
+
     private Transform _labelTf;
-    private Transform _padTf;
-    private float _basePadScale;
+    private LineRenderer _ring;
+    private Material _ringMat;
 
     private void Start()
     {
-        BuildPad();
-        BuildBeam();
+        BuildDisc();
+        BuildRing();
         BuildLabel();
     }
 
     // ── Visual construction ─────────────────────────────────────────────────
 
-    private void BuildPad()
+    private void BuildDisc()
     {
-        var pad = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        pad.name = "Pad";
-        pad.transform.SetParent(transform, false);
-        pad.transform.localPosition = new Vector3(0f, 0.05f, 0f);
-        pad.transform.localScale    = new Vector3(radius * 2f, 0.02f, radius * 2f);
-        StripCollider(pad);
-        Paint(pad, color);
-        _padTf = pad.transform;
-        _basePadScale = radius * 2f;
+        var disc = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        disc.name = "ZoneDisc";
+        disc.transform.SetParent(transform, false);
+        disc.transform.localPosition = new Vector3(0f, 0.03f, 0f);
+        disc.transform.localScale = new Vector3(radius * 2f, 0.01f, radius * 2f);
+        StripCollider(disc);
+        // Faint translucent fill so the area reads as a zone without hiding the floor.
+        Paint(disc, new Color(color.r, color.g, color.b, 0.16f), transparent: true);
     }
 
-    private void BuildBeam()
+    private void BuildRing()
     {
-        var beam = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        beam.name = "Beam";
-        beam.transform.SetParent(transform, false);
-        beam.transform.localPosition = new Vector3(0f, beamHeight * 0.5f, 0f);
-        beam.transform.localScale    = new Vector3(0.25f, beamHeight * 0.5f, 0.25f);
-        StripCollider(beam);
-        // Slightly translucent beam so it reads as a "light column".
-        Paint(beam, new Color(color.r, color.g, color.b, 0.35f), transparent: true);
+        var ringGo = new GameObject("ZoneRing");
+        ringGo.transform.SetParent(transform, false);
+        ringGo.transform.localPosition = new Vector3(0f, 0.05f, 0f);
+
+        _ring = ringGo.AddComponent<LineRenderer>();
+        _ring.useWorldSpace = false;
+        _ring.loop = true;
+        _ring.positionCount = RingSegments;
+        _ring.startWidth = ringWidth;
+        _ring.endWidth = ringWidth;
+        _ring.alignment = LineAlignment.TransformZ; // flat on the ground
+        ringGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+
+        for (int i = 0; i < RingSegments; i++)
+        {
+            float a = i / (float)RingSegments * Mathf.PI * 2f;
+            _ring.SetPosition(i, new Vector3(Mathf.Cos(a) * radius, Mathf.Sin(a) * radius, 0f));
+        }
+
+        Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
+        if (sh == null) sh = Shader.Find("Unlit/Color");
+        if (sh == null) sh = Shader.Find("Sprites/Default");
+        _ringMat = new Material(sh);
+        SetMatColor(_ringMat, color);
+        _ring.material = _ringMat;
+        _ring.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        _ring.receiveShadows = false;
     }
 
     private void BuildLabel()
     {
         var labelGo = new GameObject("Label");
         labelGo.transform.SetParent(transform, false);
-        labelGo.transform.localPosition = new Vector3(0f, beamHeight + 0.4f, 0f);
+        labelGo.transform.localPosition = new Vector3(0f, 1.6f, 0f);
 
         var tm = labelGo.AddComponent<TextMesh>();
         tm.text          = label;
-        tm.characterSize = 0.25f;
+        tm.characterSize = 0.14f;
         tm.fontSize      = 64;
         tm.anchor        = TextAnchor.MiddleCenter;
         tm.alignment     = TextAlignment.Center;
-        tm.color         = Color.white;
+        tm.color         = new Color(color.r, color.g, color.b, 1f);
 
         _labelTf = labelGo.transform;
     }
@@ -106,15 +124,21 @@ public class SafeZoneBeacon : MonoBehaviour
             }
         }
 
-        // Gentle breathing pulse on the pad so it draws the eye.
-        if (_padTf != null)
+        // Pulse the ring brightness so the zone draws the eye without a beam.
+        if (_ringMat != null)
         {
-            float k = 1f + 0.08f * Mathf.Sin(Time.time * pulseSpeed);
-            _padTf.localScale = new Vector3(_basePadScale * k, 0.02f, _basePadScale * k);
+            float k = 0.65f + 0.35f * (0.5f + 0.5f * Mathf.Sin(Time.time * pulseSpeed));
+            SetMatColor(_ringMat, new Color(color.r * k, color.g * k, color.b * k, 1f));
         }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static void SetMatColor(Material mat, Color c)
+    {
+        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c);
+        mat.color = c;
+    }
 
     private static void StripCollider(GameObject go)
     {
@@ -139,8 +163,7 @@ public class SafeZoneBeacon : MonoBehaviour
         if (sh == null) sh = Shader.Find("Sprites/Default");
 
         var mat = new Material(sh);
-        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c);
-        mat.color = c;
+        SetMatColor(mat, c);
 
         if (transparent && mat.HasProperty("_Surface"))
         {

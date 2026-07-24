@@ -82,17 +82,34 @@ public class Module4SessionController : MonoBehaviour
 
     // Latches once a mission has ended (pass or fail) so auto-start triggers can't
     // immediately spin up a fresh session that re-detects the dead hostage and ends
-    // again, looping "MissionEnded" every frame. Reset naturally on scene reload.
+    // again, looping "MissionEnded" every frame.
+    //
+    // This does NOT reset naturally on scene reload: this component lives on the
+    // same "Module4Manager" GameObject as SessionLogger, which calls
+    // DontDestroyOnLoad in Awake — so the whole GameObject (and this field)
+    // survives "Go To Lobby"'s scene reload untouched. Without the explicit
+    // reset below, every mission after the first silently does nothing:
+    // StartSession() early-outs forever, no session ever starts, so nothing
+    // ever ends and MissionResultUI's panel never appears again — "works the
+    // first time, breaks after going to the lobby and playing again."
     private bool _missionEnded;
 
     private void OnEnable()
     {
         EventManager.OnEventRaised += HandleScenarioEvent;
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded += HandleSceneLoaded;
     }
 
     private void OnDisable()
     {
         EventManager.OnEventRaised -= HandleScenarioEvent;
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= HandleSceneLoaded;
+    }
+
+    private void HandleSceneLoaded(UnityEngine.SceneManagement.Scene scene,
+                                    UnityEngine.SceneManagement.LoadSceneMode mode)
+    {
+        _missionEnded = false;
     }
 
     private void Start()
@@ -150,7 +167,18 @@ public class Module4SessionController : MonoBehaviour
     {
         if (SessionLogger.Instance == null || !SessionLogger.Instance.IsSessionActive) return;
 
-        // Player death check — poll because PlayerHealth doesn't fire an event
+        // The Inspector-wired playerHealth reference belongs to the XR rig, which is
+        // scene-local (NOT DontDestroyOnLoad like this component's own GameObject).
+        // After "Go To Lobby" reloads the scene, that original PlayerHealth is
+        // destroyed and Unity correctly reports the stale reference as null — so
+        // re-resolve it here rather than silently losing player-death detection for
+        // every mission after the first.
+        if (playerHealth == null)
+            playerHealth = FindFirstObjectByType<PlayerHealth>();
+
+        // Player death check — polled rather than event-driven so a session that
+        // starts mid-mission (or after the reference above just got re-resolved)
+        // still catches a trainee who is already at 0 HP.
         if (playerHealth != null && playerHealth.health <= 0)
         {
             EndSession("player_down");
@@ -199,6 +227,13 @@ public class Module4SessionController : MonoBehaviour
             Debug.LogWarning("[Module4SessionController] StartSession called but a session is already active.");
             return;
         }
+
+        // Same staleness risk as playerHealth (see Update()): playerTransform points
+        // at the scene-local XR rig, which is recreated on every scene reload, so a
+        // reference wired before the FIRST mission goes stale for every mission after
+        // it. Re-resolve so replay recording still includes the trainee.
+        if (playerHealth == null) playerHealth = FindFirstObjectByType<PlayerHealth>();
+        if (playerTransform == null && playerHealth != null) playerTransform = playerHealth.transform;
 
         SessionLogger.Instance.StartSession(scenarioId);
         CaptureLayout();
