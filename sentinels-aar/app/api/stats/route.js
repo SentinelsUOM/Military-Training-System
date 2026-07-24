@@ -25,7 +25,13 @@ export async function GET() {
           averageSafetyScore:  { $avg: '$performance.safetyScore' },
           averageAccuracyScore:{ $avg: '$performance.accuracyScore' },
           successCount:        { $sum: { $cond: ['$performance.missionSuccess', 1, 0] } },
-          averageReactionTime: { $avg: '$cognitiveSummary.averageReactionTime' }
+          averageReactionTime: { $avg: '$cognitiveSummary.averageReactionTime' },
+          // SIM-TLX aggregates — $avg ignores sessions without a questionnaire
+          simTlxCount:               { $sum: { $cond: [{ $ifNull: ['$simTlx.completedAt', false] }, 1, 0] } },
+          averageWorkload:           { $avg: '$simTlx.derived.overallWorkload' },
+          averageMentalPhysical:     { $avg: '$simTlx.derived.mentalPhysical' },
+          averageTemporalFrustration:{ $avg: '$simTlx.derived.temporalFrustration' },
+          averageComplexityStress:   { $avg: '$simTlx.derived.complexityStress' }
         }
       },
       {
@@ -42,7 +48,12 @@ export async function GET() {
               { $round: [{ $divide: ['$successCount', '$totalSessions'] }, 3] }
             ]
           },
-          averageReactionTime: { $round: ['$averageReactionTime', 3] }
+          averageReactionTime: { $round: ['$averageReactionTime', 3] },
+          simTlxCount:                1,
+          averageWorkload:            { $round: ['$averageWorkload', 1] },
+          averageMentalPhysical:      { $round: ['$averageMentalPhysical', 1] },
+          averageTemporalFrustration: { $round: ['$averageTemporalFrustration', 1] },
+          averageComplexityStress:    { $round: ['$averageComplexityStress', 1] }
         }
       }
     ])
@@ -53,7 +64,12 @@ export async function GET() {
       averageSafetyScore: 0,
       averageAccuracyScore: 0,
       missionSuccessRate: 0,
-      averageReactionTime: 0
+      averageReactionTime: 0,
+      simTlxCount: 0,
+      averageWorkload: null,
+      averageMentalPhysical: null,
+      averageTemporalFrustration: null,
+      averageComplexityStress: null
     }
 
     return NextResponse.json(stats, { headers: corsHeaders })

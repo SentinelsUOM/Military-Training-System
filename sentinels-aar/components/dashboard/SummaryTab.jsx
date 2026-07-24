@@ -6,6 +6,7 @@ import {
 import ScoreBar from '@/components/ui/ScoreBar'
 import styles from './SummaryTab.module.css'
 import { scoreColor, scorePercent, chartTheme } from '@/lib/utils'
+import { deriveCognitiveScores } from '@/lib/cognitiveDerived'
 
 export default function SummaryTab({ session }) {
   const perf = session.performance || {}
@@ -15,6 +16,12 @@ export default function SummaryTab({ session }) {
 
   // Derive terrorist kill count from events (no dedicated field in PerformanceSummary)
   const terroristsDown = events.filter(e => e.eventType === 'TerroristDown').length
+
+  // Real sessions never populate stabilityScore/attentionScore (Module 3's feed
+  // isn't wired up during live play — see lib/cognitiveDerived.js), so fall back
+  // to proxies computed from movement/reaction telemetry when that happens.
+  const cogScores = deriveCognitiveScores(session)
+  const isEstimated = cogScores.source === 'derived'
 
   const radarData = [
     { axis: 'Overall',  value: Math.round((perf.overallScore  || 0) * 100) },
@@ -26,8 +33,8 @@ export default function SummaryTab({ session }) {
   const cogBarData = [
     { name: 'Avg RT (s)',    value: parseFloat((cog.averageReactionTime || 0).toFixed(2)) },
     { name: 'Peak RT (s)',   value: parseFloat((cog.peakReactionTime    || 0).toFixed(2)) },
-    { name: 'Stability',     value: parseFloat((cog.stabilityScore      || 0).toFixed(2)) },
-    { name: 'Attention',     value: parseFloat((cog.attentionScore      || 0).toFixed(2)) },
+    { name: 'Stability',     value: parseFloat((cogScores.stabilityScore  || 0).toFixed(2)) },
+    { name: 'Attention',     value: parseFloat((cogScores.attentionScore  || 0).toFixed(2)) },
   ]
 
   return (
@@ -76,12 +83,31 @@ export default function SummaryTab({ session }) {
 
       <div className={styles.botGrid}>
         <div className={styles.card}>
-          <h3 className={styles.cardTitle}>Cognitive Metrics</h3>
+          <div className={styles.cardHeaderRow}>
+            <h3 className={styles.cardTitle}>Cognitive Metrics</h3>
+            {isEstimated && (
+              <span
+                className={styles.estimateNote}
+                title="Module 3's live cognitive feed isn't connected during gameplay, so Stability and Attention are estimated from movement and reaction-time telemetry recorded for this session."
+              >
+                Stability / Attention estimated
+              </span>
+            )}
+          </div>
           <div className={styles.cogRow}>
             <CogStat label="Load Level"      value={cog.estimatedCognitiveLoad} />
             <CogStat label="Stress Level"    value={cog.estimatedStressLevel} />
             <CogStat label="Avg RT"          value={cog.averageReactionTime != null ? `${cog.averageReactionTime.toFixed(2)}s` : '—'} />
-            <CogStat label="Attention"       value={cog.attentionScore != null ? `${(cog.attentionScore * 100).toFixed(0)}%` : '—'} />
+            <CogStat
+              label="Stability"
+              value={cogScores.stabilityScore != null ? `${(cogScores.stabilityScore * 100).toFixed(0)}%` : '—'}
+              estimated={isEstimated}
+            />
+            <CogStat
+              label="Attention"
+              value={cogScores.attentionScore != null ? `${(cogScores.attentionScore * 100).toFixed(0)}%` : '—'}
+              estimated={isEstimated}
+            />
           </div>
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={cogBarData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
@@ -130,11 +156,16 @@ function CombatStat({ label, value, warn, color }) {
   )
 }
 
-function CogStat({ label, value }) {
+function CogStat({ label, value, estimated }) {
   return (
     <div>
       <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{value ?? '—'}</div>
+      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
+        {value ?? '—'}
+        {estimated && value !== '—' && (
+          <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400, marginLeft: 4 }}>est.</span>
+        )}
+      </div>
     </div>
   )
 }

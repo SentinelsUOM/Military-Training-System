@@ -34,6 +34,25 @@
   margin: 0 0 1rem 0;
 }
 
+.cardHeaderRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.estimateNote {
+  font-size: 10px;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-bottom: 1rem;
+  white-space: nowrap;
+  cursor: help;
+}
+
 .scoreBars {
   margin-bottom: 1.25rem;
 }
@@ -48,9 +67,15 @@
 
 .cogRow {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 0.75rem;
   margin-bottom: 1rem;
+}
+
+@media (max-width: 560px) {
+  .cogRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .cfgTable {
