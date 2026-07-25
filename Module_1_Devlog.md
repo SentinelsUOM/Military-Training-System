@@ -607,3 +607,196 @@ Each entry follows this structure:
 - Optional follow-up if `HttpListener` turns out to be flaky on IL2CPP Android builds: swap to a small `TcpListener`-based handler or pull in a Unity-friendly mini web server package. Editor + Mono Quest builds work fine today.
 
 ---
+
+### 2026-06-16 — Interactive doors: initial door states + runtime door prefab
+
+**Status:** Doors go from static gap-fillers to stateful, interactive objects. Layout now decides each door's initial state; SceneBuilder realises it as an openable/lockable prefab.
+
+**Done:**
+- Added `DoorState` enum (`Open` / `Closed` / `Locked`) to `ScenarioEnums.cs`, and two fields on `DoorData` (`LayoutModels.cs`): `state` (default `Closed`) and `isExterior` (reserved for future breach-point logic).
+- New Stage 5b in `LayoutGenerator` — `AssignDoorStates(rooms, rand, rng)` runs after room types are known and applies a fixed realism policy: entry-room doors open (breach points), the hostage-room door is `Locked`, ordinary interior doors mostly `Closed` with a seeded open-fraction scaled by `RandomnessLevel`. `DecideDoorState` encodes the precedence (locked > open > closed). Both reciprocal door records for an edge always receive the same state (mirrored by shared door id).
+- Created `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/GeneratedDoor.cs` (~212 lines) — runtime component that drives the interactive door prefab from its `DoorState`.
+- `SceneBuilder.cs` (+240 lines) now configures the instantiated door prefab per-state (open/closed/locked) instead of dropping a static panel.
+- `ScenarioValidator` gained door-state coverage; `ScenarioGenerationTests` added three door checks: `VerifyEveryRoomHasDoor`, `VerifyDoorStatePolicy`, `VerifyDoorStatesReciprocalAndDeterministic`.
+- `ScenePrefabBuilder` reworked (~181 lines changed) to build the interactive door prefab.
+
+**Decisions:**
+- **Door state is a generator decision, not an evaluator knob.** The policy is fixed and realism-driven (entry open, hostage locked, interior mostly closed) so scenarios stay believable without another config field. Only the open *fraction* responds to `RandomnessLevel`, keeping low-randomness runs deterministic and tidy.
+- **State mirrored onto both reciprocal door records** so either room's view of the shared door agrees — the validator's reciprocal check enforces this.
+
+**Issues:**
+- None blocking. `isExterior` is written but not yet consumed (reserved for breach mechanics).
+
+**Next:**
+- Reuse hand-built base-map door art instead of the greybox door prefab.
+
+---
+
+### 2026-06-17 — Reuse base-map real doors, walls and floors
+
+**Status:** Swap greybox geometry for the hand-built ("realistic") base-map art so generated scenarios match the rest of the environment.
+
+**Done:**
+- New editor command **Tools / Scenario Generator / Finalize Real Door From Selection** in `ScenePrefabBuilder.cs` (+252 lines): takes a hand-built XRI door GameObject, strips scene-bound NPC-stop components, adds an `NpcDoorAssist` + a carving `NavMeshObstacle` sized to the doorway, saves it as `Assets/Prefabs/RealDoor.prefab`, then wires the prefab (plus the real wall/floor materials) into the scene's `SceneBuilder`. `validate`-gated so it only enables when a GameObject carrying a MikeNspired `Door` is selected.
+- New `Assets/Module1_DataModels_and_IO/Scripts/SceneBuilder/NpcDoorAssist.cs` (~194 lines) — toggles the carving `NavMeshObstacle` with the door leaf so NavMeshAgent NPCs can path through an open door and are blocked by a shut one.
+- Real material references centralised as constants pointing at `Assets/Basemap Metrials/` (`Wall_Outside.mat`, `Floor_Interier.mat`) — note the folder is misspelled "Metrials" on disk; constants keep it exact.
+- `SceneBuilder.cs` (+257 lines) reworked to reuse the base-map door prefab and floor/wall materials; room prefabs (`RoomSmall/Medium/Large`) updated accordingly.
+- Hardened `Assets/XRI Starter Kit/Assets/Interactables/Door/Door.cs` against `MissingReferenceException` when the door's Rigidbody is destroyed mid-settle (SceneBuilder regenerating the scene) — bails out if the door/joint is destroyed during the sleep-wait.
+
+**Decisions:**
+- **Strip scene-bound components by type name**, not a hard assembly reference to the XRI runtime asmdef, so the editor tool doesn't take a compile dependency on Module 2's kit.
+- **Carving NavMeshObstacle over baking doorways closed.** NPC pathing is severed while the door is shut and restored when open, without re-baking the NavMesh at runtime.
+
+**Issues:**
+- The base-map materials folder name `Basemap Metrials` is misspelled on disk — kept exact in code; renaming it would break the references.
+
+**Next:**
+- Fix trainee spawn to a sensible staging point; add a placement fallback for small rooms.
+
+---
+
+### 2026-06-17 — Trainee staging spawn + small-room placement fallback
+
+**Status:** Two related fixes — a robust entity-placement fallback, and a configurable trainee spawn staging point.
+
+**Done:**
+- `EntityPlacer.cs` (+49 lines): added `FarthestValidPosition(room, existing)` — a last-resort placement used when every retry attempt collides (common in Small rooms at low difficulty where Centre/OpenArea zones all overlap the centre-placed hostage). It picks the in-bounds candidate (corners, edge midpoints, centre) maximising distance to the nearest already-placed entity, so two entities are never stacked when geometry can avoid it. In a 4 m room the farthest corner is ~1.7 m from a centre hostage, clearing the 1.5 m clearance constraint. Replaces the old "fall back to room centre" behaviour that broke clearance.
+- `SceneBuilder.cs` (+27 lines): new `traineeStartPoint` staging Transform — when set, the trainee spawns there (e.g. by the briefing table) with a yaw-only rotation (never inherits pitch/roll from the anchor), instead of at the generated entry. New `entryDoorStartsOpen` flag (default true) opens the building's entry door(s) when spawning from a staging point so the trainee can walk straight in; interior doors keep their generated state.
+- Companion Unity-scene fix (`XRI Starter Kit.unity`) re-anchoring the trainee spawn.
+- Further `Door.cs` null-safety on the settle path.
+
+**Decisions:**
+- **Farthest-from-existing over room-centre fallback.** Room centre is exactly where the hostage already sits in a small room, so the old fallback guaranteed a clearance violation; maximising separation is the correct degenerate-case behaviour.
+- **Yaw-only rig rotation at staging points** so the XR rig is never tilted by an anchor transform's pitch/roll.
+
+**Issues:**
+- None.
+
+**Next:**
+- Enclose the building — perimeter corridor and roof.
+
+---
+
+### 2026-06-17 — Perimeter corridor + room ceilings/roof
+
+**Status:** Generated building becomes fully enclosed top-to-bottom and wrapped in a corridor ring.
+
+**Done:**
+- `SceneBuilder.cs` (+454 lines): each room now gets a flat ceiling/roof cap (`CeilingThickness = 0.2 m`, matching the base map's ceiling slab), configurable via a new `ceilingMaterial` field.
+- New **Perimeter Corridor** feature: `buildPerimeterCorridor` (default true) wraps the whole building in an enclosed corridor ring (floor + outer wall + roof), `corridorWidth` (default 3 m) sets the band width, `corridorFloorMaterial` optionally overrides it (falls back to the room floor material). The building's exterior entry doors open into this corridor, and a single outer door lets the trainee in.
+- New scene container `PerimeterCorridor` (`CORRIDOR_ROOT`) alongside `Rooms` / `Doors` / `NPCs`, cleared and rebuilt each `BuildScene`. `CorridorFloorThickness = 0.08 m` matches the room floor prefab so the corridor floor sits flush.
+
+**Decisions:**
+- **Ceiling + corridor built procedurally in SceneBuilder** rather than as prefab variants, so they scale automatically to the generated footprint.
+
+**Issues:**
+- None noted at implementation.
+
+**Next:**
+- Add window glazing to solid exterior walls so the building reads as a real structure from outside.
+
+---
+
+### 2026-06-25 — Windows/glass on exterior walls
+
+**Status:** Solid exterior room walls get glazed windows so the building reads as inhabited from the outside.
+
+**Done:**
+- `SceneBuilder.cs` (+160 lines): new `addWindows` flag (default true) punches a glazed window into every solid exterior wall — a wall with no door and no adjacent room. `windowMaterial` field supplies the glass (falls back to a generated frosted material). Window geometry constants: `WindowWidth = 1.0 m`, `WindowHeight = 0.9 m`, `WindowSillHeight = 1.1 m`, `WindowSideMargin = 0.4 m`, `WindowPaneThickness = 0.04 m`.
+- `BuildWalls` / `BuildWallSide` refactored so each side is built as solid, a door opening, or a windowed wall (door takes priority over a window). `BuildWindowWall` constructs a solid sill below, jambs either side, a header above, and an opaque frosted pane.
+- `ScenePrefabBuilder.cs` + new `Glass_M.mat`: `CreateGlassMaterial()` builds a frosted, opaque light-blue pane material (`GlassColor = (0.80, 0.86, 0.90)`) — glassy-looking but fully opaque so the trainee can't scout room contents through the window. Wired into both the greybox and realistic prefab paths.
+
+**Decisions:**
+- **Frosted-but-opaque glass.** Windows must read as glazed without letting the trainee see (and pre-plan against) terrorist/hostage positions through the wall — so the pane is deliberately opaque.
+- **Window only on true exterior solid walls** (no door, no neighbour), matching the corridor/exterior-shell logic from the perimeter-corridor work.
+
+**Issues:**
+- None noted.
+
+**Next:**
+- Furnish the interiors so rooms read as real spaces and give NPCs cover.
+
+---
+
+### 2026-07-13 — Procedural furniture placement (FurniturePlacer)
+
+**Status:** New generation stage — rooms are populated with believable, seed-reproducible furniture that doubles as tactical cover.
+
+**Done:**
+- New data models in `LayoutModels.cs` (+68 lines): `FurnitureData` (`id`, `type`, `position`, `size`, `rotationY`, `againstWall`) and a `List<FurnitureData> furniture` on `RoomData` (serialised under `"furniture"`). New `FurnitureType` enum in `ScenarioEnums.cs` (+51 lines), each type carrying a canonical real-world footprint.
+- New `Generators/FurniturePlacer.cs` (~459 lines) — plain C# class (no Unity dependency) that mutates each `RoomData.furniture` in place. Items are wall-anchored (line the walls like real rooms), avoid doors (`DoorKeepout = 1.35 m`), keep clear of entities so no actor spawns inside furniture (`EntityClearance = 0.6 m`), don't overlap each other (`FurnitureGap = 0.15 m`), and stay off the outer wall edge (`EdgeInset = 0.15 m`, `WallGap = 0.05 m`). `MaxAttemptsPerItem = 40`, and a cap on the fraction of floor a room's furniture may consume. Fully seed-reproducible.
+- Wired into `ScenarioGenerator.cs` (+12 lines) as a pipeline stage after placement.
+- `SceneBuilder.cs` (+475 lines): realises `FurnitureData` as greybox boxes (or mapped prefabs) scaled to `size`, and bakes them into the NavMesh as obstacles so NPCs path around them.
+- `ScenarioGenerationTests.cs` (+187 lines) — furniture placement/coverage tests.
+
+**Decisions:**
+- **Placement is pure data.** `FurniturePlacer` never touches Unity objects — it writes `FurnitureData` into `Scenario.json`, and `SceneBuilder` realises it. Keeps the generator testable and headless, and lets Module 4 replay furniture from the JSON.
+- **Wall-anchored, door-aware, entity-aware.** Furniture lines walls (realistic + leaves the room centre navigable), never blocks a doorway, and never traps a spawned actor.
+
+**Issues:**
+- None noted.
+
+**Next:**
+- Rethink trainee spawn: put them outside the building with a visible approach path.
+
+---
+
+### 2026-07-18 — Unity MCP server setup
+
+**Status:** Tooling — connect the project to a Unity MCP server for editor automation.
+
+**Done:**
+- Updated `Packages/manifest.json` + `Packages/packages-lock.json` to add the Unity MCP package.
+- Added the MCP artefacts to `.gitignore`.
+- Removed a stale `.claude/settings.local.json` (88 lines) from version control.
+
+**Decisions:**
+- Editor/MCP config kept out of the repo via `.gitignore` so per-machine setup doesn't churn the shared history.
+
+**Issues:**
+- None.
+
+**Next:**
+- Use the MCP tooling to iterate on the outside-the-building spawn flow.
+
+---
+
+### 2026-07-18 — Spawn trainee outside the building + guide path
+
+**Status:** Trainee now starts in open ground outside the generated entrance and is guided in by a visible path.
+
+**Done:**
+- `SceneBuilder.cs` (+538 lines net): new `spawnOutsideEntrance` flag (default, recommended) spawns the trainee in open ground just outside the generated building's entrance, facing the door, instead of inside the building or at a fixed staging point — the entrance moves per generation, so the spawn is computed from the captured entry-door world position (`_entryDoorWorld`). `entranceStandoff` (default 8 m) sets how far out. `traineeStartPoint` staging is retained as the fallback when `spawnOutsideEntrance` is off.
+- New **Guide Path** feature: `buildGuidePath` (default true) lays a visible road on the ground from the trainee's start to the entrance door, drawn only when the trainee actually spawned outside (`_traineeSpawnedOutside`). Tunables: `guidePathWidth` (1.4 m), `guidePathColor` (bright unlit yellow), `guidePathArrowSpacing` (2.5 m chevrons). New `GuidePath` scene container; the router (`GuidePathCell = 0.5 m`, region margin, body-height band) keeps the road outside the building walls + perimeter corridor footprint rather than cutting through them.
+- Large companion re-serialisation of `XRI Starter Kit.unity` (spawn anchoring).
+
+**Decisions:**
+- **Spawn outside + guided approach** so the trainee experiences an approach/breach rather than materialising inside the objective — and because the entrance position is generation-dependent, the spawn and path are both derived from the live entry-door transform.
+- **Guide path only when spawned outside.** When the trainee spawns inside there's nothing to guide to, so the road is suppressed.
+
+**Issues:**
+- None noted.
+
+**Next:**
+- Ensure the generated footprint never overlaps the existing hand-built base-map buildings.
+
+---
+
+### 2026-07-18 — Keep generated scenario clear of base-map geometry
+
+**Status:** The generated building auto-nudges to avoid overlapping the hand-built base-map structures.
+
+**Done:**
+- `SceneBuilder.cs` (+157 lines): new `avoidBaseMapOverlap` flag (default true) offsets the whole generated scenario so its outer footprint (rooms + perimeter corridor) keeps a clear gap from any existing base-map collider. `mapClearance` (default 4 m) sets the minimum gap; `baseMapLayers` (default all) selects which layers count as base-map geometry.
+- `TryComputeLayoutExtents` computes the layout-space (pre-offset) bounds as the union of every room's footprint plus the corridor band; `ResolveBaseMapClearance` slides the scenario until its footprint + clearance no longer intersects base-map colliders, ignoring the scenario's own/ignored colliders (`IsOwnOrIgnoredCollider`).
+
+**Decisions:**
+- **Nudge the whole scenario as a rigid unit** rather than reshaping the layout — preserves the generated topology/spawns exactly while relocating them to open ground next to the base map.
+
+**Issues:**
+- None noted.
+
+**Next:**
+- (Open) Coordinate final placement conventions with the base-map/environment owners; confirm clearance value holds across all canned configs.
+
+---
