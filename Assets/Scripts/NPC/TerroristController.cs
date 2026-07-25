@@ -2019,6 +2019,18 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
 
             Vector3 anchor = guardedHostage.transform.position;
+
+            // ── RUSHED: a mate is down or fighting. ──────────────────────────────
+            // The guardian is agitated — he WANTS to go help, but he cannot leave the hostage.
+            // So he paces, torn: advance to the DOOR and watch for the trainee coming, then hurry
+            // BACK to the hostage to make sure it hasn't bolted — over and over. This replaces the
+            // calm random patrol while the fight is on.
+            if (suspicious && SquadInContact())
+            {
+                yield return StartCoroutine(GuardianDoorHostagePace(anchor));
+                continue;
+            }
+
             float radius = suspicious ? guardLeashRadius : guardPatrolRadius;
 
             // Suspicious/alert: the guard's job is the WAY IN. Keep his weapon trained on the
@@ -2074,6 +2086,86 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
         }
         _guardRoamRoutine = null;
+    }
+
+    /// <summary>Is the guardian still in a state where the roam/pace should keep running?</summary>
+    bool GuardianStillActive() =>
+        (currentState == TerroristState.Idle ||
+         currentState == TerroristState.Suspicious ||
+         currentState == TerroristState.Alert) &&
+        guardedHostage != null &&
+        guardedHostage.currentState != HostageState.Down &&
+        !guardedHostage.IsHeld &&
+        agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh;
+
+    /// <summary>
+    /// The pressured pace: advance to the doorway and watch it for the trainee, then hurry back to
+    /// the hostage and check on it — the "I want to help but I can't leave him" behaviour. Bounded
+    /// in time so it can't get stuck, and it never breaks the leash from the hostage.
+    /// </summary>
+    IEnumerator GuardianDoorHostagePace(Vector3 anchor)
+    {
+        Transform door = NearestDoorTo(anchor);
+
+        // ── Phase A — go toward the door and cover it. ──────────────────────────
+        if (door != null && GuardianStillActive())
+        {
+            Vector3 toDoor = door.position - anchor; toDoor.y = 0f;
+            float reach = Mathf.Clamp(toDoor.magnitude - 0.5f, 1f, guardLeashRadius);
+            Vector3 watchPos = anchor + (toDoor.sqrMagnitude > 0.01f ? toDoor.normalized : transform.forward) * reach;
+
+            if (NavMesh.SamplePosition(watchPos, out NavMeshHit h, 2.5f, NavMesh.AllAreas))
+            {
+                agent.isStopped = false;
+                agent.SetDestination(h.position);
+            }
+            float t = 0f;
+            while (t < 4f && GuardianStillActive() && !agent.pathPending &&
+                   agent.remainingDistance > agent.stoppingDistance + 0.25f)
+            {
+                if (!_playerVisible) SetLookTarget(door.position); // weapon on the way in
+                t += Time.deltaTime;
+                yield return null;
+            }
+            if (agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+
+            // Tense glance down the doorway.
+            float hold = Random.Range(1f, 2f), w = 0f;
+            while (w < hold && GuardianStillActive())
+            {
+                if (!_playerVisible) SetLookTarget(door.position);
+                w += Time.deltaTime;
+                yield return null;
+            }
+        }
+
+        if (!GuardianStillActive()) yield break;
+
+        // ── Phase B — hurry back to the hostage and check on it. ────────────────
+        if (NavMesh.SamplePosition(anchor, out NavMeshHit h2, 2.5f, NavMesh.AllAreas))
+        {
+            agent.isStopped = false;
+            agent.SetDestination(h2.position);
+        }
+        {
+            float t = 0f;
+            while (t < 4f && GuardianStillActive() && !agent.pathPending &&
+                   agent.remainingDistance > agent.stoppingDistance + 0.5f)
+            {
+                t += Time.deltaTime;
+                yield return null;
+            }
+            if (agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+
+            // Make sure the hostage is still there and hasn't bolted.
+            float hold = Random.Range(0.8f, 1.5f), w = 0f;
+            while (w < hold && GuardianStillActive())
+            {
+                if (guardedHostage != null) SetLookTarget(guardedHostage.transform.position);
+                w += Time.deltaTime;
+                yield return null;
+            }
+        }
     }
 
     bool TryPickPointAround(Vector3 center, float radius, out Vector3 result)
@@ -2725,13 +2817,43 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // No door lines up. Do NOT fall back to the raw threat position: that points straight
         // THROUGH a wall, and the NPC ends up solemnly aiming at blank masonry (which is
         // exactly what looked so wrong). Prefer ANY nearby doorway — a covered door always
-        // beats a stared-at wall — and if there isn't one, just keep facing where he already
-        // is rather than snapping onto the wall.
+        // beats a stared-at wall.
         Transform anyDoor = NearestDoorTo(transform.position);
         if (anyDoor != null && Vector3.Distance(anyDoor.position, transform.position) <= doorWatchRange)
             return anyDoor.position;
 
-        return transform.position + transform.forward * 5f;   // hold current facing
+        // Still nothing. NEVER hold a facing that might be into a wall — look at the most OPEN
+        // direction instead (into the room, down a corridor), so an NPC is always facing free
+        // space, never blank masonry.
+        return OpenLookPoint();
+    }
+
+    /// <summary>
+    /// A point in the MOST OPEN horizontal direction — the bearing with the most clearance before
+    /// a wall. Guarantees an NPC with nothing specific to watch still faces into free space (a
+    /// room, a corridor) rather than a wall a step in front of its nose. Biased slightly toward its
+    /// current facing so it doesn't spin on the spot when several directions are equally open.
+    /// </summary>
+    Vector3 OpenLookPoint()
+    {
+        Vector3 eye = transform.position + Vector3.up * 1.5f;
+        Vector3 fwd = transform.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.001f) fwd = Vector3.forward; else fwd.Normalize();
+
+        Vector3 best = fwd;
+        float   bestScore = -999f;
+        const float probe = 8f;
+
+        for (int a = 0; a < 360; a += 30)
+        {
+            Vector3 dir = Quaternion.Euler(0f, a, 0f) * Vector3.forward;
+            float clear = Physics.Raycast(eye, dir, out RaycastHit h, probe, _losBlockerMask, QueryTriggerInteraction.Ignore)
+                ? h.distance : probe;
+            // clearance is what matters; a small bonus for staying near current facing avoids jitter.
+            float score = clear + 1.5f * Vector3.Dot(dir, fwd);
+            if (score > bestScore) { bestScore = score; best = dir; }
+        }
+        return transform.position + best * 5f;
     }
 
     // Scene doors, cached briefly — used to pick which doorway to cover when the threat
