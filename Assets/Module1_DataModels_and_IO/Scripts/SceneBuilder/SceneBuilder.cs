@@ -188,9 +188,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "generated entry as before.")]
         public Transform traineeStartPoint;
 
-        [Tooltip("When the trainee spawns at a staging point, start the building's " +
-                 "entry door(s) open so the trainee can walk straight in. Interior " +
-                 "doors keep their generated state.")]
+        [Tooltip("Start SECONDARY entry doors open so the trainee can walk straight in. " +
+                 "The main entrance and the compound's outer door are always closed " +
+                 "regardless of this setting — an open front door gives the defenders a " +
+                 "clear shot at the trainee while they are still outside. Interior doors " +
+                 "keep their generated state.")]
         public bool entryDoorStartsOpen = true;
 
         [Header("Trainee Loadout")]
@@ -278,6 +280,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Extra width/height carved around the measured door so the real leaf
         // swings without scraping the jambs.
         private const float DoorClearance = 0.08f;
+        // Minimum solid wall left at each end of a door opening. Module 1 jogs
+        // doors sideways off the wall midpoint to break sightlines; this caps the
+        // jog when the measured door turns out wider than the generator assumed,
+        // so an opening can never eat through a wall corner.
+        private const float MinJamb = 0.3f;
 
         // ── Measured door footprint (filled by MeasureDoorPrefab each build) ──
         // SceneBuilder now supports realistic doors of any size (e.g. the XRI
@@ -1061,39 +1068,52 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             float outerW = width + CorridorGap;
             float outerD = depth + CorridorGap;
 
-            var doorSides = new HashSet<WallSide>();
-            if (room.doors != null)
-                foreach (DoorData d in room.doors) doorSides.Add(d.wallSide);
-
-            // Exterior building entrances also need an opening in the perimeter
-            // wall, otherwise the trainee spawns outside a sealed building.
-            if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
-                foreach (EntryOpening e in openings) doorSides.Add(e.side);
-
             // Carve openings sized to the measured door so the real leaf fits.
             float openW = _doorOpeningWidth  + DoorClearance;
             float openH = _doorOpeningHeight + DoorClearance;
 
+            // Lateral offset (room-local, along the wall) of the opening on each
+            // side that carries a door. Module 1 jogs doors sideways off the wall
+            // midpoint so openings on opposite walls don't line up into a single
+            // sightline, so the wall has to be carved at the door's REAL position —
+            // carving at the centre would bury the jogged door in solid wall.
+            var doorOffsets = new Dictionary<WallSide, float>();
+            if (room.doors != null)
+                foreach (DoorData d in room.doors)
+                    if (!doorOffsets.ContainsKey(d.wallSide))
+                        doorOffsets[d.wallSide] =
+                            OpeningOffset(room, d.wallSide, d.position.ToVector3(), openW);
+
+            // Exterior building entrances also need an opening in the perimeter
+            // wall, otherwise the trainee spawns outside a sealed building.
+            if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
+                foreach (EntryOpening e in openings)
+                    doorOffsets[e.side] =
+                        OpeningOffset(room, e.side, e.position - _buildOffset, openW);
+
+            float OffsetOn(WallSide side) =>
+                doorOffsets.TryGetValue(side, out float o) ? o : 0f;
+
             // A solid wall gets a window when it faces the outside (no adjacent
             // room) - interior partitions between rooms stay solid.
             bool WindowOn(WallSide side) =>
-                addWindows && !doorSides.Contains(side) && IsExteriorWall(room, side, allRooms);
+                addWindows && !doorOffsets.ContainsKey(side) && IsExteriorWall(room, side, allRooms);
 
             // North / South run along X (span = outerW, thin in Z).
-            BuildWallSide(roomGo, "South", doorSides.Contains(WallSide.South), WindowOn(WallSide.South),
+            BuildWallSide(roomGo, "South", doorOffsets.ContainsKey(WallSide.South), WindowOn(WallSide.South),
                           axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height,
-                          openW: openW, openH: openH, mat: mat);
-            BuildWallSide(roomGo, "North", doorSides.Contains(WallSide.North), WindowOn(WallSide.North),
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.South), mat: mat);
+            BuildWallSide(roomGo, "North", doorOffsets.ContainsKey(WallSide.North), WindowOn(WallSide.North),
                           axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height,
-                          openW: openW, openH: openH, mat: mat);
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.North), mat: mat);
 
             // East / West run along Z (span = outerD, thin in X).
-            BuildWallSide(roomGo, "East", doorSides.Contains(WallSide.East), WindowOn(WallSide.East),
+            BuildWallSide(roomGo, "East", doorOffsets.ContainsKey(WallSide.East), WindowOn(WallSide.East),
                           axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height,
-                          openW: openW, openH: openH, mat: mat);
-            BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West), WindowOn(WallSide.West),
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.East), mat: mat);
+            BuildWallSide(roomGo, "West", doorOffsets.ContainsKey(WallSide.West), WindowOn(WallSide.West),
                           axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height,
-                          openW: openW, openH: openH, mat: mat);
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.West), mat: mat);
 
             // Cap the room with a flat ceiling so it's enclosed top-to-bottom like
             // the hand-built base map (which uses a thin "Ceiling" slab on top of
@@ -1131,10 +1151,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// opening, or a wall with a glazed window punched into it.
         /// <paramref name="axisAlongX"/> selects whether the wall runs along X
         /// (north/south) or Z (east/west). A door takes priority over a window.
+        /// <paramref name="openOffset"/> slides the door opening along the wall
+        /// (0 = centred); the two flanking segments are sized independently so an
+        /// off-centre opening is framed exactly.
         /// </summary>
         private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor, bool hasWindow,
                                    bool axisAlongX, float fixedCoord, float span,
-                                   float height, float openW, float openH, Material mat)
+                                   float height, float openW, float openH, float openOffset,
+                                   Material mat)
         {
             if (!hasDoor)
             {
@@ -1146,23 +1170,54 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            float segLen = (span - openW) * 0.5f;
-            if (segLen <= 0f) return; // opening as wide as the wall — leave it open
+            float halfSpan = span * 0.5f;
+            float openMin  = openOffset - openW * 0.5f;
+            float openMax  = openOffset + openW * 0.5f;
 
-            // Full-height segments either side of the opening.
-            float segOffset = openW * 0.5f + segLen * 0.5f;
-            AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
-                           offset: -segOffset, length: segLen, height: height, mat: mat);
-            AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
-                           offset:  segOffset, length: segLen, height: height, mat: mat);
+            // Full-height segments either side of the opening. Either can be empty
+            // when the opening reaches a wall end.
+            float lenA = openMin + halfSpan;   // -halfSpan → openMin
+            float lenB = halfSpan - openMax;   // openMax   → +halfSpan
+            if (lenA <= 0.01f && lenB <= 0.01f) return; // opening spans the wall
+
+            if (lenA > 0.01f)
+                AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
+                               offset: (openMin - halfSpan) * 0.5f, length: lenA,
+                               height: height, mat: mat);
+            if (lenB > 0.01f)
+                AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
+                               offset: (openMax + halfSpan) * 0.5f, length: lenB,
+                               height: height, mat: mat);
 
             // Header (transom) filling the wall above the door opening, so the
             // doorway isn't open all the way to the ceiling.
             float headerHeight = height - openH;
             if (headerHeight > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
-                               offset: 0f, length: openW, height: headerHeight,
+                               offset: openOffset, length: openW, height: headerHeight,
                                mat: mat, baseY: openH);
+        }
+
+        /// <summary>
+        /// Lateral offset (metres, along the wall, room-local) at which the opening on
+        /// <paramref name="side"/> must be carved so it lands on the door at
+        /// <paramref name="layoutPos"/>. Clamped so a <paramref name="openW"/>-wide
+        /// opening always keeps <see cref="MinJamb"/> of solid wall at each end — the
+        /// measured door prefab can be wider than the jog Module 1 assumed.
+        /// </summary>
+        private static float OpeningOffset(RoomData room, WallSide side, Vector3 layoutPos, float openW)
+        {
+            bool alongX = side == WallSide.North || side == WallSide.South;
+
+            float width  = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float depth  = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float span   = (alongX ? width : depth) + CorridorGap;
+
+            float lateral = alongX ? layoutPos.x - room.position.x
+                                   : layoutPos.z - room.position.z;
+
+            float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
+            return Mathf.Clamp(lateral, -limit, limit);
         }
 
         private void AddWallSegment(GameObject roomGo, string name, bool axisAlongX,
@@ -1325,13 +1380,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 if (room.doors == null) continue;
 
+                float openW = _doorOpeningWidth + DoorClearance;
+
                 foreach (DoorData door in room.doors)
                 {
                     string pairKey = MakeDoorPairKey(room.id, door.connectsToRoomId);
                     if (!_placedDoorPairs.Add(pairKey))
                         continue; // reciprocal already placed
 
-                    PlaceDoor(door.id, World(door.position.ToVector3()), door.wallSide, door.state);
+                    // Place the leaf on the SAME clamped lateral the wall was carved
+                    // at, so a door Module 1 jogged further than the measured leaf
+                    // allows still lands squarely in its opening.
+                    Vector3 pos = door.position.ToVector3();
+                    float offset = OpeningOffset(room, door.wallSide, pos, openW);
+                    if (door.wallSide == WallSide.North || door.wallSide == WallSide.South)
+                        pos.x = room.position.x + offset;
+                    else
+                        pos.z = room.position.z + offset;
+
+                    PlaceDoor(door.id, World(pos), door.wallSide, door.state);
                 }
             }
         }
@@ -1453,9 +1520,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 list.Add(new EntryOpening { side = side, position = worldPos, id = id });
             }
 
-            // 1) Guaranteed exterior breach (the primary way in).
+            // 1) Guaranteed exterior breach (the primary way in). Slide it along the
+            //    wall first so it isn't in line with the entrance room's own interior
+            //    door — otherwise the two openings form a tunnel and a terrorist in
+            //    the next room can engage the trainee before they ever reach the
+            //    building. Updating the field keeps the corridor's outer opening and
+            //    the trainee spawn aligned to where the breach actually ends up.
             if (_entranceResolved)
+            {
+                _entranceWallMidWorld = OffsetEntranceFromInteriorDoors(scenario);
                 Add(_entranceRoomId, _entranceSide, _entranceWallMidWorld, "main");
+            }
 
             // 2) Optional extra entry points from the layout — only when genuinely exterior.
             List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
@@ -1481,10 +1556,86 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         }
 
         /// <summary>
+        /// Slides the resolved main entrance along its wall until it is clear of the
+        /// entrance room's interior doors — the ones on the wall facing it, which
+        /// would otherwise line up with it into a straight sightline right through
+        /// the room. Returns the (possibly unchanged) world position of the opening.
+        /// Runs after <see cref="MeasureDoorPrefab"/> so the real leaf width is known.
+        /// </summary>
+        private Vector3 OffsetEntranceFromInteriorDoors(ScenarioData scenario)
+        {
+            Vector3 current = _entranceWallMidWorld;
+
+            RoomData room = scenario?.layout?.rooms?.Find(r => r.id == _entranceRoomId);
+            if (room == null || room.doors == null || room.doors.Count == 0) return current;
+
+            bool alongX = _entranceSide == WallSide.North || _entranceSide == WallSide.South;
+            WallSide facing = OppositeWall(_entranceSide);
+
+            // Laterals of the doors that share this wall's axis. A door on the facing
+            // wall lines up straight through the room; one on the entrance wall itself
+            // would collide with the opening outright.
+            var blockers = new List<float>();
+            foreach (DoorData d in room.doors)
+            {
+                if (d.wallSide != facing && d.wallSide != _entranceSide) continue;
+                Vector3 w = World(d.position.ToVector3());
+                blockers.Add(alongX ? w.x : w.z);
+            }
+            if (blockers.Count == 0) return current;
+
+            float openW = _doorOpeningWidth + DoorClearance;
+
+            // Already off to one side of every blocker by more than a doorway — the
+            // opening is fine where it is, so leave it on the tidy wall midpoint.
+            float currentLateral = alongX ? current.x : current.z;
+            if (NearestBlocker(blockers, currentLateral) >= openW + 0.5f) return current;
+
+            float width = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float depth = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float span  = (alongX ? width : depth) + CorridorGap;
+            float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
+
+            Vector3 roomWorld = World(room.position.ToVector3());
+            float centre = alongX ? roomWorld.x : roomWorld.z;
+
+            // Sweep the usable width of the wall and keep the position furthest from
+            // every blocker — beats the centred default whenever a facing door exists,
+            // and degrades gracefully on a wall that is already crowded.
+            float best = centre, bestClearance = -1f;
+            const int Steps = 8;
+            for (int i = 0; i <= Steps; i++)
+            {
+                float candidate  = centre + Mathf.Lerp(-limit, limit, i / (float)Steps);
+                float clearance  = NearestBlocker(blockers, candidate);
+                if (clearance > bestClearance) { bestClearance = clearance; best = candidate; }
+            }
+
+            if (alongX) current.x = best; else current.z = best;
+
+            Debug.Log($"[SceneBuilder] Main entrance on '{room.id}' was in line with an interior " +
+                      $"door; slid {Mathf.Abs(best - currentLateral):F1} m along the wall so the " +
+                      "trainee can't be shot through it from outside.");
+            return current;
+        }
+
+        /// <summary>Distance from <paramref name="lateral"/> to the nearest blocker.</summary>
+        private static float NearestBlocker(List<float> blockers, float lateral)
+        {
+            float nearest = float.MaxValue;
+            foreach (float b in blockers)
+                nearest = Mathf.Min(nearest, Mathf.Abs(b - lateral));
+            return nearest;
+        }
+
+        /// <summary>
         /// Places an exterior door at every building entry point. These are the
-        /// breach points into the building; they start closed so the trainee
-        /// opens them on the way in. The interior wall already has the matching
-        /// opening carved by BuildWalls.
+        /// breach points into the building. The MAIN entrance is always closed — an
+        /// open front door lets the defenders see and engage the trainee while they
+        /// are still crossing the open ground outside, which is exactly the death
+        /// the standoff spawn is meant to avoid. Secondary entry points still honour
+        /// <see cref="entryDoorStartsOpen"/>. The interior wall already has the
+        /// matching opening carved by BuildWalls.
         /// </summary>
         private void BuildEntryDoors(ScenarioData scenario)
         {
@@ -1492,11 +1643,26 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             foreach (KeyValuePair<string, List<EntryOpening>> kvp in _entryOpenings)
             {
-                DoorState entryState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
                 foreach (EntryOpening opening in kvp.Value)
                 {
+                    bool isMain = string.Equals(opening.id, "main", StringComparison.Ordinal);
+                    DoorState entryState = !isMain && entryDoorStartsOpen
+                        ? DoorState.Open
+                        : DoorState.Closed;
+
                     PlaceDoor($"door_{opening.id}", opening.position, opening.side, entryState);
                 }
+            }
+        }
+
+        private static WallSide OppositeWall(WallSide side)
+        {
+            switch (side)
+            {
+                case WallSide.North: return WallSide.South;
+                case WallSide.South: return WallSide.North;
+                case WallSide.East:  return WallSide.West;
+                default:             return WallSide.East; // West → East
             }
         }
 
@@ -1684,8 +1850,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     Vector3 doorPos = entranceAlongX
                         ? new Vector3(doorLat, baseY, gapPerp)
                         : new Vector3(gapPerp, baseY, doorLat);
-                    DoorState outerState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
-                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, outerState);
+                    // The compound's outer door is the trainee's first obstacle and is
+                    // ALWAYS closed — an open one leaves a straight line from the open
+                    // ground outside all the way into the building.
+                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, DoorState.Closed);
 
                     // Remember where the entrance ended up so the guide path can run to it.
                     _entryDoorWorld    = doorPos;
@@ -2627,10 +2795,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             foreach (NpcSpawnPoint sp in terrorists)
             {
-                GameObject go = Instantiate(terroristPrefab,
-                                            World(sp.position.ToVector3()),
-                                            LookRotation(sp.facingDirection),
-                                            _npcsRoot);
+                ResolveTerroristSpawn(scenario, sp, out Vector3 spawnPos, out Quaternion spawnRot);
+
+                GameObject go = Instantiate(terroristPrefab, spawnPos, spawnRot, _npcsRoot);
                 go.name = sp.entityId;
 
                 TerroristController controller = go.GetComponent<TerroristController>();
@@ -2664,6 +2831,62 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 leader.role = NPCRole.Leader;
                 Debug.Log($"[SceneBuilder] Squad leader elected: {leader.NPCId}.");
             }
+        }
+
+        /// <summary>
+        /// Resolves where a terrorist actually spawns. Module 1 keeps terrorists out of
+        /// the layout's ENTRY room, but the exterior breach is resolved from real
+        /// geometry and often lands on a different perimeter room — one that may well
+        /// have a terrorist standing in it. Anyone sitting in the doorway's line
+        /// (visible straight through the entrance from outside) is slid to the far side
+        /// of the room and turned to face its interior, so the trainee is never engaged
+        /// through the front door before they have crossed the open ground.
+        /// </summary>
+        private void ResolveTerroristSpawn(ScenarioData scenario, NpcSpawnPoint sp,
+                                           out Vector3 pos, out Quaternion rot)
+        {
+            pos = World(sp.position.ToVector3());
+            rot = LookRotation(sp.facingDirection);
+
+            if (!_entranceResolved || sp.roomId != _entranceRoomId) return;
+
+            RoomData room = scenario?.layout?.rooms?.Find(r => r.id == sp.roomId);
+            if (room == null) return;
+
+            bool alongX = _entranceSide == WallSide.North || _entranceSide == WallSide.South;
+
+            // Half-width of the cone the trainee can see through the doorway, plus a
+            // margin so a shoulder poking into it doesn't count as cover.
+            float band = (_doorOpeningWidth + DoorClearance) * 0.5f + 1.0f;
+
+            float entranceLat = alongX ? _entranceWallMidWorld.x : _entranceWallMidWorld.z;
+            float npcLat      = alongX ? pos.x : pos.z;
+            if (Mathf.Abs(npcLat - entranceLat) >= band) return; // already out of the line
+
+            Vector3 roomWorld = World(room.position.ToVector3());
+            float roomCentre  = alongX ? roomWorld.x : roomWorld.z;
+
+            float nominal = room.size == null ? 6f
+                          : alongX ? room.size.width : room.size.depth;
+            if (nominal <= 0f) nominal = 6f;
+            // Same wall margin Module 1's placer uses, so the moved NPC stays off the wall.
+            const float WallMargin = 0.8f;
+            float halfExtent = Mathf.Max(0f, nominal * 0.5f - WallMargin);
+
+            // Push to whichever side of the room is further from the doorway.
+            float sign = entranceLat <= roomCentre ? 1f : -1f;
+            float moved = roomCentre + sign * halfExtent;
+
+            if (alongX) pos.x = moved; else pos.z = moved;
+
+            // Face the room's interior rather than staring down the entrance.
+            Vector3 inward = roomWorld - pos;
+            inward.y = 0f;
+            if (inward.sqrMagnitude > 0.0001f) rot = Quaternion.LookRotation(inward);
+
+            Debug.Log($"[SceneBuilder] Terrorist '{sp.entityId}' stood in the entrance line of " +
+                      $"'{room.id}'; moved {Mathf.Abs(moved - npcLat):F1} m aside and turned inward " +
+                      "so the trainee isn't engaged through the front door.");
         }
 
         private void ConfigureTerrorist(TerroristController controller,

@@ -29,6 +29,28 @@ namespace TeamSentinels.ScenarioGeneration.Generators
 
         private const float CorridorGap = 2.0f;
 
+        // ── Door sightline control ───────────────────────────────────────────
+        // Doors used to sit on the exact midpoint of every shared wall. Because
+        // every room is centred on the same grid, that put the door on one wall
+        // dead in line with the door on the opposite wall, chaining whole rows of
+        // rooms into a single straight sightline — an NPC deep inside the building
+        // could see (and shoot) the trainee while they were still outside the
+        // entrance. Doors are now jogged sideways along their wall so no two
+        // openings on opposite walls of the same room line up.
+
+        /// <summary>Sideways shift applied to a door to break a sightline (metres).</summary>
+        private const float DoorLateralJog = 1.6f;
+
+        /// <summary>
+        /// Two openings closer together than this along the same axis still leave a
+        /// usable sightline through both. Also the assumed door opening width, so a
+        /// jogged opening is kept this far clear of the wall ends.
+        /// </summary>
+        private const float DoorSightlineWidth = 2.2f;
+
+        /// <summary>Minimum solid wall left beside a jogged opening (metres).</summary>
+        private const float MinJamb = 0.4f;
+
         private static readonly Dictionary<RoomSizeCategory, RoomSize> RoomSizes =
             new Dictionary<RoomSizeCategory, RoomSize>
             {
@@ -342,6 +364,12 @@ namespace TeamSentinels.ScenarioGeneration.Generators
             var roomMap       = rooms.ToDictionary(r => r.id);
             var processed     = new HashSet<string>(StringComparer.Ordinal);
 
+            // Lateral coordinate of every door already placed on a given wall,
+            // keyed "roomId|side". Consulted before each new door so it can be
+            // jogged clear of the doors already on that wall and on the wall
+            // opposite it (the pair that would form a straight sightline).
+            var placedLaterals = new Dictionary<string, List<float>>(StringComparer.Ordinal);
+
             foreach (RoomData room in rooms)
             {
                 foreach (string neighbourId in room.connectedRoomIds)
@@ -360,8 +388,17 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                     WallSide wallA = DetermineWallSide(posB - posA);
                     WallSide wallB = OppositeWall(wallA);
 
-                    // Door sits at the midpoint of the two room centres
-                    SerializableVector3 doorPos = new SerializableVector3((posA + posB) * 0.5f);
+                    // Door sits on the midpoint of the two room centres, then slides
+                    // along the shared wall until it is out of line with the doors
+                    // already placed on either room's parallel walls.
+                    Vector3 mid = (posA + posB) * 0.5f;
+                    bool lateralIsX = wallA == WallSide.North || wallA == WallSide.South;
+                    float lateral = ChooseDoorLateral(
+                        room, neighbour, wallA, wallB,
+                        lateralIsX ? mid.x : mid.z, lateralIsX, placedLaterals);
+
+                    if (lateralIsX) mid.x = lateral; else mid.z = lateral;
+                    SerializableVector3 doorPos = new SerializableVector3(mid);
 
                     // ID uses the numeric suffixes: "door_01_02"
                     string numA  = room.id.Substring(5);      // "room_01" → "01"
@@ -382,9 +419,107 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                         position       = doorPos,
                         wallSide       = wallB
                     });
+
+                    RecordLateral(placedLaterals, room.id, wallA, lateral);
+                    RecordLateral(placedLaterals, neighbourId, wallB, lateral);
                 }
             }
         }
+
+        /// <summary>
+        /// Picks the coordinate a door takes along its shared wall. Tries the wall
+        /// midpoint first (the tidy default), then a jog to either side, and returns
+        /// the first candidate that clears every door already on the same wall and on
+        /// the wall opposite it in BOTH rooms. When nothing clears — a room with more
+        /// parallel doors than the wall has room for — the candidate furthest from the
+        /// existing doors wins, so the sightline is at least narrowed.
+        /// </summary>
+        private static float ChooseDoorLateral(
+            RoomData a, RoomData b, WallSide sideA, WallSide sideB,
+            float baseLateral, bool lateralIsX,
+            Dictionary<string, List<float>> placed)
+        {
+            float jog = Mathf.Min(MaxJog(a, lateralIsX), MaxJog(b, lateralIsX));
+            if (jog < 0.05f) return baseLateral;
+
+            float[] candidates =
+            {
+                baseLateral,
+                baseLateral + jog,
+                baseLateral - jog
+            };
+
+            float best = baseLateral;
+            float bestClearance = float.MinValue;
+
+            foreach (float candidate in candidates)
+            {
+                float clearance = Mathf.Min(
+                    Clearance(placed, a.id, sideA, candidate),
+                    Clearance(placed, b.id, sideB, candidate));
+
+                // Far enough from everything already there — take it.
+                if (clearance >= DoorSightlineWidth) return candidate;
+
+                if (clearance > bestClearance) { bestClearance = clearance; best = candidate; }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Largest sideways shift that still leaves <see cref="MinJamb"/> of solid wall
+        /// beside a <see cref="DoorSightlineWidth"/>-wide opening on the given room's
+        /// wall, capped at <see cref="DoorLateralJog"/>.
+        /// </summary>
+        private static float MaxJog(RoomData room, bool lateralIsX)
+        {
+            float nominal = room.size == null ? 6f
+                          : lateralIsX ? room.size.width : room.size.depth;
+            if (nominal <= 0f) nominal = 6f;
+
+            // Walls span the room's nominal extent plus the corridor gap.
+            float halfSpan = (nominal + CorridorGap) * 0.5f;
+            float limit    = halfSpan - DoorSightlineWidth * 0.5f - MinJamb;
+            return Mathf.Clamp(DoorLateralJog, 0f, Mathf.Max(0f, limit));
+        }
+
+        /// <summary>
+        /// Distance from <paramref name="lateral"/> to the nearest door already on the
+        /// given wall or on the wall facing it — the two placements that can line up.
+        /// <see cref="float.MaxValue"/> when neither wall carries a door yet.
+        /// </summary>
+        private static float Clearance(
+            Dictionary<string, List<float>> placed, string roomId, WallSide side, float lateral)
+        {
+            return Mathf.Min(ClearanceOn(placed, roomId, side, lateral),
+                             ClearanceOn(placed, roomId, OppositeWall(side), lateral));
+        }
+
+        private static float ClearanceOn(
+            Dictionary<string, List<float>> placed, string roomId, WallSide side, float lateral)
+        {
+            if (!placed.TryGetValue(LateralKey(roomId, side), out List<float> existing))
+                return float.MaxValue;
+
+            float nearest = float.MaxValue;
+            foreach (float other in existing)
+                nearest = Mathf.Min(nearest, Mathf.Abs(other - lateral));
+            return nearest;
+        }
+
+        private static void RecordLateral(
+            Dictionary<string, List<float>> placed, string roomId, WallSide side, float lateral)
+        {
+            string key = LateralKey(roomId, side);
+            if (!placed.TryGetValue(key, out List<float> list))
+            {
+                list = new List<float>(2);
+                placed[key] = list;
+            }
+            list.Add(lateral);
+        }
+
+        private static string LateralKey(string roomId, WallSide side) => roomId + "|" + side;
 
         private static WallSide DetermineWallSide(Vector3 delta)
         {
@@ -408,8 +543,9 @@ namespace TeamSentinels.ScenarioGeneration.Generators
 
         /// <summary>
         /// Assigns each door an initial <see cref="DoorState"/> using a fixed,
-        /// realism-driven policy (no evaluator knob): entry-room doors open as
-        /// breach points, the hostage-room door is locked, and interior doors
+        /// realism-driven policy (no evaluator knob): entry-room doors are closed so
+        /// the building is sealed until the trainee breaches it, the hostage-room
+        /// door is locked (sub-objective), and remaining interior doors
         /// are mostly closed with a seeded fraction left open so corridors are
         /// not monotonous. Both reciprocal records for an edge receive the same
         /// state. The open fraction scales with <paramref name="rand"/> so
@@ -454,9 +590,13 @@ namespace TeamSentinels.ScenarioGeneration.Generators
             if (a.type == RoomType.HostageRoom || b.type == RoomType.HostageRoom)
                 return DoorState.Locked;
 
-            // Entry/breach doors start open.
+            // Entry/breach doors start CLOSED. Leaving them open handed the
+            // defenders a clear firing lane out of the building — a terrorist in
+            // the room behind the entry room could see and engage the trainee
+            // while they were still crossing the open ground outside. The trainee
+            // opens (or breaches) them on the way in.
             if (a.type == RoomType.Entry || b.type == RoomType.Entry)
-                return DoorState.Open;
+                return DoorState.Closed;
 
             // Ordinary interior doors: mostly closed, occasionally open.
             return rng.NextDouble() < openChance ? DoorState.Open : DoorState.Closed;
