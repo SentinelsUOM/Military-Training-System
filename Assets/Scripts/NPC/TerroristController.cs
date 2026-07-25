@@ -1065,6 +1065,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         if (currentState == TerroristState.Down) return;
 
+        // ── Anti-wall safety net (idle only) ─────────────────────────────────
+        // Whatever left an idle NPC facing a wall — spawn rotation, a patrol waypoint tucked
+        // against masonry, the end of a scan — turn it back toward open space. Only while it is
+        // actually STANDING STILL (facing your travel direction as you walk is fine) and only in
+        // Idle (in combat the aim/door logic owns the facing). This is the hard guarantee that no
+        // terrorist is ever caught staring at a blank wall.
+        if (currentState == TerroristState.Idle &&
+            agent != null && agent.isActiveAndEnabled &&
+            agent.velocity.sqrMagnitude < 0.04f &&
+            FacingWallClose())
+        {
+            Vector3 to = OpenLookPoint() - transform.position; to.y = 0f;
+            if (to.sqrMagnitude > 0.01f)
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation, Quaternion.LookRotation(to), idleScanTurnSpeed * Time.deltaTime);
+        }
+
         // ── Stuck diagnostic ─────────────────────────────────────────────────
         // If the agent has a destination but isn't actually moving toward it,
         // report WHY after 2 s: the NavMesh path status is the smoking gun.
@@ -2989,7 +3006,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
         Vector3 fwd = transform.forward; fwd.y = 0f;
         if (fwd.sqrMagnitude < 0.001f) return false;
         fwd.Normalize();
-        return Physics.Raycast(eye, fwd, out RaycastHit h, 1.3f, ~0, QueryTriggerInteraction.Ignore)
+        // ~1.7 m: close enough that facing it reads as "staring at the wall". Anything the NPC's
+        // own body counts as clear.
+        return Physics.Raycast(eye, fwd, out RaycastHit h, 1.7f, ~0, QueryTriggerInteraction.Ignore)
                && !h.collider.transform.IsChildOf(transform);
     }
 
