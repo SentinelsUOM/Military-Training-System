@@ -59,11 +59,53 @@ public class Squad
 
     /// <summary>
     /// Called when a member's health reaches 0.
-    /// Delegates alert propagation to AlertPropagator (Ring 1 squad broadcast).
+    /// Delegates alert propagation to AlertPropagator (Ring 1 squad broadcast), then re-elects a
+    /// Leader if the one who died was it.
     /// </summary>
     public void NotifyMemberDown(TerroristController downed, ScenarioEvent trigger)
     {
         AlertPropagator.Instance?.HandleMemberDown(this, downed, trigger);
+        PromoteNewLeaderIfNeeded(downed);
+    }
+
+    /// <summary>
+    /// If the member who just died was the squad Leader, promote a surviving member so the squad
+    /// keeps coordinating (Converge / Flank). Without this, killing the leader first left the squad
+    /// leaderless for the whole rest of the mission — an easy exploit. The hostage guardian is never
+    /// eligible (it must never leave the hostage to run directives); a Roamer is preferred, else any
+    /// alive member.
+    /// </summary>
+    void PromoteNewLeaderIfNeeded(TerroristController downed)
+    {
+        if (downed == null || downed.role != NPCRole.Leader) return;
+
+        // The dead leader's standing order is void.
+        ClearDirective();
+
+        // Guard against double-promotion: if a leader somehow still lives, leave it be.
+        foreach (var m in _members)
+            if (m != null && m != downed && m.role == NPCRole.Leader &&
+                m.currentState != TerroristState.Down) return;
+
+        TerroristController pick = null;
+        foreach (var m in _members)
+        {
+            if (m == null || m == downed)            continue;
+            if (m.currentState == TerroristState.Down) continue;
+            if (m.isHostageGuardian)                 continue; // never pulls off the hostage
+            if (pick == null) pick = m;               // first eligible = fallback
+            if (m.role == NPCRole.Roamer) { pick = m; break; } // prefer a roamer, like spawn-time election
+        }
+
+        if (pick != null)
+        {
+            Debug.Log($"[Squad {SquadId}] Leader {downed.NPCId} is down — promoting {pick.NPCId} to Leader.");
+            pick.AssumeLeadership();
+        }
+        else
+        {
+            Debug.Log($"[Squad {SquadId}] Leader {downed.NPCId} down — no eligible successor (only guardian/dead left).");
+        }
     }
 
     // ── Leader directives (squad coordination) ────────────────────────────────

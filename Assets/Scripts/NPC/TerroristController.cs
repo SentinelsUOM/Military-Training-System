@@ -68,6 +68,24 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "Leave empty to keep spawn rotation.")]
     public Transform staticFaceTarget;
 
+    [Header("Idle scanning (look around on patrol)")]
+    [Tooltip("While idle/patrolling, the NPC periodically stops and sweeps its view left-right " +
+             "instead of only ever facing its direction of travel — so a trainee can't simply " +
+             "walk behind him. Off = old behaviour (walk the line, never look around).")]
+    public bool idleScan = true;
+
+    [Tooltip("Average seconds between look-arounds while idle.")]
+    public float idleScanInterval = 5f;
+
+    [Tooltip("How far to either side (degrees) the NPC turns to scan.")]
+    public float idleScanAngle = 65f;
+
+    [Tooltip("Turn speed (deg/sec) of the idle scan sweep — deliberately calm, not an alert snap.")]
+    public float idleScanTurnSpeed = 70f;
+
+    [Tooltip("Seconds the NPC holds each look direction, giving perception time to catch the trainee.")]
+    public float idleScanHoldTime = 0.8f;
+
     [Tooltip("Animator on this NPC (used to trigger death animation). Optional.")]
     public Animator animator;
 
@@ -877,6 +895,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     Coroutine _suspiciousRoutine;
     Coroutine _investigateRoutine;
     Coroutine _wanderRoutine;
+    Coroutine _idleScanRoutine;
     Coroutine _retreatRoutine;
     Coroutine _alertGiveUpRoutine;       // returns NPC to patrol if Alert never re-acquires
     bool      _hasRetreated;   // one retreat per life — reset only on (re)spawn
@@ -1526,6 +1545,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
             if (agent != null && agent.isActiveAndEnabled) agent.ResetPath();
         }
 
+        // ── Cancel idle scanning when leaving Idle ───────────────────────────
+        if (prev == TerroristState.Idle && _idleScanRoutine != null)
+        {
+            StopCoroutine(_idleScanRoutine);
+            _idleScanRoutine = null;
+        }
+
         // ── Cancel retreat when leaving Retreat ──────────────────────────────
         if (prev == TerroristState.Retreat && _retreatRoutine != null)
         {
@@ -1657,6 +1683,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 {
                     case IdleMode.Patrol:
                         patrolLine?.ResumePatrol();
+                        // Look around while patrolling — a guard who only ever faces his
+                        // direction of travel is trivially followed. (Wander does this inside
+                        // its own routine; Static below scans in place.)
+                        StartIdleScan();
                         break;
 
                     case IdleMode.Wander:
@@ -1673,6 +1703,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
                                 staticFaceTarget.position.x,
                                 transform.position.y,
                                 staticFaceTarget.position.z));
+                        // A stationary guard still sweeps his view — he doesn't just stare
+                        // at one spot forever.
+                        StartIdleScan();
                         break;
                 }
                 break;
@@ -2772,6 +2805,71 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     // ── Wander ────────────────────────────────────────────────────────────────
 
+    // ── Idle scanning (look around while patrolling / standing guard) ───────────
+
+    /// <summary>Kick off the periodic idle look-around (Patrol & Static modes). Wander folds the
+    /// same sweep into its own pause, so it doesn't use this.</summary>
+    void StartIdleScan()
+    {
+        if (!idleScan) return;
+        if (_idleScanRoutine != null) StopCoroutine(_idleScanRoutine);
+        _idleScanRoutine = StartCoroutine(IdleScanRoutine());
+    }
+
+    IEnumerator IdleScanRoutine()
+    {
+        while (currentState == TerroristState.Idle)
+        {
+            // Let the NPC patrol/stand for a bit, then look around.
+            float wait = idleScanInterval + Random.Range(-1f, 1.5f);
+            float w = 0f;
+            while (w < wait && currentState == TerroristState.Idle) { w += Time.deltaTime; yield return null; }
+            if (currentState != TerroristState.Idle) break;
+
+            // Halt patrol movement for the sweep (Static has no movement to halt). PatrolLine with
+            // isStopped && no lookTarget neither moves nor rotates, so the sweep owns the facing.
+            bool resumePatrol = false;
+            if (patrolLine != null && !patrolLine.isStopped)
+            {
+                patrolLine.isStopped = true;
+                patrolLine.lookTarget = null;
+                resumePatrol = true;
+            }
+            if (agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+
+            yield return StartCoroutine(ScanSweep());
+
+            if (resumePatrol && patrolLine != null && currentState == TerroristState.Idle)
+                patrolLine.isStopped = false;
+        }
+        _idleScanRoutine = null;
+    }
+
+    /// <summary>A calm look-around: turn to the left, then the right, then back to centre, holding
+    /// each for a beat so perception has a chance to catch the trainee. Aborts if state changes.</summary>
+    IEnumerator ScanSweep()
+    {
+        float baseY = transform.eulerAngles.y;
+        float[] offsets = { -idleScanAngle, idleScanAngle, 0f };
+        foreach (float off in offsets)
+        {
+            Quaternion target = Quaternion.Euler(0f, baseY + off, 0f);
+            while (Quaternion.Angle(transform.rotation, target) > 2f && currentState == TerroristState.Idle)
+            {
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation, target, idleScanTurnSpeed * Time.deltaTime);
+                yield return null;
+            }
+            float held = 0f;
+            while (held < idleScanHoldTime && currentState == TerroristState.Idle)
+            {
+                held += Time.deltaTime;
+                yield return null;
+            }
+            if (currentState != TerroristState.Idle) yield break;
+        }
+    }
+
     IEnumerator WanderRoutine()
     {
         while (currentState == TerroristState.Idle)
@@ -2794,9 +2892,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 }
             }
 
-            // Pause at this spot
-            float pause = wanderPauseTime + Random.Range(-0.5f, 0.5f);
-            yield return new WaitForSeconds(pause);
+            // Pause at this spot — and look around while doing so, rather than just standing.
+            if (idleScan)
+                yield return StartCoroutine(ScanSweep());
+            else
+            {
+                float pause = wanderPauseTime + Random.Range(-0.5f, 0.5f);
+                yield return new WaitForSeconds(pause);
+            }
         }
 
         _wanderRoutine = null;
@@ -3151,6 +3254,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         var directive = new LeaderDirective(type, target, this, reason);
 
         Squad.Get(squadId)?.IssueDirective(directive);
+    }
+
+    /// <summary>
+    /// Promoted to squad Leader mid-mission because the previous leader was killed. Takes the role
+    /// and, if this NPC is already in the fight, immediately rallies the squad (Converge on the
+    /// last-known trainee position) so coordination resumes at once instead of waiting for the next
+    /// state change. Called by Squad's re-election.
+    /// </summary>
+    public void AssumeLeadership()
+    {
+        role = NPCRole.Leader;
+        Debug.Log($"[TerroristController] {gameObject.name}: assumed squad leadership.");
+
+        if ((currentState == TerroristState.Alert || currentState == TerroristState.Engage) &&
+            _lastKnownPlayerPos != Vector3.zero)
+        {
+            var rally = new ScenarioEvent(ScenarioEventType.GunshotHeard, _lastKnownPlayerPos, gameObject);
+            IssueDirectiveIfLeader(rally, LeaderDirectiveType.Converge);
+        }
     }
 
     /// <summary>
