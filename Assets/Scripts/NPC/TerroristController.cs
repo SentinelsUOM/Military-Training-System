@@ -1027,6 +1027,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             case IdleMode.Patrol:
                 patrolLine?.ResumePatrol();
+                StartIdleScan(); // look around while patrolling (NPCs spawn straight into Idle,
+                                 // never through the TransitionTo(Idle) entry — start it here too)
                 break;
 
             case IdleMode.Wander:
@@ -1041,6 +1043,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         staticFaceTarget.position.x,
                         transform.position.y,
                         staticFaceTarget.position.z));
+                StartIdleScan(); // a stationary guard still sweeps his view
                 break;
         }
     }
@@ -2812,6 +2815,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     void StartIdleScan()
     {
         if (!idleScan) return;
+        if (isHostageGuardian) return; // guardian sweeps via GuardianRoamRoutine, not this
         if (_idleScanRoutine != null) StopCoroutine(_idleScanRoutine);
         _idleScanRoutine = StartCoroutine(IdleScanRoutine());
     }
