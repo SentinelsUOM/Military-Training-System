@@ -2946,10 +2946,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
     {
         while (currentState == TerroristState.Idle)
         {
-            // Let the NPC patrol/stand for a bit, then look around.
+            // Let the NPC patrol/stand for a bit, then look around — BUT cut the wait short the
+            // instant it ends up facing a wall, so it never sits and stares at blank masonry.
             float wait = idleScanInterval + Random.Range(-1f, 1.5f);
             float w = 0f;
-            while (w < wait && currentState == TerroristState.Idle) { w += Time.deltaTime; yield return null; }
+            while (w < wait && currentState == TerroristState.Idle && !FacingWallClose())
+            {
+                w += Time.deltaTime;
+                yield return null;
+            }
             if (currentState != TerroristState.Idle) break;
 
             // Halt patrol movement for the sweep (Static has no movement to halt). PatrolLine with
@@ -2971,15 +2976,51 @@ public class TerroristController : MonoBehaviour, INPCResponder
         _idleScanRoutine = null;
     }
 
-    /// <summary>A calm look-around: turn to the left, then the right, then back to centre, holding
-    /// each for a beat so perception has a chance to catch the trainee. Aborts if state changes.</summary>
+    /// <summary>A calm look-around — but ONLY toward OPEN directions. A blind left/right sweep
+    /// turned NPCs standing near a wall to stare straight at blank masonry; instead we probe the
+    /// bearings for clearance and glance at a few OPEN ones (nearest current facing first, so it
+    /// reads as a natural look-around, not a spin). Holds each a beat so perception can catch the
+    /// trainee. Aborts if state changes.</summary>
+    /// <summary>True if the NPC is presently facing a wall/obstacle within arm's reach — the
+    /// signal to look away toward open space now rather than keep staring at it.</summary>
+    bool FacingWallClose()
+    {
+        Vector3 eye = transform.position + Vector3.up * 1.5f;
+        Vector3 fwd = transform.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.001f) return false;
+        fwd.Normalize();
+        return Physics.Raycast(eye, fwd, out RaycastHit h, 1.3f, ~0, QueryTriggerInteraction.Ignore)
+               && !h.collider.transform.IsChildOf(transform);
+    }
+
     IEnumerator ScanSweep()
     {
-        float baseY = transform.eulerAngles.y;
-        float[] offsets = { -idleScanAngle, idleScanAngle, 0f };
-        foreach (float off in offsets)
+        Vector3 eye = transform.position + Vector3.up * 1.5f;
+
+        // Gather bearings that are clear of walls/obstacles (own colliders don't count).
+        var open = new System.Collections.Generic.List<Vector3>();
+        for (int a = 0; a < 360; a += 24)
         {
-            Quaternion target = Quaternion.Euler(0f, baseY + off, 0f);
+            Vector3 dir = Quaternion.Euler(0f, a, 0f) * Vector3.forward;
+            bool hit = Physics.Raycast(eye, dir, out RaycastHit h, 2.5f, ~0, QueryTriggerInteraction.Ignore);
+            bool blocked = hit && h.distance < 1.8f && !h.collider.transform.IsChildOf(transform);
+            if (!blocked) open.Add(dir);
+        }
+        if (open.Count == 0) yield break; // boxed in on all sides — better to hold than force a wall-stare
+
+        // Nearest-to-current-facing first, so the glance-around looks natural.
+        Vector3 fwd = transform.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude > 0.001f) fwd.Normalize(); else fwd = Vector3.forward;
+        open.Sort((x, y) => Vector3.Dot(y, fwd).CompareTo(Vector3.Dot(x, fwd)));
+
+        // Glance at up to three spread OPEN bearings.
+        var picks = new System.Collections.Generic.List<Vector3> { open[0] };
+        if (open.Count > 2) picks.Add(open[open.Count / 2]);
+        if (open.Count > 1) picks.Add(open[open.Count - 1]);
+
+        foreach (Vector3 dir in picks)
+        {
+            Quaternion target = Quaternion.LookRotation(new Vector3(dir.x, 0f, dir.z));
             while (Quaternion.Angle(transform.rotation, target) > 2f && currentState == TerroristState.Idle)
             {
                 transform.rotation = Quaternion.RotateTowards(
