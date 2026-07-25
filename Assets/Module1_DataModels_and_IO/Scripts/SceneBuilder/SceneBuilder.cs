@@ -280,11 +280,26 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Extra width/height carved around the measured door so the real leaf
         // swings without scraping the jambs.
         private const float DoorClearance = 0.08f;
+        // Vertical lift for the measured (realistic) door so its leaf clears the
+        // floor slab. Room/corridor floors are 0.08 m slabs whose TOP sits 0.08 m
+        // above the room origin, but door positions are authored at origin height —
+        // resting the leaf's lowest point there buried it 8 cm inside the floor
+        // collider. PhysX depenetrates the thin leaf SIDEWAYS (cheaper than 8 cm
+        // up), shoving it against its world-anchored hinge every frame: doors hung
+        // ajar, tilted and juddered. Slab top (0.08) + a 1.5 cm reveal.
+        private const float DoorFloorLift = 0.095f;
         // Minimum solid wall left at each end of a door opening. Module 1 jogs
         // doors sideways off the wall midpoint to break sightlines; this caps the
         // jog when the measured door turns out wider than the generator assumed,
         // so an opening can never eat through a wall corner.
         private const float MinJamb = 0.3f;
+        // How far (m) a door's perpendicular coordinate may sit off a room's own
+        // outer extent and still count as "on that wall". High-randomness layouts
+        // jitter each room ±0.5 m on both axes, so the shared midplane between two
+        // adjacent rooms can be up to ~0.5 m off either room's extent; anything
+        // beyond this tolerance is a loop/cross edge between rooms that were never
+        // placed adjacent, whose door cannot be realised as geometry at all.
+        private const float DoorPlaneTolerance = 1.25f;
 
         // ── Measured door footprint (filled by MeasureDoorPrefab each build) ──
         // SceneBuilder now supports realistic doors of any size (e.g. the XRI
@@ -1065,27 +1080,37 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             // each side, so adjacent rooms' walls meet on the shared plane.
             float halfW = (width + CorridorGap) * 0.5f;
             float halfD = (depth + CorridorGap) * 0.5f;
-            float outerW = width + CorridorGap;
-            float outerD = depth + CorridorGap;
 
             // Carve openings sized to the measured door so the real leaf fits.
             float openW = _doorOpeningWidth  + DoorClearance;
             float openH = _doorOpeningHeight + DoorClearance;
 
-            // Lateral offset (room-local, along the wall) of the opening on each
-            // side that carries a door. Module 1 jogs doors sideways off the wall
-            // midpoint so openings on opposite walls don't line up into a single
-            // sightline, so the wall has to be carved at the door's REAL position —
-            // carving at the centre would bury the jogged door in solid wall.
+            // Per-side carve of the door opening: the lateral offset along the wall
+            // AND the perpendicular plane the wall must be built at. Module 1 jogs
+            // doors sideways off the wall midpoint (sightline control) and jitters
+            // room positions at high randomness, so a shared wall's true plane is
+            // the door midpoint between the two rooms — building it at this room's
+            // own outer extent leaves the leaf floating between two offset wall
+            // planes, visibly detached and scraping the misaligned openings.
+            // Doors that cannot lie on this wall at all (loop/cross edges between
+            // rooms the BFS never placed adjacent) are ignored: the wall stays
+            // solid here and BuildDoors skips their leaf, keeping the room sealed.
             var doorOffsets = new Dictionary<WallSide, float>();
+            var doorPlanes  = new Dictionary<WallSide, float>();
             if (room.doors != null)
                 foreach (DoorData d in room.doors)
-                    if (!doorOffsets.ContainsKey(d.wallSide))
-                        doorOffsets[d.wallSide] =
-                            OpeningOffset(room, d.wallSide, d.position.ToVector3(), openW);
+                    if (!doorOffsets.ContainsKey(d.wallSide) &&
+                        DoorLiesOnWall(room, d.wallSide, d.position.ToVector3(), openW,
+                                       out float lat, out float plane))
+                    {
+                        doorOffsets[d.wallSide] = lat;
+                        doorPlanes[d.wallSide]  = plane;
+                    }
 
             // Exterior building entrances also need an opening in the perimeter
-            // wall, otherwise the trainee spawns outside a sealed building.
+            // wall, otherwise the trainee spawns outside a sealed building. They
+            // sit on the room's own outer extent (nothing beyond to share with),
+            // so only the lateral offset is needed.
             if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
                 foreach (EntryOpening e in openings)
                     doorOffsets[e.side] =
@@ -1093,44 +1118,60 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             float OffsetOn(WallSide side) =>
                 doorOffsets.TryGetValue(side, out float o) ? o : 0f;
+            float PlaneOn(WallSide side, float fallback) =>
+                doorPlanes.TryGetValue(side, out float p) ? p : fallback;
+
+            // Wall planes (room-local). A side carrying an interior door follows
+            // the door's plane; every other side sits on the room's outer extent.
+            // Each wall runs plane-to-plane so the corners stay sealed even when a
+            // door plane pulls a wall off the nominal rectangle.
+            float southPlane = PlaneOn(WallSide.South, -halfD);
+            float northPlane = PlaneOn(WallSide.North,  halfD);
+            float westPlane  = PlaneOn(WallSide.West,  -halfW);
+            float eastPlane  = PlaneOn(WallSide.East,   halfW);
 
             // A solid wall gets a window when it faces the outside (no adjacent
             // room) - interior partitions between rooms stay solid.
             bool WindowOn(WallSide side) =>
                 addWindows && !doorOffsets.ContainsKey(side) && IsExteriorWall(room, side, allRooms);
 
-            // North / South run along X (span = outerW, thin in Z).
+            // North / South run along X (thin in Z).
             BuildWallSide(roomGo, "South", doorOffsets.ContainsKey(WallSide.South), WindowOn(WallSide.South),
-                          axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height,
+                          axisAlongX: true, fixedCoord: southPlane,
+                          spanMin: westPlane, spanMax: eastPlane, height: height,
                           openW: openW, openH: openH, openOffset: OffsetOn(WallSide.South), mat: mat);
             BuildWallSide(roomGo, "North", doorOffsets.ContainsKey(WallSide.North), WindowOn(WallSide.North),
-                          axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height,
+                          axisAlongX: true, fixedCoord: northPlane,
+                          spanMin: westPlane, spanMax: eastPlane, height: height,
                           openW: openW, openH: openH, openOffset: OffsetOn(WallSide.North), mat: mat);
 
-            // East / West run along Z (span = outerD, thin in X).
+            // East / West run along Z (thin in X).
             BuildWallSide(roomGo, "East", doorOffsets.ContainsKey(WallSide.East), WindowOn(WallSide.East),
-                          axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height,
+                          axisAlongX: false, fixedCoord: eastPlane,
+                          spanMin: southPlane, spanMax: northPlane, height: height,
                           openW: openW, openH: openH, openOffset: OffsetOn(WallSide.East), mat: mat);
             BuildWallSide(roomGo, "West", doorOffsets.ContainsKey(WallSide.West), WindowOn(WallSide.West),
-                          axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height,
+                          axisAlongX: false, fixedCoord: westPlane,
+                          spanMin: southPlane, spanMax: northPlane, height: height,
                           openW: openW, openH: openH, openOffset: OffsetOn(WallSide.West), mat: mat);
 
             // Cap the room with a flat ceiling so it's enclosed top-to-bottom like
             // the hand-built base map (which uses a thin "Ceiling" slab on top of
-            // the walls). Spans the same outer footprint as the floor and walls so
-            // adjacent rooms' ceilings meet on the shared corridor plane.
-            BuildCeiling(roomGo, outerW, outerD, height, mat);
+            // the walls). Spans the actual wall planes so it still covers the room
+            // when a door plane pulls a wall off the nominal rectangle.
+            BuildCeiling(roomGo, westPlane, eastPlane, southPlane, northPlane, height, mat);
         }
 
         /// <summary>
         /// Lays a flat ceiling/roof slab across the top of a room, resting on the
         /// walls at <paramref name="height"/>. Mirrors the prefab floor: a thin
-        /// flattened cube spanning the room's outer footprint. Uses
-        /// <see cref="ceilingMaterial"/> when assigned, otherwise the wall material
-        /// so the cap visually matches the room.
+        /// flattened cube spanning the actual wall planes (room-local), so it still
+        /// covers the room when a door plane pulls a wall off the nominal
+        /// rectangle. Uses <see cref="ceilingMaterial"/> when assigned, otherwise
+        /// the wall material so the cap visually matches the room.
         /// </summary>
-        private void BuildCeiling(GameObject roomGo, float outerW, float outerD,
-                                  float height, Material wallMat)
+        private void BuildCeiling(GameObject roomGo, float xMin, float xMax,
+                                  float zMin, float zMax, float height, Material wallMat)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Ceiling";
@@ -1138,8 +1179,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             // Bottom face sits on top of the walls (y = height); centre is half the
             // slab thickness above that.
-            go.transform.localPosition = new Vector3(0f, height + CeilingThickness * 0.5f, 0f);
-            go.transform.localScale    = new Vector3(outerW, CeilingThickness, outerD);
+            go.transform.localPosition = new Vector3((xMin + xMax) * 0.5f,
+                                                     height + CeilingThickness * 0.5f,
+                                                     (zMin + zMax) * 0.5f);
+            go.transform.localScale    = new Vector3(xMax - xMin, CeilingThickness, zMax - zMin);
 
             Material mat = ceilingMaterial != null ? ceilingMaterial : wallMat;
             if (mat != null)
@@ -1153,40 +1196,44 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// (north/south) or Z (east/west). A door takes priority over a window.
         /// <paramref name="openOffset"/> slides the door opening along the wall
         /// (0 = centred); the two flanking segments are sized independently so an
-        /// off-centre opening is framed exactly.
+        /// off-centre opening is framed exactly. The wall runs from
+        /// <paramref name="spanMin"/> to <paramref name="spanMax"/> (room-local) —
+        /// the planes of the two perpendicular walls — so corners stay sealed even
+        /// when a door plane pulls a wall off the nominal rectangle.
         /// </summary>
         private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor, bool hasWindow,
-                                   bool axisAlongX, float fixedCoord, float span,
+                                   bool axisAlongX, float fixedCoord, float spanMin, float spanMax,
                                    float height, float openW, float openH, float openOffset,
                                    Material mat)
         {
             if (!hasDoor)
             {
                 if (hasWindow)
-                    BuildWindowWall(roomGo, sideName, axisAlongX, fixedCoord, span, height, mat);
+                    BuildWindowWall(roomGo, sideName, axisAlongX, fixedCoord, spanMin, spanMax,
+                                    height, mat);
                 else
                     AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
-                                   offset: 0f, length: span, height: height, mat: mat);
+                                   offset: (spanMin + spanMax) * 0.5f,
+                                   length: spanMax - spanMin, height: height, mat: mat);
                 return;
             }
 
-            float halfSpan = span * 0.5f;
-            float openMin  = openOffset - openW * 0.5f;
-            float openMax  = openOffset + openW * 0.5f;
+            float openMin = openOffset - openW * 0.5f;
+            float openMax = openOffset + openW * 0.5f;
 
             // Full-height segments either side of the opening. Either can be empty
             // when the opening reaches a wall end.
-            float lenA = openMin + halfSpan;   // -halfSpan → openMin
-            float lenB = halfSpan - openMax;   // openMax   → +halfSpan
+            float lenA = openMin - spanMin;   // spanMin → openMin
+            float lenB = spanMax - openMax;   // openMax → spanMax
             if (lenA <= 0.01f && lenB <= 0.01f) return; // opening spans the wall
 
             if (lenA > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
-                               offset: (openMin - halfSpan) * 0.5f, length: lenA,
+                               offset: (spanMin + openMin) * 0.5f, length: lenA,
                                height: height, mat: mat);
             if (lenB > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
-                               offset: (openMax + halfSpan) * 0.5f, length: lenB,
+                               offset: (openMax + spanMax) * 0.5f, length: lenB,
                                height: height, mat: mat);
 
             // Header (transom) filling the wall above the door opening, so the
@@ -1218,6 +1265,44 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
             return Mathf.Clamp(lateral, -limit, limit);
+        }
+
+        /// <summary>
+        /// Decides whether a door at <paramref name="layoutPos"/> genuinely sits on
+        /// this room's wall on <paramref name="side"/>, and where. On success,
+        /// <paramref name="lateral"/> is the along-wall offset of the opening
+        /// (clamped like <see cref="OpeningOffset"/>) and <paramref name="plane"/>
+        /// is the perpendicular room-local coordinate the wall must be built at —
+        /// the door midpoint between the two rooms, which under high-randomness
+        /// position jitter is NOT the room's own outer extent. Returns false for
+        /// doors that cannot lie on the wall at all: loop-closing / cross edges
+        /// connect rooms the BFS never placed adjacent, leaving the door midpoint
+        /// far off the wall plane or past the wall's end. Such doors get no
+        /// geometry (wall stays solid, no leaf) instead of floating in space.
+        /// </summary>
+        private static bool DoorLiesOnWall(RoomData room, WallSide side, Vector3 layoutPos,
+                                           float openW, out float lateral, out float plane)
+        {
+            bool alongX = side == WallSide.North || side == WallSide.South;
+
+            float width = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float depth = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float span  = (alongX ? width : depth) + CorridorGap;                  // along the wall
+            float half  = ((alongX ? depth : width) + CorridorGap) * 0.5f;         // to the wall
+            float defaultPlane = side == WallSide.North || side == WallSide.East ? half : -half;
+
+            Vector3 c = room.position.ToVector3();
+            float rawLateral = alongX ? layoutPos.x - c.x : layoutPos.z - c.z;
+            plane            = alongX ? layoutPos.z - c.z : layoutPos.x - c.x;
+
+            float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
+            lateral = Mathf.Clamp(rawLateral, -limit, limit);
+
+            // Perpendicular: the door must sit on (or jitter-near) this wall's plane…
+            if (Mathf.Abs(plane - defaultPlane) > DoorPlaneTolerance) return false;
+            // …and laterally within the wall's run (a diagonal pair's midpoint lands
+            // at the wall's very end — no opening can fit there).
+            return Mathf.Abs(rawLateral) <= span * 0.5f - openW * 0.5f;
         }
 
         private void AddWallSegment(GameObject roomGo, string name, bool axisAlongX,
@@ -1266,15 +1351,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// wall when the opening can't fit the span or the room is too short.
         /// </summary>
         private void BuildWindowWall(GameObject roomGo, string sideName, bool axisAlongX,
-                                     float fixedCoord, float span, float height, Material mat)
+                                     float fixedCoord, float spanMin, float spanMax,
+                                     float height, Material mat)
         {
+            float span   = spanMax - spanMin;
+            float center = (spanMin + spanMax) * 0.5f;
             float winW   = Mathf.Min(WindowWidth, span - 2f * WindowSideMargin);
             float winTop = WindowSillHeight + WindowHeight;
 
             if (winW < 0.5f || winTop > height - 0.1f)
             {
                 AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
-                               offset: 0f, length: span, height: height, mat: mat);
+                               offset: center, length: span, height: height, mat: mat);
                 return;
             }
 
@@ -1283,25 +1371,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             // Solid sill below the opening (full span).
             AddWallSegment(roomGo, $"Wall_{sideName}_Sill", axisAlongX, fixedCoord,
-                           offset: 0f, length: span, height: WindowSillHeight, mat: mat);
+                           offset: center, length: span, height: WindowSillHeight, mat: mat);
 
             // Header above the opening (full span).
             float headerH = height - winTop;
             if (headerH > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
-                               offset: 0f, length: span, height: headerH, mat: mat, baseY: winTop);
+                               offset: center, length: span, height: headerH, mat: mat, baseY: winTop);
 
             // Jambs either side of the opening.
             AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
-                           offset: -segOffset, length: segLen, height: WindowHeight,
+                           offset: center - segOffset, length: segLen, height: WindowHeight,
                            mat: mat, baseY: WindowSillHeight);
             AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
-                           offset:  segOffset, length: segLen, height: WindowHeight,
+                           offset: center + segOffset, length: segLen, height: WindowHeight,
                            mat: mat, baseY: WindowSillHeight);
 
             // Glass pane in the opening, only when a material is supplied.
             if (windowMaterial != null)
-                AddWindowPane(roomGo, $"Window_{sideName}", axisAlongX, fixedCoord, winW);
+                AddWindowPane(roomGo, $"Window_{sideName}", axisAlongX, fixedCoord, center, winW);
         }
 
         /// <summary>
@@ -1309,7 +1397,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// sill height. Keeps its box collider so the trainee can't reach through.
         /// </summary>
         private void AddWindowPane(GameObject roomGo, string name, bool axisAlongX,
-                                   float fixedCoord, float width)
+                                   float fixedCoord, float center, float width)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = name;
@@ -1318,12 +1406,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             float cy = WindowSillHeight + WindowHeight * 0.5f;
             if (axisAlongX)
             {
-                go.transform.localPosition = new Vector3(0f, cy, fixedCoord);
+                go.transform.localPosition = new Vector3(center, cy, fixedCoord);
                 go.transform.localScale    = new Vector3(width, WindowHeight, WindowPaneThickness);
             }
             else
             {
-                go.transform.localPosition = new Vector3(fixedCoord, cy, 0f);
+                go.transform.localPosition = new Vector3(fixedCoord, cy, center);
                 go.transform.localScale    = new Vector3(WindowPaneThickness, WindowHeight, width);
             }
 
@@ -1388,15 +1476,34 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     if (!_placedDoorPairs.Add(pairKey))
                         continue; // reciprocal already placed
 
-                    // Place the leaf on the SAME clamped lateral the wall was carved
-                    // at, so a door Module 1 jogged further than the measured leaf
-                    // allows still lands squarely in its opening.
+                    // Land the leaf EXACTLY where BuildWalls carved the opening:
+                    // same clamped lateral and same wall plane (under position
+                    // jitter the shared plane is off this room's outer extent).
+                    // Doors that lie on no wall at all — loop/cross edges between
+                    // rooms the BFS never placed adjacent — get no leaf; their
+                    // walls stayed solid, so nothing is left floating in space.
                     Vector3 pos = door.position.ToVector3();
-                    float offset = OpeningOffset(room, door.wallSide, pos, openW);
+                    if (!DoorLiesOnWall(room, door.wallSide, pos, openW,
+                                        out float lateral, out float plane))
+                    {
+                        Debug.LogWarning(
+                            $"[SceneBuilder] Door '{door.id}' ({room.id} → {door.connectsToRoomId}) " +
+                            $"does not lie on {room.id}'s {door.wallSide} wall — the rooms were " +
+                            "not placed adjacent (loop/cross edge). Skipping its leaf; the wall " +
+                            "stays solid.");
+                        continue;
+                    }
+
                     if (door.wallSide == WallSide.North || door.wallSide == WallSide.South)
-                        pos.x = room.position.x + offset;
+                    {
+                        pos.x = room.position.x + lateral;
+                        pos.z = room.position.z + plane;
+                    }
                     else
-                        pos.z = room.position.z + offset;
+                    {
+                        pos.z = room.position.z + lateral;
+                        pos.x = room.position.x + plane;
+                    }
 
                     PlaceDoor(door.id, World(pos), door.wallSide, door.state);
                 }
@@ -1641,8 +1748,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         {
             if (doorPrefab == null || _entryOpenings.Count == 0) return;
 
+            float openW = _doorOpeningWidth + DoorClearance;
+
             foreach (KeyValuePair<string, List<EntryOpening>> kvp in _entryOpenings)
             {
+                RoomData room = scenario.layout.rooms.Find(r => r.id == kvp.Key);
+
                 foreach (EntryOpening opening in kvp.Value)
                 {
                     bool isMain = string.Equals(opening.id, "main", StringComparison.Ordinal);
@@ -1650,7 +1761,22 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                         ? DoorState.Open
                         : DoorState.Closed;
 
-                    PlaceDoor($"door_{opening.id}", opening.position, opening.side, entryState);
+                    // Place the leaf on the SAME clamped lateral BuildWalls carved the
+                    // opening at (see OpeningOffset) — an entry point from the layout can
+                    // sit further along the wall than a MinJamb-safe opening allows, and
+                    // without re-clamping here the door would land off to one side of the
+                    // hole actually cut in the wall.
+                    Vector3 pos = opening.position;
+                    if (room != null)
+                    {
+                        float offset = OpeningOffset(room, opening.side, pos - _buildOffset, openW);
+                        Vector3 roomWorld = World(room.position.ToVector3());
+                        bool alongX = opening.side == WallSide.North || opening.side == WallSide.South;
+                        if (alongX) pos.x = roomWorld.x + offset;
+                        else        pos.z = roomWorld.z + offset;
+                    }
+
+                    PlaceDoor($"door_{opening.id}", pos, opening.side, entryState);
                 }
             }
         }
@@ -2317,6 +2443,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                      : assist.hinge    != null ? assist.hinge.transform
                      : null;
             GameObject measureRoot = leaf != null ? leaf.gameObject : probe;
+            // Remember before the probe is destroyed — DestroyImmediate (edit
+            // mode) would make `leaf != null` false below.
+            bool leafMeasured = leaf != null;
 
             bool found = ComputeLocalBounds(measureRoot, probe.transform, out Bounds b);
 
@@ -2331,6 +2460,20 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             _doorBaseRot       = spanAlongX ? Quaternion.identity : Quaternion.Euler(0f, 90f, 0f);
             _doorCenterOffset  = new Vector3(b.center.x, 0f, b.center.z);
             _doorBaseY         = b.center.y - b.size.y * 0.5f; // lowest mesh point (root-local)
+
+            // Realistic door (leaf measured separately): float the leaf clear of
+            // the 0.08 m floor slab instead of resting it at the room origin,
+            // where it spawned embedded in the floor collider and physics shoved
+            // it against its hinge (tilted, juddering, half-open doors). Folding
+            // the lift into _doorBaseY raises the whole prefab at placement; the
+            // opening grows by the same amount so the raised leaf still clears
+            // the wall header. The greybox prefab keeps its own baked-in
+            // floorClear and needs neither adjustment.
+            if (leafMeasured)
+            {
+                _doorBaseY         -= DoorFloorLift;
+                _doorOpeningHeight += DoorFloorLift;
+            }
         }
 
         /// <summary>
