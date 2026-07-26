@@ -30,6 +30,11 @@ public class NPCHitBox : MonoBehaviour, IDamageable, IImpactType
     public void TakeDamage(float damage, GameObject damager)
     {
         if (_controller == null) return;
+        // Terrorists don't frag each other: ignore a round whose shooter is another terrorist
+        // (their crossfire is meant to threaten the trainee and can wound the hostage, not kill
+        // the squad). The trainee's bullets have no TerroristController on the damager, so they
+        // still land normally.
+        if (damager != null && damager.GetComponentInParent<TerroristController>() != null) return;
         _controller.TakeHit(damage * damageMultiplier);
 
         // Module 4 integration hook (additive — fires per bullet impact for accuracy metrics)

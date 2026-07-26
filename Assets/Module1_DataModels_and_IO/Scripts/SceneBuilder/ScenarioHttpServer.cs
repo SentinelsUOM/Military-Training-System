@@ -61,8 +61,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         [Header("Listener")]
         [Tooltip("HTTP port to listen on. Make sure the device firewall and " +
-                 "Wi-Fi router (no client isolation) allow this port.")]
-        public int port = 8080;
+                 "Wi-Fi router (no client isolation) allow this port. NOTE: do NOT use 8080 — " +
+                 "the MCP-for-Unity editor bridge owns 8080 on this machine, so the bind would " +
+                 "collide and the dashboard can't reach the server.")]
+        public int port = 8000;
 
         [Tooltip("Sent back as Access-Control-Allow-Origin. '*' lets any page " +
                  "reach the server; lock down to your dashboard URL for prod.")]

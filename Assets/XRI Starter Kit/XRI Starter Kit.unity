@@ -116101,7 +116101,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e6df8f2d488ae3f44b348ed2fd8a5cf6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TeamSentinels.ScenarioGeneration.Scene.ScenarioHttpServer
-  port: 8080
+  port: 8000
   allowedOrigin: '*'
   pipelineTimeoutSeconds: 30
   sceneBuilder: {fileID: 0}

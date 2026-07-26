@@ -75,6 +75,12 @@ public class HostageController : MonoBehaviour, INPCResponder
              "limping/injured escort walk instead of the normal scared walk.")]
     public float injuredThreshold = 45f;
 
+    [Header("Blood")]
+    [Tooltip("Blood burst spawned at the wound each time the hostage is shot or executed " +
+             "(BulletImpactFleshBigEffect). Left empty = no burst (the bullet's own flesh decal " +
+             "still shows for the trainee's rounds).")]
+    public GameObject bloodEffectPrefab;
+
     [Header("Debug — read-only in Play mode")]
     public HostageState currentState = HostageState.Calm;
 
@@ -86,6 +92,11 @@ public class HostageController : MonoBehaviour, INPCResponder
     /// <summary>True when a terrorist executed this hostage (vs. trainee friendly-fire).
     /// Lets the session tag the outcome as "hostage_executed" for the AAR.</summary>
     public bool WasExecuted { get; private set; }
+
+    /// <summary>True if the fatal blow came from the CAPTORS — a scripted execution OR a
+    /// terrorist's crossfire round — rather than the trainee's own friendly fire. Lets the AAR
+    /// label a terrorist-caused death honestly instead of blaming the trainee.</summary>
+    public bool KilledByCaptor => WasExecuted || _killedByTerrorist;
 
     // ── INPCResponder ─────────────────────────────────────────────────────────
 
@@ -227,16 +238,23 @@ public class HostageController : MonoBehaviour, INPCResponder
     /// injuredThreshold the hostage limps (injured escort walk); at 0 it dies.
     /// Called by HostageHitBox when a bullet hits.
     /// </summary>
-    public void TakeHit(float damage)
+    public void TakeHit(float damage, Vector3? hitPoint = null, bool byTrainee = true)
     {
         if (currentState == HostageState.Down || currentState == HostageState.Freed) return;
 
+        _lastHitByTrainee = byTrainee; // for honest AAR attribution if this shot proves fatal
         _currentHealth = Mathf.Max(0f, _currentHealth - damage);
         Debug.LogWarning($"[HostageController] {NPCId} HIT — HP {_currentHealth:F0} " +
                          $"(friendly fire is a training failure).");
 
+        // Blood burst at the wound — spawned for BOTH the trainee's friendly fire and a
+        // terrorist's rounds (both routes reach here). Defaults to chest height if the caller
+        // didn't supply an impact point.
+        SpawnBlood(hitPoint ?? (transform.position + Vector3.up * 1.2f));
+
         if (_currentHealth <= 0f)
         {
+            if (!_lastHitByTrainee) _killedByTerrorist = true; // captor crossfire, not friendly fire
             TransitionTo(HostageState.Down, null);
             return;
         }
@@ -275,8 +293,8 @@ public class HostageController : MonoBehaviour, INPCResponder
     }
 
     /// <summary>The guardian executes this hostage — an instant, unavoidable kill used
-    /// as the leverage payoff. Terrorist weapons otherwise can't harm hostages, so this
-    /// is the only terrorist→hostage lethal path. Ends in Down + OnKilled(executed).</summary>
+    /// as the leverage payoff (distinct from terrorists' now-lethal crossfire, which goes
+    /// through TakeHit). Ends in Down + OnKilled(executed).</summary>
     public void Execute(TerroristController by)
     {
         if (currentState == HostageState.Down || currentState == HostageState.Freed) return;
@@ -284,7 +302,18 @@ public class HostageController : MonoBehaviour, INPCResponder
         _currentHealth = 0f;
         Debug.LogWarning($"[HostageController] {NPCId} EXECUTED by " +
                          $"{(by != null ? by.gameObject.name : "guardian")} — mission failure.");
+        // Point-blank shot — blood at the head where the barrel sits.
+        SpawnBlood(HeadPosition);
         TransitionTo(HostageState.Down, null);
+    }
+
+    /// <summary>Spawn the blood burst at a world point (auto-destroys after 3 s). No-op if
+    /// no prefab is assigned.</summary>
+    void SpawnBlood(Vector3 worldPos)
+    {
+        if (bloodEffectPrefab == null) return;
+        var fx = Instantiate(bloodEffectPrefab, worldPos, Quaternion.identity);
+        Destroy(fx, 3f);
     }
 
     /// <summary>True while a live guardian is holding this hostage at gunpoint.</summary>
@@ -354,17 +383,21 @@ public class HostageController : MonoBehaviour, INPCResponder
     float       _currentHealth;
     bool        _injured;
     bool        _killedFired;              // guards OnKilled against double-firing
+    bool        _lastHitByTrainee = true;  // source of the most recent damaging hit (AAR attribution)
+    bool        _killedByTerrorist;        // set if a captor's crossfire round landed the fatal hit
     bool        _threatened;               // captor currently has the barrel on this hostage's head
     TerroristController _captor;           // guardian holding this hostage as leverage (null if free)
     bool        _hasSpeedParam;
     bool        _hasInjuredParam;
     bool        _hasHeldParam;
     bool        _hasThreatenedParam;
+    bool        _hasRescuedParam;
     static readonly int _animSpeed      = Animator.StringToHash("Speed");
     static readonly int _animInjured    = Animator.StringToHash("Injured");
     static readonly int _animHeld       = Animator.StringToHash("Held");
     static readonly int _animScared     = Animator.StringToHash("Scared");
     static readonly int _animThreatened = Animator.StringToHash("Threatened");
+    static readonly int _animRescued    = Animator.StringToHash("Rescued");
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -390,6 +423,7 @@ public class HostageController : MonoBehaviour, INPCResponder
                 if (p.nameHash == _animInjured)    _hasInjuredParam    = true;
                 if (p.nameHash == _animHeld)       _hasHeldParam       = true;
                 if (p.nameHash == _animThreatened) _hasThreatenedParam = true;
+                if (p.nameHash == _animRescued)    _hasRescuedParam    = true;
             }
             if (!_hasSpeedParam)
                 Debug.LogWarning($"[HostageController] {NPCId}: Animator has no 'Speed' param — " +
@@ -422,14 +456,25 @@ public class HostageController : MonoBehaviour, INPCResponder
             }
         }
 
-        // Velocity-driven locomotion blend: walk while moving (e.g. following the
-        // trainee), idle when still. Measures real movement so it never glides.
+        // Velocity-driven locomotion blend: walk while moving (e.g. following the trainee),
+        // idle when still. Prefer the NavMeshAgent's OWN locomotion velocity — that is the
+        // canonical "how fast am I actually walking" and is robust; the per-frame transform
+        // delta is only a fallback for hostages moved without an agent. (Using the transform
+        // delta alone was fragile: any frame the root didn't visibly advance read as Speed 0,
+        // so the walk clip could sit at idle even mid-escort.)
         if (_animator != null)
         {
-            Vector3 d = transform.position - _lastAnimPos;
-            d.y = 0f;
-            float speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
-            float norm  = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
+            float speed;
+            if (_agent != null && _agent.enabled && _agent.isOnNavMesh)
+            {
+                speed = _agent.velocity.magnitude;
+            }
+            else
+            {
+                Vector3 d = transform.position - _lastAnimPos; d.y = 0f;
+                speed = Time.deltaTime > 0f ? d.magnitude / Time.deltaTime : 0f;
+            }
+            float norm = Mathf.Clamp01(speed / Mathf.Max(0.01f, walkAnimReferenceSpeed));
             if (_hasSpeedParam)   _animator.SetFloat(_animSpeed, norm, 0.12f, Time.deltaTime);
             if (_hasInjuredParam) _animator.SetBool(_animInjured, _injured);
         }
@@ -513,6 +558,10 @@ public class HostageController : MonoBehaviour, INPCResponder
 
             case HostageState.Follow:
                 scareController?.SetScared(false);
+                // Rescued: the hostage rises from the captive kneel and walks out with the
+                // trainee. Latches true (they've stood up) — a later scare keeps them standing,
+                // not dropping back to the floor. Drives Captive→StandUp→Locomotion in the animator.
+                if (_hasRescuedParam) _animator?.SetBool(_animRescued, true);
                 _followRoutine = StartCoroutine(FollowRoutine());
                 break;
 

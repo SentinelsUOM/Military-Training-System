@@ -193,7 +193,10 @@ public class Module4SessionController : MonoBehaviour
             var dead = FirstDeadHostage();
             if (dead != null)
             {
-                EndSession(dead.WasExecuted ? "hostage_executed" : "hostage_killed");
+                // Honest attribution: a scripted execution OR a terrorist's crossfire round →
+                // "hostage_executed" (the captors killed them); only the trainee's own friendly
+                // fire → "hostage_killed".
+                EndSession(dead.KilledByCaptor ? "hostage_executed" : "hostage_killed");
                 return;
             }
         }
