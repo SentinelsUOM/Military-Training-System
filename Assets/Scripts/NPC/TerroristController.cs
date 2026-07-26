@@ -512,7 +512,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
                     if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
                     _investigateRoutine = null;
                     _isInvestigating = false;
-                    InvestigatePosition(e.Origin); // walk to the contact now
+                    // A shot is fresh contact intel (the trainee's OWN free-fire included). Re-anchor
+                    // the WHOLE squad's hunt on it so everyone converges and it stays persistent —
+                    // not just me walking over while the others hold. BeginHunt resets the search to
+                    // this spot and re-tasks every searcher; falling back to a solo walk only if I
+                    // somehow have no squad.
+                    var sq = string.IsNullOrEmpty(squadId) ? null : Squad.Get(squadId);
+                    if (sq != null) sq.BeginHunt(e.Origin, Vector3.zero, this);
+                    else            InvestigatePosition(e.Origin); // walk to the contact now
                 }
                 break;
 
@@ -558,10 +565,19 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
             // ── Squad alert ────────────────────────────────────────────────────
             case ScenarioEventType.AllyDownSeen:
-                // Squadmate started shooting — raise readiness but wait for personal LOS
+                // Saw a squadmate go down (raised by AlertPropagator when a mate is killed — this
+                // is the path that fires WITHOUT an EventManager in the scene). Raise readiness...
                 if (currentState == TerroristState.Idle ||
                     currentState == TerroristState.Suspicious)
                     TransitionTo(TerroristState.Alert, e);
+                // ...and investigate the kill location as a SHARED, PERSISTENT hunt — the same
+                // reaction as TerroristDown. Without this, a survivor who lost the corpse-leash
+                // (see FindHurtAlly) would just stand at readiness with nowhere to go.
+                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId) && e.Origin != Vector3.zero)
+                {
+                    _lastKnownPlayerPos = e.Origin;
+                    Squad.Get(squadId)?.BeginHunt(e.Origin, Vector3.zero, this);
+                }
                 break;
 
             case ScenarioEventType.StressSpike:
@@ -582,6 +598,17 @@ public class TerroristController : MonoBehaviour, INPCResponder
                     currentState == TerroristState.Suspicious ||
                     currentState == TerroristState.Alert)
                     TransitionTo(TerroristState.Alert, e);
+
+                // A mate just died — his position is a fresh Last-Known-Point: the trainee was
+                // right there (Literature_Review_Module2.docx §4). Investigate it as a SHARED,
+                // PERSISTENT squad hunt rather than leashing onto the corpse. This gets the whole
+                // squad sweeping the kill location AND keeps them responsive to the trainee's own
+                // gunfire, instead of the survivor standing on the body forever.
+                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId))
+                {
+                    _lastKnownPlayerPos = e.Origin;
+                    Squad.Get(squadId)?.BeginHunt(e.Origin, Vector3.zero, this);
+                }
                 break;
         }
     }
@@ -841,6 +868,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); _lastKnownPlayerPos = cam.position; }
                 _personallyConfirmedPlayer = true; // own eyes confirmed the target
                 _playerVisible = true;             // currently has eyes on the player
+                // SHARE the confirmed contact with the whole squad: a sighting is squad
+                // knowledge, not private to me. Writes the shared anchor, (re)starts the
+                // persistent hunt and re-arms its budget, so a mate who never got his own
+                // line of sight still commits to hunting instead of quitting.
+                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId))
+                    Squad.Get(squadId)?.ReportConfirmedContact(
+                        _lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                 if (currentState == TerroristState.Alert ||
                     currentState == TerroristState.Suspicious)
                     TransitionTo(TerroristState.Engage, e);
@@ -872,8 +906,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         var sq = Squad.Get(squadId);
                         if (sq != null)
                         {
-                            sq.SetEscapeContext(_lastKnownPlayerPos, _lastKnownPlayerHeading);
-                            sq.FanOutSearch(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
+                            // Mark the hunt PERSISTENT and shared: the whole squad now presses
+                            // this contact until they reacquire or collectively stand down —
+                            // not each man giving up on his own short timer.
+                            sq.BeginHunt(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                         }
                         else
                         {
@@ -1684,13 +1720,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // closes every give-up path (alert timeout, end-of-search, post-retreat) —
                 // which is why wounded terrorists were "suddenly giving up" mid-fight.
                 // The hostage guardian is exempt: his post IS the hostage.
-                if (_personallyConfirmedPlayer && !isHostageGuardian &&
-                    _lastKnownPlayerPos != Vector3.zero)
+                // Bounce back to Alert if I've personally seen the trainee OR my squad is still
+                // running its shared hunt — a non-guardian must not settle into Idle while the
+                // squad is committed. The ONLY sanctioned exit is Squad.EndHunt → StandDown, which
+                // clears both conditions first so this correctly lets everyone settle together.
+                bool squadHunting = SquadHunting;
+                if ((_personallyConfirmedPlayer || squadHunting) && !isHostageGuardian)
                 {
-                    Debug.Log($"[TerroristController] {gameObject.name}: has seen the trainee — " +
-                              $"NOT standing down. Resuming the hunt at {_lastKnownPlayerPos:F1}.");
-                    TransitionTo(TerroristState.Alert, null);
-                    break;
+                    // Seed my search anchor from the squad's shared last-seen point if I never
+                    // had my own (e.g. I only heard the shots).
+                    if (_lastKnownPlayerPos == Vector3.zero && squadHunting)
+                        _lastKnownPlayerPos = Squad.Get(squadId).PointLastSeen;
+                    if (_lastKnownPlayerPos != Vector3.zero)
+                    {
+                        Debug.Log($"[TerroristController] {gameObject.name}: contact still live " +
+                                  $"(seen={_personallyConfirmedPlayer}, squadHunt={squadHunting}) — " +
+                                  $"NOT standing down. Resuming the hunt at {_lastKnownPlayerPos:F1}.");
+                        TransitionTo(TerroristState.Alert, null);
+                        break;
+                    }
                 }
                 // Guardians don't use the shared patrol/wander idle modes — their movement
                 // is the leashed GuardianRoamRoutine so they never drift off the hostage.
@@ -2586,7 +2634,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // this, a wounded man would retreat, come back to Alert, then quietly forget the
         // whole thing and walk back to his idle post.
         while (currentState == TerroristState.Alert &&
-               (_personallyConfirmedPlayer || SquadInContact()))
+               (_personallyConfirmedPlayer || SquadInContact() || SquadHunting))
         {
             // Just HOLD him in Alert — do NOT issue movement from here.
             // This used to call InvestigatePosition() every 2s, which fought
@@ -2597,8 +2645,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
             yield return new WaitForSeconds(1f);
         }
 
-        // Still alert and not mid-search → no contact regained, stand down.
-        if (currentState == TerroristState.Alert && !_isInvestigating)
+        // Still alert and not mid-search → no contact regained. But never stand down alone while
+        // the squad hunt is live — that decision belongs to Squad.EndHunt so the whole squad
+        // stands down together.
+        if (currentState == TerroristState.Alert && !_isInvestigating && !SquadHunting)
         {
             Debug.Log($"[TerroristController] {gameObject.name}: lost contact — giving up, resuming patrol.");
             TransitionTo(TerroristState.Idle, null);
@@ -2651,8 +2701,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
         foreach (var npc in NPCRegistry.GetAll())
         {
             if (!(npc is TerroristController t) || t == this) continue;
-            if (t.currentState == TerroristState.Down) return t;
-            if (t.currentHealth <= allySupportHealthThreshold) return t;
+            // A DEAD mate is NOT a help target. He is Down forever, so returning him here
+            // leashed the survivor onto the corpse — HELP re-pathed to the body every second
+            // and overrode everything else, INCLUDING the survivor's response to the trainee's
+            // own gunfire ("he's stuck on the body and never comes for me"). The dead-mate
+            // reaction is handled once, as a hunt of the kill location, in RespondTo(TerroristDown).
+            // NOTE: a corpse has health <= 20, which is also <= allySupportHealthThreshold, so we
+            // must `continue` past Down before the wounded-ally check below — not fall through.
+            if (t.currentState == TerroristState.Down) continue;
+            if (t.currentHealth <= allySupportHealthThreshold) return t; // ALIVE but wounded — worth helping
         }
         return null;
     }
@@ -3315,18 +3372,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (currentState == startState &&
             (startState == TerroristState.Suspicious || startState == TerroristState.Alert))
         {
-            // This room is clear. Re-split: ask the squad to fan out again, which — thanks to the
-            // swept-room memory — pushes searchers onto FRESH rooms rather than re-checking this
-            // one. Cooldown-gated, so a wave of "empty" reports produces at most one re-task.
-            // (The old behaviour sent the whole squad to the SAME point; that is what clumped
-            //  them. This is the "if they don't find me, they split again" behaviour.)
-            Vector3 reFocus = _lastKnownPlayerPos != Vector3.zero ? _lastKnownPlayerPos : soundPos;
-            if (!string.IsNullOrEmpty(squadId))
-                Squad.Get(squadId)?.FanOutSearch(reFocus, _lastKnownPlayerHeading, this);
+            // This room is clear. Whether the squad KEEPS hunting is NOT mine to decide alone —
+            // that was the bug: each searcher gave up on its own, so the mate who never got his
+            // own line of sight walked home while a comrade was still committed. Hand the
+            // decision to the squad: it either re-tasks me to a fresh sector (persistent hunt)
+            // or ends the hunt for EVERYONE together (a deliberate group stand-down).
+            var squad = string.IsNullOrEmpty(squadId) ? null : Squad.Get(squadId);
+            if (squad != null && squad.HuntActive)
+            {
+                // NotifySearcherExhausted either re-dispatches me (starting a fresh investigate
+                // routine that now owns my state) or calls EndHunt → StandDown, which already
+                // sent me to Idle. Either way this old routine is done — just exit without
+                // touching state, or we'd clobber the routine the squad just started.
+                squad.NotifySearcherExhausted(this);
+                yield break;
+            }
 
-            // If I have PERSONALLY seen the trainee I never give up — stay Alert and I'll get a
-            // fresh sector from the fan-out (or, failing that, keep scanning). If I only ever
-            // HEARD something, the area's clear to me now → stand down to Idle.
+            // No squad hunt in play (solo NPC, or a lone gunshot investigation): fall back to the
+            // per-NPC rule — a man who has personally SEEN the trainee keeps hunting; one who only
+            // HEARD something treats the area as clear and stands down.
             if (_personallyConfirmedPlayer)
             {
                 Debug.Log($"[TerroristController] {gameObject.name}: room clear but I've seen the trainee — staying on the hunt.");
@@ -3390,6 +3454,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (agent != null && agent.isActiveAndEnabled)
             agent.speed = _originalAgentSpeed;
     }
+
+    /// <summary>
+    /// Called by Squad.EndHunt when the squad collectively decides the contact is cold. Drops the
+    /// hunt and returns to patrol — TOGETHER with the rest of the squad — and clears the personal
+    /// "I've seen him" latch so the deliberate group stand-down actually sticks (otherwise the
+    /// Idle-entry catch-all would bounce me straight back to Alert, and the mission would never
+    /// settle). Guardians and men still in the fight are left alone.
+    /// </summary>
+    public void StandDown()
+    {
+        if (isHostageGuardian) return;
+        if (currentState == TerroristState.Down || currentState == TerroristState.Engage) return;
+
+        _personallyConfirmedPlayer = false; // the contact is genuinely cold now
+        if (_investigateRoutine != null) { StopCoroutine(_investigateRoutine); EndInvestigation(); }
+        if (currentState == TerroristState.Alert || currentState == TerroristState.Suspicious)
+            TransitionTo(TerroristState.Idle, null);
+    }
+
+    /// True while this NPC's squad is running a shared, persistent hunt. While set, no member
+    /// stands down on its own — stand-down is the squad's collective EndHunt().
+    bool SquadHunting =>
+        !string.IsNullOrEmpty(squadId) && (Squad.Get(squadId)?.HuntActive ?? false);
 
     // ── Leader coordination (squad directives) ────────────────────────────────
 
