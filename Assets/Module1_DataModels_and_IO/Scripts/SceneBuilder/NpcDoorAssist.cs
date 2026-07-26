@@ -85,6 +85,7 @@ public class NpcDoorAssist : MonoBehaviour
     private bool _wasKinematic;
     private JointLimits _authoredLimits;   // inspector limits captured before Door.Start clamps them
     private bool _limitsCaptured;
+    private Collider _leafCollider;        // anchors the NPC sensor to the real doorway
 
     private Transform Leaf =>
         leafBody != null ? leafBody.transform :
@@ -99,6 +100,28 @@ public class NpcDoorAssist : MonoBehaviour
         if (knobs == null || knobs.Length == 0)  knobs = GetComponentsInChildren<XRKnob>(true);
         // Obstacle may sit on the root (axis-aligned doorway carve) or the leaf.
         if (navObstacle == null) navObstacle = GetComponentInChildren<NavMeshObstacle>(true);
+
+        // The NPC sensor must sit on the DOORWAY, not the prefab root — the
+        // RealDoor art is authored metres away from its root (SceneBuilder
+        // compensates visually via its measured centre offset, but a root-relative
+        // sensor box would watch empty space while NPCs pile up at the real door,
+        // and swing the leaf whenever an agent wandered near the phantom spot).
+        // Anchoring on the leaf's collider follows the actual door wherever the
+        // art sits relative to the root.
+        if (leafBody != null) _leafCollider = leafBody.GetComponentInChildren<Collider>();
+
+        // The leaf is a heavy panel on a world-anchored hinge; contacts (trainee's
+        // weapon, NPCs brushing past) can overpower the default solver and leave
+        // the leaf visibly tilted or jittering. More iterations keep the hinge
+        // rigid, capped depenetration stops contact pops, and interpolation
+        // removes the fixed-step stutter that reads as "not smooth" in VR.
+        if (leafBody != null)
+        {
+            leafBody.solverIterations           = 16;
+            leafBody.solverVelocityIterations   = 16;
+            leafBody.maxDepenetrationVelocity   = 2f;
+            leafBody.interpolation              = RigidbodyInterpolation.Interpolate;
+        }
 
         // Cache the rest pose now: Awake runs before any Start(), so this is the
         // authored "closed" rotation before the XRI Door snaps it on its Start.
@@ -236,7 +259,21 @@ public class NpcDoorAssist : MonoBehaviour
     // standing in the doorway trigger the kinematic auto-open assist.
     private bool NpcInDoorway()
     {
-        Vector3 worldCenter = transform.TransformPoint(sensorCenter);
+        // Centre the sensor on the leaf itself (the real doorway) when a leaf
+        // collider exists; the prefab root can sit metres away from the art, so a
+        // root-relative box would watch empty space. sensorCenter.y still sets
+        // the sensing height above the leaf's base.
+        Vector3 worldCenter;
+        if (_leafCollider != null)
+        {
+            Bounds b = _leafCollider.bounds;
+            worldCenter = new Vector3(b.center.x, b.min.y + sensorCenter.y, b.center.z);
+        }
+        else
+        {
+            worldCenter = transform.TransformPoint(sensorCenter);
+        }
+
         Collider[] hits = Physics.OverlapBox(
             worldCenter, sensorHalfExtents, transform.rotation,
             ~0, QueryTriggerInteraction.Ignore);

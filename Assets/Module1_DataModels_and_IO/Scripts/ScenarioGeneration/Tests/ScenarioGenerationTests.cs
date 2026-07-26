@@ -327,8 +327,9 @@ namespace TeamSentinels.ScenarioGeneration.Tests
 
         private void VerifyDoorStatePolicy()
         {
-            // Low randomness => deterministic: entry doors open, hostage-room
-            // door locked, all other interior doors closed.
+            // Low randomness => deterministic: hostage-room door locked, every
+            // other door closed (entry doors included — the building stays sealed
+            // until the trainee breaches it, so defenders get no sightline out).
             ScenarioConfig cfg = MakeConfig(LayoutType.Linear, rooms: 6, seed: 1, RandomnessLevel.Low);
             LayoutData layout  = new LayoutGenerator().Generate(cfg, new System.Random(1));
             Dictionary<string, RoomData> roomMap = layout.rooms.ToDictionary(r => r.id);
@@ -351,9 +352,9 @@ namespace TeamSentinels.ScenarioGeneration.Tests
                     }
                     else if (touchesEntry)
                     {
-                        if (door.state != DoorState.Open)
+                        if (door.state != DoorState.Closed)
                             throw new Exception(
-                                $"entry door {door.id} is {door.state}, expected Open");
+                                $"entry door {door.id} is {door.state}, expected Closed");
                     }
                     else if (door.state != DoorState.Closed)
                     {

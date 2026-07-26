@@ -188,9 +188,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "generated entry as before.")]
         public Transform traineeStartPoint;
 
-        [Tooltip("When the trainee spawns at a staging point, start the building's " +
-                 "entry door(s) open so the trainee can walk straight in. Interior " +
-                 "doors keep their generated state.")]
+        [Tooltip("Start SECONDARY entry doors open so the trainee can walk straight in. " +
+                 "The main entrance and the compound's outer door are always closed " +
+                 "regardless of this setting — an open front door gives the defenders a " +
+                 "clear shot at the trainee while they are still outside. Interior doors " +
+                 "keep their generated state.")]
         public bool entryDoorStartsOpen = true;
 
         [Header("Trainee Loadout")]
@@ -205,6 +207,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         [Tooltip("Where the weapon lands relative to the trainee: (right, up, forward) " +
                  "in metres. It drops to the floor from here if it has gravity.")]
         public Vector3 weaponSpawnOffset = new Vector3(0.3f, 1.0f, 0.6f);
+
+        [Tooltip("Extra yaw (degrees) applied to the weapon on top of the trainee's " +
+                 "facing. 90 lays it sideways - e.g. along the staging table's length.")]
+        public float weaponSpawnYaw = 0f;
+
+        [Tooltip("Controller-adjustment table moved in front of the trainee's spawn " +
+                 "point so its tools are in reach the moment the mission starts. " +
+                 "Assign every scene root that makes up the table (tabletop mesh, " +
+                 "interactables group, stray controls sitting on it) - they are moved " +
+                 "together as one rigid group, so items keep their spot on the " +
+                 "tabletop. The FIRST entry is the reference root: its position is " +
+                 "the table centre and, at 0 yaw, the table's front faces -Z (the " +
+                 "'Main Table' convention). Leave empty to leave the table alone.")]
+        public Transform[] stagingTableRoots;
+
+        [Tooltip("Where the table's centre lands relative to the trainee: (right, up, " +
+                 "forward) in metres. The default puts the tabletop just within " +
+                 "reach, facing the trainee.")]
+        public Vector3 tableSpawnOffset = new Vector3(0f, 0.86f, 1.6f);
 
         [Header("Safe Zone / Extraction")]
         [Tooltip("Spawn a 'safe spot' (extraction zone) just inside the entrance. " +
@@ -278,6 +299,26 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Extra width/height carved around the measured door so the real leaf
         // swings without scraping the jambs.
         private const float DoorClearance = 0.08f;
+        // Vertical lift for the measured (realistic) door so its leaf clears the
+        // floor slab. Room/corridor floors are 0.08 m slabs whose TOP sits 0.08 m
+        // above the room origin, but door positions are authored at origin height —
+        // resting the leaf's lowest point there buried it 8 cm inside the floor
+        // collider. PhysX depenetrates the thin leaf SIDEWAYS (cheaper than 8 cm
+        // up), shoving it against its world-anchored hinge every frame: doors hung
+        // ajar, tilted and juddered. Slab top (0.08) + a 1.5 cm reveal.
+        private const float DoorFloorLift = 0.095f;
+        // Minimum solid wall left at each end of a door opening. Module 1 jogs
+        // doors sideways off the wall midpoint to break sightlines; this caps the
+        // jog when the measured door turns out wider than the generator assumed,
+        // so an opening can never eat through a wall corner.
+        private const float MinJamb = 0.3f;
+        // How far (m) a door's perpendicular coordinate may sit off a room's own
+        // outer extent and still count as "on that wall". High-randomness layouts
+        // jitter each room ±0.5 m on both axes, so the shared midplane between two
+        // adjacent rooms can be up to ~0.5 m off either room's extent; anything
+        // beyond this tolerance is a loop/cross edge between rooms that were never
+        // placed adjacent, whose door cannot be realised as geometry at all.
+        private const float DoorPlaneTolerance = 1.25f;
 
         // ── Measured door footprint (filled by MeasureDoorPrefab each build) ──
         // SceneBuilder now supports realistic doors of any size (e.g. the XRI
@@ -1058,59 +1099,98 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             // each side, so adjacent rooms' walls meet on the shared plane.
             float halfW = (width + CorridorGap) * 0.5f;
             float halfD = (depth + CorridorGap) * 0.5f;
-            float outerW = width + CorridorGap;
-            float outerD = depth + CorridorGap;
-
-            var doorSides = new HashSet<WallSide>();
-            if (room.doors != null)
-                foreach (DoorData d in room.doors) doorSides.Add(d.wallSide);
-
-            // Exterior building entrances also need an opening in the perimeter
-            // wall, otherwise the trainee spawns outside a sealed building.
-            if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
-                foreach (EntryOpening e in openings) doorSides.Add(e.side);
 
             // Carve openings sized to the measured door so the real leaf fits.
             float openW = _doorOpeningWidth  + DoorClearance;
             float openH = _doorOpeningHeight + DoorClearance;
 
+            // Per-side carve of the door opening: the lateral offset along the wall
+            // AND the perpendicular plane the wall must be built at. Module 1 jogs
+            // doors sideways off the wall midpoint (sightline control) and jitters
+            // room positions at high randomness, so a shared wall's true plane is
+            // the door midpoint between the two rooms — building it at this room's
+            // own outer extent leaves the leaf floating between two offset wall
+            // planes, visibly detached and scraping the misaligned openings.
+            // Doors that cannot lie on this wall at all (loop/cross edges between
+            // rooms the BFS never placed adjacent) are ignored: the wall stays
+            // solid here and BuildDoors skips their leaf, keeping the room sealed.
+            var doorOffsets = new Dictionary<WallSide, float>();
+            var doorPlanes  = new Dictionary<WallSide, float>();
+            if (room.doors != null)
+                foreach (DoorData d in room.doors)
+                    if (!doorOffsets.ContainsKey(d.wallSide) &&
+                        DoorLiesOnWall(room, d.wallSide, d.position.ToVector3(), openW,
+                                       out float lat, out float plane))
+                    {
+                        doorOffsets[d.wallSide] = lat;
+                        doorPlanes[d.wallSide]  = plane;
+                    }
+
+            // Exterior building entrances also need an opening in the perimeter
+            // wall, otherwise the trainee spawns outside a sealed building. They
+            // sit on the room's own outer extent (nothing beyond to share with),
+            // so only the lateral offset is needed.
+            if (_entryOpenings.TryGetValue(room.id, out List<EntryOpening> openings))
+                foreach (EntryOpening e in openings)
+                    doorOffsets[e.side] =
+                        OpeningOffset(room, e.side, e.position - _buildOffset, openW);
+
+            float OffsetOn(WallSide side) =>
+                doorOffsets.TryGetValue(side, out float o) ? o : 0f;
+            float PlaneOn(WallSide side, float fallback) =>
+                doorPlanes.TryGetValue(side, out float p) ? p : fallback;
+
+            // Wall planes (room-local). A side carrying an interior door follows
+            // the door's plane; every other side sits on the room's outer extent.
+            // Each wall runs plane-to-plane so the corners stay sealed even when a
+            // door plane pulls a wall off the nominal rectangle.
+            float southPlane = PlaneOn(WallSide.South, -halfD);
+            float northPlane = PlaneOn(WallSide.North,  halfD);
+            float westPlane  = PlaneOn(WallSide.West,  -halfW);
+            float eastPlane  = PlaneOn(WallSide.East,   halfW);
+
             // A solid wall gets a window when it faces the outside (no adjacent
             // room) - interior partitions between rooms stay solid.
             bool WindowOn(WallSide side) =>
-                addWindows && !doorSides.Contains(side) && IsExteriorWall(room, side, allRooms);
+                addWindows && !doorOffsets.ContainsKey(side) && IsExteriorWall(room, side, allRooms);
 
-            // North / South run along X (span = outerW, thin in Z).
-            BuildWallSide(roomGo, "South", doorSides.Contains(WallSide.South), WindowOn(WallSide.South),
-                          axisAlongX: true, fixedCoord: -halfD, span: outerW, height: height,
-                          openW: openW, openH: openH, mat: mat);
-            BuildWallSide(roomGo, "North", doorSides.Contains(WallSide.North), WindowOn(WallSide.North),
-                          axisAlongX: true, fixedCoord:  halfD, span: outerW, height: height,
-                          openW: openW, openH: openH, mat: mat);
+            // North / South run along X (thin in Z).
+            BuildWallSide(roomGo, "South", doorOffsets.ContainsKey(WallSide.South), WindowOn(WallSide.South),
+                          axisAlongX: true, fixedCoord: southPlane,
+                          spanMin: westPlane, spanMax: eastPlane, height: height,
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.South), mat: mat);
+            BuildWallSide(roomGo, "North", doorOffsets.ContainsKey(WallSide.North), WindowOn(WallSide.North),
+                          axisAlongX: true, fixedCoord: northPlane,
+                          spanMin: westPlane, spanMax: eastPlane, height: height,
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.North), mat: mat);
 
-            // East / West run along Z (span = outerD, thin in X).
-            BuildWallSide(roomGo, "East", doorSides.Contains(WallSide.East), WindowOn(WallSide.East),
-                          axisAlongX: false, fixedCoord:  halfW, span: outerD, height: height,
-                          openW: openW, openH: openH, mat: mat);
-            BuildWallSide(roomGo, "West", doorSides.Contains(WallSide.West), WindowOn(WallSide.West),
-                          axisAlongX: false, fixedCoord: -halfW, span: outerD, height: height,
-                          openW: openW, openH: openH, mat: mat);
+            // East / West run along Z (thin in X).
+            BuildWallSide(roomGo, "East", doorOffsets.ContainsKey(WallSide.East), WindowOn(WallSide.East),
+                          axisAlongX: false, fixedCoord: eastPlane,
+                          spanMin: southPlane, spanMax: northPlane, height: height,
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.East), mat: mat);
+            BuildWallSide(roomGo, "West", doorOffsets.ContainsKey(WallSide.West), WindowOn(WallSide.West),
+                          axisAlongX: false, fixedCoord: westPlane,
+                          spanMin: southPlane, spanMax: northPlane, height: height,
+                          openW: openW, openH: openH, openOffset: OffsetOn(WallSide.West), mat: mat);
 
             // Cap the room with a flat ceiling so it's enclosed top-to-bottom like
             // the hand-built base map (which uses a thin "Ceiling" slab on top of
-            // the walls). Spans the same outer footprint as the floor and walls so
-            // adjacent rooms' ceilings meet on the shared corridor plane.
-            BuildCeiling(roomGo, outerW, outerD, height, mat);
+            // the walls). Spans the actual wall planes so it still covers the room
+            // when a door plane pulls a wall off the nominal rectangle.
+            BuildCeiling(roomGo, westPlane, eastPlane, southPlane, northPlane, height, mat);
         }
 
         /// <summary>
         /// Lays a flat ceiling/roof slab across the top of a room, resting on the
         /// walls at <paramref name="height"/>. Mirrors the prefab floor: a thin
-        /// flattened cube spanning the room's outer footprint. Uses
-        /// <see cref="ceilingMaterial"/> when assigned, otherwise the wall material
-        /// so the cap visually matches the room.
+        /// flattened cube spanning the actual wall planes (room-local), so it still
+        /// covers the room when a door plane pulls a wall off the nominal
+        /// rectangle. Uses <see cref="ceilingMaterial"/> when assigned, otherwise
+        /// the wall material so the cap visually matches the room.
         /// </summary>
-        private void BuildCeiling(GameObject roomGo, float outerW, float outerD,
-                                  float height, Material wallMat)
+        private void BuildCeiling(GameObject roomGo, float xMin, float xMax,
+                                  float zMin, float zMax, float height, Material wallMat)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = "Ceiling";
@@ -1118,8 +1198,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             // Bottom face sits on top of the walls (y = height); centre is half the
             // slab thickness above that.
-            go.transform.localPosition = new Vector3(0f, height + CeilingThickness * 0.5f, 0f);
-            go.transform.localScale    = new Vector3(outerW, CeilingThickness, outerD);
+            go.transform.localPosition = new Vector3((xMin + xMax) * 0.5f,
+                                                     height + CeilingThickness * 0.5f,
+                                                     (zMin + zMax) * 0.5f);
+            go.transform.localScale    = new Vector3(xMax - xMin, CeilingThickness, zMax - zMin);
 
             Material mat = ceilingMaterial != null ? ceilingMaterial : wallMat;
             if (mat != null)
@@ -1131,38 +1213,115 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// opening, or a wall with a glazed window punched into it.
         /// <paramref name="axisAlongX"/> selects whether the wall runs along X
         /// (north/south) or Z (east/west). A door takes priority over a window.
+        /// <paramref name="openOffset"/> slides the door opening along the wall
+        /// (0 = centred); the two flanking segments are sized independently so an
+        /// off-centre opening is framed exactly. The wall runs from
+        /// <paramref name="spanMin"/> to <paramref name="spanMax"/> (room-local) —
+        /// the planes of the two perpendicular walls — so corners stay sealed even
+        /// when a door plane pulls a wall off the nominal rectangle.
         /// </summary>
         private void BuildWallSide(GameObject roomGo, string sideName, bool hasDoor, bool hasWindow,
-                                   bool axisAlongX, float fixedCoord, float span,
-                                   float height, float openW, float openH, Material mat)
+                                   bool axisAlongX, float fixedCoord, float spanMin, float spanMax,
+                                   float height, float openW, float openH, float openOffset,
+                                   Material mat)
         {
             if (!hasDoor)
             {
                 if (hasWindow)
-                    BuildWindowWall(roomGo, sideName, axisAlongX, fixedCoord, span, height, mat);
+                    BuildWindowWall(roomGo, sideName, axisAlongX, fixedCoord, spanMin, spanMax,
+                                    height, mat);
                 else
                     AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
-                                   offset: 0f, length: span, height: height, mat: mat);
+                                   offset: (spanMin + spanMax) * 0.5f,
+                                   length: spanMax - spanMin, height: height, mat: mat);
                 return;
             }
 
-            float segLen = (span - openW) * 0.5f;
-            if (segLen <= 0f) return; // opening as wide as the wall — leave it open
+            float openMin = openOffset - openW * 0.5f;
+            float openMax = openOffset + openW * 0.5f;
 
-            // Full-height segments either side of the opening.
-            float segOffset = openW * 0.5f + segLen * 0.5f;
-            AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
-                           offset: -segOffset, length: segLen, height: height, mat: mat);
-            AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
-                           offset:  segOffset, length: segLen, height: height, mat: mat);
+            // Full-height segments either side of the opening. Either can be empty
+            // when the opening reaches a wall end.
+            float lenA = openMin - spanMin;   // spanMin → openMin
+            float lenB = spanMax - openMax;   // openMax → spanMax
+            if (lenA <= 0.01f && lenB <= 0.01f) return; // opening spans the wall
+
+            if (lenA > 0.01f)
+                AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
+                               offset: (spanMin + openMin) * 0.5f, length: lenA,
+                               height: height, mat: mat);
+            if (lenB > 0.01f)
+                AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
+                               offset: (openMax + spanMax) * 0.5f, length: lenB,
+                               height: height, mat: mat);
 
             // Header (transom) filling the wall above the door opening, so the
             // doorway isn't open all the way to the ceiling.
             float headerHeight = height - openH;
             if (headerHeight > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
-                               offset: 0f, length: openW, height: headerHeight,
+                               offset: openOffset, length: openW, height: headerHeight,
                                mat: mat, baseY: openH);
+        }
+
+        /// <summary>
+        /// Lateral offset (metres, along the wall, room-local) at which the opening on
+        /// <paramref name="side"/> must be carved so it lands on the door at
+        /// <paramref name="layoutPos"/>. Clamped so a <paramref name="openW"/>-wide
+        /// opening always keeps <see cref="MinJamb"/> of solid wall at each end — the
+        /// measured door prefab can be wider than the jog Module 1 assumed.
+        /// </summary>
+        private static float OpeningOffset(RoomData room, WallSide side, Vector3 layoutPos, float openW)
+        {
+            bool alongX = side == WallSide.North || side == WallSide.South;
+
+            float width  = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float depth  = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float span   = (alongX ? width : depth) + CorridorGap;
+
+            float lateral = alongX ? layoutPos.x - room.position.x
+                                   : layoutPos.z - room.position.z;
+
+            float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
+            return Mathf.Clamp(lateral, -limit, limit);
+        }
+
+        /// <summary>
+        /// Decides whether a door at <paramref name="layoutPos"/> genuinely sits on
+        /// this room's wall on <paramref name="side"/>, and where. On success,
+        /// <paramref name="lateral"/> is the along-wall offset of the opening
+        /// (clamped like <see cref="OpeningOffset"/>) and <paramref name="plane"/>
+        /// is the perpendicular room-local coordinate the wall must be built at —
+        /// the door midpoint between the two rooms, which under high-randomness
+        /// position jitter is NOT the room's own outer extent. Returns false for
+        /// doors that cannot lie on the wall at all: loop-closing / cross edges
+        /// connect rooms the BFS never placed adjacent, leaving the door midpoint
+        /// far off the wall plane or past the wall's end. Such doors get no
+        /// geometry (wall stays solid, no leaf) instead of floating in space.
+        /// </summary>
+        private static bool DoorLiesOnWall(RoomData room, WallSide side, Vector3 layoutPos,
+                                           float openW, out float lateral, out float plane)
+        {
+            bool alongX = side == WallSide.North || side == WallSide.South;
+
+            float width = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float depth = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float span  = (alongX ? width : depth) + CorridorGap;                  // along the wall
+            float half  = ((alongX ? depth : width) + CorridorGap) * 0.5f;         // to the wall
+            float defaultPlane = side == WallSide.North || side == WallSide.East ? half : -half;
+
+            Vector3 c = room.position.ToVector3();
+            float rawLateral = alongX ? layoutPos.x - c.x : layoutPos.z - c.z;
+            plane            = alongX ? layoutPos.z - c.z : layoutPos.x - c.x;
+
+            float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
+            lateral = Mathf.Clamp(rawLateral, -limit, limit);
+
+            // Perpendicular: the door must sit on (or jitter-near) this wall's plane…
+            if (Mathf.Abs(plane - defaultPlane) > DoorPlaneTolerance) return false;
+            // …and laterally within the wall's run (a diagonal pair's midpoint lands
+            // at the wall's very end — no opening can fit there).
+            return Mathf.Abs(rawLateral) <= span * 0.5f - openW * 0.5f;
         }
 
         private void AddWallSegment(GameObject roomGo, string name, bool axisAlongX,
@@ -1211,15 +1370,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// wall when the opening can't fit the span or the room is too short.
         /// </summary>
         private void BuildWindowWall(GameObject roomGo, string sideName, bool axisAlongX,
-                                     float fixedCoord, float span, float height, Material mat)
+                                     float fixedCoord, float spanMin, float spanMax,
+                                     float height, Material mat)
         {
+            float span   = spanMax - spanMin;
+            float center = (spanMin + spanMax) * 0.5f;
             float winW   = Mathf.Min(WindowWidth, span - 2f * WindowSideMargin);
             float winTop = WindowSillHeight + WindowHeight;
 
             if (winW < 0.5f || winTop > height - 0.1f)
             {
                 AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
-                               offset: 0f, length: span, height: height, mat: mat);
+                               offset: center, length: span, height: height, mat: mat);
                 return;
             }
 
@@ -1228,25 +1390,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             // Solid sill below the opening (full span).
             AddWallSegment(roomGo, $"Wall_{sideName}_Sill", axisAlongX, fixedCoord,
-                           offset: 0f, length: span, height: WindowSillHeight, mat: mat);
+                           offset: center, length: span, height: WindowSillHeight, mat: mat);
 
             // Header above the opening (full span).
             float headerH = height - winTop;
             if (headerH > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
-                               offset: 0f, length: span, height: headerH, mat: mat, baseY: winTop);
+                               offset: center, length: span, height: headerH, mat: mat, baseY: winTop);
 
             // Jambs either side of the opening.
             AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
-                           offset: -segOffset, length: segLen, height: WindowHeight,
+                           offset: center - segOffset, length: segLen, height: WindowHeight,
                            mat: mat, baseY: WindowSillHeight);
             AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
-                           offset:  segOffset, length: segLen, height: WindowHeight,
+                           offset: center + segOffset, length: segLen, height: WindowHeight,
                            mat: mat, baseY: WindowSillHeight);
 
             // Glass pane in the opening, only when a material is supplied.
             if (windowMaterial != null)
-                AddWindowPane(roomGo, $"Window_{sideName}", axisAlongX, fixedCoord, winW);
+                AddWindowPane(roomGo, $"Window_{sideName}", axisAlongX, fixedCoord, center, winW);
         }
 
         /// <summary>
@@ -1254,7 +1416,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// sill height. Keeps its box collider so the trainee can't reach through.
         /// </summary>
         private void AddWindowPane(GameObject roomGo, string name, bool axisAlongX,
-                                   float fixedCoord, float width)
+                                   float fixedCoord, float center, float width)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = name;
@@ -1263,12 +1425,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             float cy = WindowSillHeight + WindowHeight * 0.5f;
             if (axisAlongX)
             {
-                go.transform.localPosition = new Vector3(0f, cy, fixedCoord);
+                go.transform.localPosition = new Vector3(center, cy, fixedCoord);
                 go.transform.localScale    = new Vector3(width, WindowHeight, WindowPaneThickness);
             }
             else
             {
-                go.transform.localPosition = new Vector3(fixedCoord, cy, 0f);
+                go.transform.localPosition = new Vector3(fixedCoord, cy, center);
                 go.transform.localScale    = new Vector3(WindowPaneThickness, WindowHeight, width);
             }
 
@@ -1325,13 +1487,44 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 if (room.doors == null) continue;
 
+                float openW = _doorOpeningWidth + DoorClearance;
+
                 foreach (DoorData door in room.doors)
                 {
                     string pairKey = MakeDoorPairKey(room.id, door.connectsToRoomId);
                     if (!_placedDoorPairs.Add(pairKey))
                         continue; // reciprocal already placed
 
-                    PlaceDoor(door.id, World(door.position.ToVector3()), door.wallSide, door.state);
+                    // Land the leaf EXACTLY where BuildWalls carved the opening:
+                    // same clamped lateral and same wall plane (under position
+                    // jitter the shared plane is off this room's outer extent).
+                    // Doors that lie on no wall at all — loop/cross edges between
+                    // rooms the BFS never placed adjacent — get no leaf; their
+                    // walls stayed solid, so nothing is left floating in space.
+                    Vector3 pos = door.position.ToVector3();
+                    if (!DoorLiesOnWall(room, door.wallSide, pos, openW,
+                                        out float lateral, out float plane))
+                    {
+                        Debug.LogWarning(
+                            $"[SceneBuilder] Door '{door.id}' ({room.id} → {door.connectsToRoomId}) " +
+                            $"does not lie on {room.id}'s {door.wallSide} wall — the rooms were " +
+                            "not placed adjacent (loop/cross edge). Skipping its leaf; the wall " +
+                            "stays solid.");
+                        continue;
+                    }
+
+                    if (door.wallSide == WallSide.North || door.wallSide == WallSide.South)
+                    {
+                        pos.x = room.position.x + lateral;
+                        pos.z = room.position.z + plane;
+                    }
+                    else
+                    {
+                        pos.z = room.position.z + lateral;
+                        pos.x = room.position.x + plane;
+                    }
+
+                    PlaceDoor(door.id, World(pos), door.wallSide, door.state);
                 }
             }
         }
@@ -1453,9 +1646,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 list.Add(new EntryOpening { side = side, position = worldPos, id = id });
             }
 
-            // 1) Guaranteed exterior breach (the primary way in).
+            // 1) Guaranteed exterior breach (the primary way in). Slide it along the
+            //    wall first so it isn't in line with the entrance room's own interior
+            //    door — otherwise the two openings form a tunnel and a terrorist in
+            //    the next room can engage the trainee before they ever reach the
+            //    building. Updating the field keeps the corridor's outer opening and
+            //    the trainee spawn aligned to where the breach actually ends up.
             if (_entranceResolved)
+            {
+                _entranceWallMidWorld = OffsetEntranceFromInteriorDoors(scenario);
                 Add(_entranceRoomId, _entranceSide, _entranceWallMidWorld, "main");
+            }
 
             // 2) Optional extra entry points from the layout — only when genuinely exterior.
             List<EntryPointData> entryPoints = scenario.layout?.entryPoints;
@@ -1481,22 +1682,132 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         }
 
         /// <summary>
+        /// Slides the resolved main entrance along its wall until it is clear of the
+        /// entrance room's interior doors — the ones on the wall facing it, which
+        /// would otherwise line up with it into a straight sightline right through
+        /// the room. Returns the (possibly unchanged) world position of the opening.
+        /// Runs after <see cref="MeasureDoorPrefab"/> so the real leaf width is known.
+        /// </summary>
+        private Vector3 OffsetEntranceFromInteriorDoors(ScenarioData scenario)
+        {
+            Vector3 current = _entranceWallMidWorld;
+
+            RoomData room = scenario?.layout?.rooms?.Find(r => r.id == _entranceRoomId);
+            if (room == null || room.doors == null || room.doors.Count == 0) return current;
+
+            bool alongX = _entranceSide == WallSide.North || _entranceSide == WallSide.South;
+            WallSide facing = OppositeWall(_entranceSide);
+
+            // Laterals of the doors that share this wall's axis. A door on the facing
+            // wall lines up straight through the room; one on the entrance wall itself
+            // would collide with the opening outright.
+            var blockers = new List<float>();
+            foreach (DoorData d in room.doors)
+            {
+                if (d.wallSide != facing && d.wallSide != _entranceSide) continue;
+                Vector3 w = World(d.position.ToVector3());
+                blockers.Add(alongX ? w.x : w.z);
+            }
+            if (blockers.Count == 0) return current;
+
+            float openW = _doorOpeningWidth + DoorClearance;
+
+            // Already off to one side of every blocker by more than a doorway — the
+            // opening is fine where it is, so leave it on the tidy wall midpoint.
+            float currentLateral = alongX ? current.x : current.z;
+            if (NearestBlocker(blockers, currentLateral) >= openW + 0.5f) return current;
+
+            float width = room.size != null && room.size.width > 0f ? room.size.width : 6f;
+            float depth = room.size != null && room.size.depth > 0f ? room.size.depth : 6f;
+            float span  = (alongX ? width : depth) + CorridorGap;
+            float limit = Mathf.Max(0f, span * 0.5f - openW * 0.5f - MinJamb);
+
+            Vector3 roomWorld = World(room.position.ToVector3());
+            float centre = alongX ? roomWorld.x : roomWorld.z;
+
+            // Sweep the usable width of the wall and keep the position furthest from
+            // every blocker — beats the centred default whenever a facing door exists,
+            // and degrades gracefully on a wall that is already crowded.
+            float best = centre, bestClearance = -1f;
+            const int Steps = 8;
+            for (int i = 0; i <= Steps; i++)
+            {
+                float candidate  = centre + Mathf.Lerp(-limit, limit, i / (float)Steps);
+                float clearance  = NearestBlocker(blockers, candidate);
+                if (clearance > bestClearance) { bestClearance = clearance; best = candidate; }
+            }
+
+            if (alongX) current.x = best; else current.z = best;
+
+            Debug.Log($"[SceneBuilder] Main entrance on '{room.id}' was in line with an interior " +
+                      $"door; slid {Mathf.Abs(best - currentLateral):F1} m along the wall so the " +
+                      "trainee can't be shot through it from outside.");
+            return current;
+        }
+
+        /// <summary>Distance from <paramref name="lateral"/> to the nearest blocker.</summary>
+        private static float NearestBlocker(List<float> blockers, float lateral)
+        {
+            float nearest = float.MaxValue;
+            foreach (float b in blockers)
+                nearest = Mathf.Min(nearest, Mathf.Abs(b - lateral));
+            return nearest;
+        }
+
+        /// <summary>
         /// Places an exterior door at every building entry point. These are the
-        /// breach points into the building; they start closed so the trainee
-        /// opens them on the way in. The interior wall already has the matching
-        /// opening carved by BuildWalls.
+        /// breach points into the building. The MAIN entrance is always closed — an
+        /// open front door lets the defenders see and engage the trainee while they
+        /// are still crossing the open ground outside, which is exactly the death
+        /// the standoff spawn is meant to avoid. Secondary entry points still honour
+        /// <see cref="entryDoorStartsOpen"/>. The interior wall already has the
+        /// matching opening carved by BuildWalls.
         /// </summary>
         private void BuildEntryDoors(ScenarioData scenario)
         {
             if (doorPrefab == null || _entryOpenings.Count == 0) return;
 
+            float openW = _doorOpeningWidth + DoorClearance;
+
             foreach (KeyValuePair<string, List<EntryOpening>> kvp in _entryOpenings)
             {
-                DoorState entryState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
+                RoomData room = scenario.layout.rooms.Find(r => r.id == kvp.Key);
+
                 foreach (EntryOpening opening in kvp.Value)
                 {
-                    PlaceDoor($"door_{opening.id}", opening.position, opening.side, entryState);
+                    bool isMain = string.Equals(opening.id, "main", StringComparison.Ordinal);
+                    DoorState entryState = !isMain && entryDoorStartsOpen
+                        ? DoorState.Open
+                        : DoorState.Closed;
+
+                    // Place the leaf on the SAME clamped lateral BuildWalls carved the
+                    // opening at (see OpeningOffset) — an entry point from the layout can
+                    // sit further along the wall than a MinJamb-safe opening allows, and
+                    // without re-clamping here the door would land off to one side of the
+                    // hole actually cut in the wall.
+                    Vector3 pos = opening.position;
+                    if (room != null)
+                    {
+                        float offset = OpeningOffset(room, opening.side, pos - _buildOffset, openW);
+                        Vector3 roomWorld = World(room.position.ToVector3());
+                        bool alongX = opening.side == WallSide.North || opening.side == WallSide.South;
+                        if (alongX) pos.x = roomWorld.x + offset;
+                        else        pos.z = roomWorld.z + offset;
+                    }
+
+                    PlaceDoor($"door_{opening.id}", pos, opening.side, entryState);
                 }
+            }
+        }
+
+        private static WallSide OppositeWall(WallSide side)
+        {
+            switch (side)
+            {
+                case WallSide.North: return WallSide.South;
+                case WallSide.South: return WallSide.North;
+                case WallSide.East:  return WallSide.West;
+                default:             return WallSide.East; // West → East
             }
         }
 
@@ -1684,8 +1995,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     Vector3 doorPos = entranceAlongX
                         ? new Vector3(doorLat, baseY, gapPerp)
                         : new Vector3(gapPerp, baseY, doorLat);
-                    DoorState outerState = entryDoorStartsOpen ? DoorState.Open : DoorState.Closed;
-                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, outerState);
+                    // The compound's outer door is the trainee's first obstacle and is
+                    // ALWAYS closed — an open one leaves a straight line from the open
+                    // ground outside all the way into the building.
+                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, DoorState.Closed);
 
                     // Remember where the entrance ended up so the guide path can run to it.
                     _entryDoorWorld    = doorPos;
@@ -2149,6 +2462,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                      : assist.hinge    != null ? assist.hinge.transform
                      : null;
             GameObject measureRoot = leaf != null ? leaf.gameObject : probe;
+            // Remember before the probe is destroyed — DestroyImmediate (edit
+            // mode) would make `leaf != null` false below.
+            bool leafMeasured = leaf != null;
 
             bool found = ComputeLocalBounds(measureRoot, probe.transform, out Bounds b);
 
@@ -2163,6 +2479,20 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             _doorBaseRot       = spanAlongX ? Quaternion.identity : Quaternion.Euler(0f, 90f, 0f);
             _doorCenterOffset  = new Vector3(b.center.x, 0f, b.center.z);
             _doorBaseY         = b.center.y - b.size.y * 0.5f; // lowest mesh point (root-local)
+
+            // Realistic door (leaf measured separately): float the leaf clear of
+            // the 0.08 m floor slab instead of resting it at the room origin,
+            // where it spawned embedded in the floor collider and physics shoved
+            // it against its hinge (tilted, juddering, half-open doors). Folding
+            // the lift into _doorBaseY raises the whole prefab at placement; the
+            // opening grows by the same amount so the raised leaf still clears
+            // the wall header. The greybox prefab keeps its own baked-in
+            // floorClear and needs neither adjustment.
+            if (leafMeasured)
+            {
+                _doorBaseY         -= DoorFloorLift;
+                _doorOpeningHeight += DoorFloorLift;
+            }
         }
 
         /// <summary>
@@ -2235,6 +2565,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 Debug.Log($"[SceneBuilder] Trainee spawned outside entrance at {outsidePos:F1}, " +
                           $"at the head of the guide path facing the door.");
                 PlaceTraineeWeapon();
+                PlaceStagingTable();
                 return;
             }
 
@@ -2254,6 +2585,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 Debug.Log("[SceneBuilder] Trainee spawned at staging point " +
                           $"'{traineeStartPoint.name}'.");
                 PlaceTraineeWeapon();
+                PlaceStagingTable();
                 return;
             }
 
@@ -2270,6 +2602,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             Debug.Log($"[SceneBuilder] Trainee spawned at Module 1 position {spawnPos:F1} " +
                       $"(entry room, facing {t.facingDirection.ToVector3():F1}).");
             PlaceTraineeWeapon();
+            PlaceStagingTable();
         }
 
         /// <summary>
@@ -2390,7 +2723,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
 
             Vector3 pos = traineeRig.TransformPoint(weaponSpawnOffset);
-            Quaternion rot = Quaternion.Euler(0f, traineeRig.eulerAngles.y, 0f);
+            Quaternion rot = Quaternion.Euler(0f, traineeRig.eulerAngles.y + weaponSpawnYaw, 0f);
 
             var rb = traineeWeapon.GetComponent<Rigidbody>();
 
@@ -2415,6 +2748,133 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             }
 
             Debug.Log($"[SceneBuilder] Trainee weapon '{traineeWeapon.name}' placed at {pos:F1}.");
+        }
+
+        // Layout of the staging-table group relative to its reference root,
+        // captured on the first placement so repeated rebuilds keep every item
+        // in the same spot on the tabletop.
+        private Pose[] _stagingTableLocalPoses;
+
+        /// <summary>
+        /// Moves the controller-adjustment table (a rigid group of scene roots)
+        /// in front of the trainee's spawn, facing them, so they can tune their
+        /// controllers before moving out. Same teleport rules as the weapon:
+        /// rigidbodies go kinematic across the move so stale PhysX contacts from
+        /// rebuilt room colliders can't fling the items off the table.
+        /// </summary>
+        private void PlaceStagingTable()
+        {
+            if (traineeRig == null || stagingTableRoots == null || stagingTableRoots.Length == 0)
+                return;
+
+            Transform primary = stagingTableRoots[0];
+            if (primary == null)
+            {
+                Debug.LogWarning("[SceneBuilder] stagingTableRoots[0] (the reference root) " +
+                                 "is missing - table not moved.");
+                return;
+            }
+
+            if (_stagingTableLocalPoses == null ||
+                _stagingTableLocalPoses.Length != stagingTableRoots.Length)
+            {
+                _stagingTableLocalPoses = new Pose[stagingTableRoots.Length];
+                for (int i = 0; i < stagingTableRoots.Length; i++)
+                {
+                    Transform t = stagingTableRoots[i];
+                    if (t == null) continue;
+                    _stagingTableLocalPoses[i] = new Pose(
+                        primary.InverseTransformPoint(t.position),
+                        Quaternion.Inverse(primary.rotation) * t.rotation);
+                }
+            }
+
+            // The reference root at trainee yaw puts the table's front toward the
+            // trainee (front faces -Z at identity, and the offset is ahead of them).
+            // The spawn can sit in a narrow gap (e.g. between the generated building
+            // and the base map), so don't blindly drop the table dead ahead - it can
+            // end up inside a wall. Sweep directions around the trainee, keeping the
+            // table facing them from each, and take the first unobstructed one.
+            Quaternion baseYaw = Quaternion.Euler(0f, traineeRig.eulerAngles.y, 0f);
+            Quaternion yaw = baseYaw;
+            Vector3 centre = traineeRig.position + yaw * tableSpawnOffset;
+            float[] sweep = { 0f, 45f, -45f, 90f, -90f, 135f, -135f, 180f };
+            bool clear = false;
+            foreach (float angle in sweep)
+            {
+                Quaternion q = baseYaw * Quaternion.Euler(0f, angle, 0f);
+                Vector3 c = traineeRig.position + q * tableSpawnOffset;
+                if (IsStagingSpotClear(c, q))
+                {
+                    yaw = q; centre = c; clear = true;
+                    if (angle != 0f)
+                        Debug.Log($"[SceneBuilder] Staging table spot dead ahead is blocked; " +
+                                  $"rotated {angle:F0}° around the trainee to open ground.");
+                    break;
+                }
+            }
+            if (!clear)
+                Debug.LogWarning("[SceneBuilder] No unobstructed spot found for the staging " +
+                                 "table around the trainee - placing it dead ahead anyway.");
+
+            var bodies = new List<(Rigidbody rb, bool wasKinematic)>();
+            foreach (Transform root in stagingTableRoots)
+            {
+                if (root == null) continue;
+                foreach (Rigidbody rb in root.GetComponentsInChildren<Rigidbody>(true))
+                {
+                    bodies.Add((rb, rb.isKinematic));
+                    rb.isKinematic = true;
+                }
+            }
+
+            for (int i = 0; i < stagingTableRoots.Length; i++)
+            {
+                Transform t = stagingTableRoots[i];
+                if (t == null) continue;
+                Pose local = _stagingTableLocalPoses[i];
+                t.SetPositionAndRotation(centre + yaw * local.position, yaw * local.rotation);
+            }
+            Physics.SyncTransforms();
+
+            foreach ((Rigidbody rb, bool wasKinematic) in bodies)
+            {
+                rb.isKinematic = wasKinematic;
+                if (!wasKinematic)
+                {
+                    rb.linearVelocity  = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                }
+            }
+
+            Debug.Log($"[SceneBuilder] Staging table placed at {centre:F1}, " +
+                      "facing the trainee spawn.");
+        }
+
+        /// <summary>
+        /// True when the staging table's volume at the candidate pose overlaps no
+        /// foreign colliders (walls, generated rooms, furniture). Tests a box a
+        /// little larger than the tabletop, lifted off the ground so floor slabs
+        /// don't count as obstructions. The table's own colliders, the trainee rig
+        /// and the already-placed trainee weapon are ignored.
+        /// </summary>
+        private bool IsStagingSpotClear(Vector3 centre, Quaternion yaw)
+        {
+            var boxCentre = new Vector3(centre.x, traineeRig.position.y + 0.85f, centre.z);
+            var half = new Vector3(2.15f, 0.55f, 0.6f); // (length, height, depth) half-extents
+            foreach (Collider c in Physics.OverlapBox(boxCentre, half, yaw, ~0,
+                                                      QueryTriggerInteraction.Ignore))
+            {
+                Transform t = c.transform;
+                if (t.IsChildOf(traineeRig)) continue;
+                if (traineeWeapon != null && t.IsChildOf(traineeWeapon)) continue;
+                bool own = false;
+                foreach (Transform root in stagingTableRoots)
+                    if (root != null && t.IsChildOf(root)) { own = true; break; }
+                if (own) continue;
+                return false;
+            }
+            return true;
         }
 
         private void SpawnHostages(ScenarioData scenario)
@@ -2627,10 +3087,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
             foreach (NpcSpawnPoint sp in terrorists)
             {
-                GameObject go = Instantiate(terroristPrefab,
-                                            World(sp.position.ToVector3()),
-                                            LookRotation(sp.facingDirection),
-                                            _npcsRoot);
+                ResolveTerroristSpawn(scenario, sp, out Vector3 spawnPos, out Quaternion spawnRot);
+
+                GameObject go = Instantiate(terroristPrefab, spawnPos, spawnRot, _npcsRoot);
                 go.name = sp.entityId;
 
                 TerroristController controller = go.GetComponent<TerroristController>();
@@ -2664,6 +3123,62 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 leader.role = NPCRole.Leader;
                 Debug.Log($"[SceneBuilder] Squad leader elected: {leader.NPCId}.");
             }
+        }
+
+        /// <summary>
+        /// Resolves where a terrorist actually spawns. Module 1 keeps terrorists out of
+        /// the layout's ENTRY room, but the exterior breach is resolved from real
+        /// geometry and often lands on a different perimeter room — one that may well
+        /// have a terrorist standing in it. Anyone sitting in the doorway's line
+        /// (visible straight through the entrance from outside) is slid to the far side
+        /// of the room and turned to face its interior, so the trainee is never engaged
+        /// through the front door before they have crossed the open ground.
+        /// </summary>
+        private void ResolveTerroristSpawn(ScenarioData scenario, NpcSpawnPoint sp,
+                                           out Vector3 pos, out Quaternion rot)
+        {
+            pos = World(sp.position.ToVector3());
+            rot = LookRotation(sp.facingDirection);
+
+            if (!_entranceResolved || sp.roomId != _entranceRoomId) return;
+
+            RoomData room = scenario?.layout?.rooms?.Find(r => r.id == sp.roomId);
+            if (room == null) return;
+
+            bool alongX = _entranceSide == WallSide.North || _entranceSide == WallSide.South;
+
+            // Half-width of the cone the trainee can see through the doorway, plus a
+            // margin so a shoulder poking into it doesn't count as cover.
+            float band = (_doorOpeningWidth + DoorClearance) * 0.5f + 1.0f;
+
+            float entranceLat = alongX ? _entranceWallMidWorld.x : _entranceWallMidWorld.z;
+            float npcLat      = alongX ? pos.x : pos.z;
+            if (Mathf.Abs(npcLat - entranceLat) >= band) return; // already out of the line
+
+            Vector3 roomWorld = World(room.position.ToVector3());
+            float roomCentre  = alongX ? roomWorld.x : roomWorld.z;
+
+            float nominal = room.size == null ? 6f
+                          : alongX ? room.size.width : room.size.depth;
+            if (nominal <= 0f) nominal = 6f;
+            // Same wall margin Module 1's placer uses, so the moved NPC stays off the wall.
+            const float WallMargin = 0.8f;
+            float halfExtent = Mathf.Max(0f, nominal * 0.5f - WallMargin);
+
+            // Push to whichever side of the room is further from the doorway.
+            float sign = entranceLat <= roomCentre ? 1f : -1f;
+            float moved = roomCentre + sign * halfExtent;
+
+            if (alongX) pos.x = moved; else pos.z = moved;
+
+            // Face the room's interior rather than staring down the entrance.
+            Vector3 inward = roomWorld - pos;
+            inward.y = 0f;
+            if (inward.sqrMagnitude > 0.0001f) rot = Quaternion.LookRotation(inward);
+
+            Debug.Log($"[SceneBuilder] Terrorist '{sp.entityId}' stood in the entrance line of " +
+                      $"'{room.id}'; moved {Mathf.Abs(moved - npcLat):F1} m aside and turned inward " +
+                      "so the trainee isn't engaged through the front door.");
         }
 
         private void ConfigureTerrorist(TerroristController controller,
