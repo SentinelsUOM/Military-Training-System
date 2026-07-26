@@ -59,11 +59,53 @@ public class Squad
 
     /// <summary>
     /// Called when a member's health reaches 0.
-    /// Delegates alert propagation to AlertPropagator (Ring 1 squad broadcast).
+    /// Delegates alert propagation to AlertPropagator (Ring 1 squad broadcast), then re-elects a
+    /// Leader if the one who died was it.
     /// </summary>
     public void NotifyMemberDown(TerroristController downed, ScenarioEvent trigger)
     {
         AlertPropagator.Instance?.HandleMemberDown(this, downed, trigger);
+        PromoteNewLeaderIfNeeded(downed);
+    }
+
+    /// <summary>
+    /// If the member who just died was the squad Leader, promote a surviving member so the squad
+    /// keeps coordinating (Converge / Flank). Without this, killing the leader first left the squad
+    /// leaderless for the whole rest of the mission — an easy exploit. The hostage guardian is never
+    /// eligible (it must never leave the hostage to run directives); a Roamer is preferred, else any
+    /// alive member.
+    /// </summary>
+    void PromoteNewLeaderIfNeeded(TerroristController downed)
+    {
+        if (downed == null || downed.role != NPCRole.Leader) return;
+
+        // The dead leader's standing order is void.
+        ClearDirective();
+
+        // Guard against double-promotion: if a leader somehow still lives, leave it be.
+        foreach (var m in _members)
+            if (m != null && m != downed && m.role == NPCRole.Leader &&
+                m.currentState != TerroristState.Down) return;
+
+        TerroristController pick = null;
+        foreach (var m in _members)
+        {
+            if (m == null || m == downed)            continue;
+            if (m.currentState == TerroristState.Down) continue;
+            if (m.isHostageGuardian)                 continue; // never pulls off the hostage
+            if (pick == null) pick = m;               // first eligible = fallback
+            if (m.role == NPCRole.Roamer) { pick = m; break; } // prefer a roamer, like spawn-time election
+        }
+
+        if (pick != null)
+        {
+            Debug.Log($"[Squad {SquadId}] Leader {downed.NPCId} is down — promoting {pick.NPCId} to Leader.");
+            pick.AssumeLeadership();
+        }
+        else
+        {
+            Debug.Log($"[Squad {SquadId}] Leader {downed.NPCId} down — no eligible successor (only guardian/dead left).");
+        }
     }
 
     // ── Leader directives (squad coordination) ────────────────────────────────
@@ -219,6 +261,156 @@ public class Squad
 
         _searchWave++;
         _nextFanOutAllowedAt = Time.time + FanOutCooldownSeconds;
+    }
+
+    // ── Shared confirmed-contact blackboard + persistent hunt ─────────────────
+    //
+    // The core doctrine fix (see Literature_Review_Module2.docx §2–4): a confirmed
+    // sighting is SHARED, PERSISTENT squad knowledge — not private to the one who saw
+    // it — and it triggers a coordinated hunt that only ends on a DELIBERATE GROUP
+    // decision, never a per-NPC give-up timer. Previously "confirmed" lived on each
+    // TerroristController (_personallyConfirmedPlayer) and every searcher decided,
+    // alone, to walk home when its own sweep came up empty — so the mate who never
+    // got his own line of sight quit while a comrade was still in contact.
+
+    /// Where the trainee was last CONFIRMED (own eyes of any member). Shared anchor.
+    public Vector3 PointLastSeen    { get; private set; }
+    /// Horizontal direction the trainee was moving when last seen (for chase bias).
+    public Vector3 LastSeenHeading  { get; private set; }
+    /// Time.time of the most recent confirmation. Resets the hunt's persistence clock.
+    public float   LastConfirmTime  { get; private set; } = -999f;
+    /// True while the squad is actively hunting a lost/known contact. No member stands
+    /// down while this is set — stand-down is the squad's EndHunt(), taken together.
+    public bool    HuntActive       { get; private set; }
+
+    float _huntStartTime = -999f;
+    // How long the squad PRESSES a lost contact before collectively standing down.
+    // Doctrine gives no exact number for a lost contact (open question in the review),
+    // so this is a deliberately LONG, area-based budget for a semi-trained force —
+    // not the few-second clock that produced the bug. Re-armed on every fresh sighting.
+    const float HuntBudgetSeconds  = 45f;
+    // Search radius grows with elapsed hunt time (PLS model: radius ≈ speed × time),
+    // capped so searchers don't wander the whole level.
+    const float SearchGrowthPerSec = 0.6f;
+    const float SearchRadiusMin    = 5f;
+    const float SearchRadiusMax    = 18f;
+    int _searchTick;                    // rotates individual re-task bearings over time
+
+    /// <summary>
+    /// Any member who CONFIRMS the trainee with its own eyes calls this. Writes the
+    /// shared anchor, (re)starts the hunt, RESETS the persistence clock and collapses
+    /// the search back to a fresh converge (wave 0 + immediate fan-out). This is what
+    /// makes a new sighting authoritative for the WHOLE squad and re-converges searchers
+    /// who had fanned out.
+    /// </summary>
+    public void ReportConfirmedContact(Vector3 pos, Vector3 heading, TerroristController reporter)
+    {
+        PointLastSeen   = pos;
+        heading.y       = 0f;
+        if (heading.sqrMagnitude > 0.01f) LastSeenHeading = heading.normalized;
+        LastConfirmTime = Time.time;
+        _huntStartTime  = Time.time;     // fresh sighting re-arms the full persistence budget
+        HuntActive      = true;
+        // Collapse the radius and re-converge everyone onto the fresh anchor.
+        SetEscapeContext(pos, LastSeenHeading);
+    }
+
+    /// <summary>
+    /// Begin (or refresh) a persistent hunt from a LOST contact — the member had eyes on
+    /// the trainee and just lost them. Marks the hunt active and kicks the first fan-out.
+    /// </summary>
+    public void BeginHunt(Vector3 pos, Vector3 heading, TerroristController caller)
+    {
+        PointLastSeen = pos;
+        heading.y     = 0f;
+        if (heading.sqrMagnitude > 0.01f) LastSeenHeading = heading.normalized;
+        if (!HuntActive) { HuntActive = true; _huntStartTime = Time.time; }
+        LastConfirmTime = Time.time;
+        SetEscapeContext(pos, LastSeenHeading);
+        FanOutSearch(pos, LastSeenHeading, caller);
+    }
+
+    /// <summary>True while the squad should keep pressing the hunt — a long, time-based
+    /// (area) budget rather than a few-second clock. Re-armed by every fresh sighting.</summary>
+    public bool HuntShouldContinue() =>
+        HuntActive && (Time.time - _huntStartTime) < HuntBudgetSeconds && HasEligibleSearcher();
+
+    /// <summary>
+    /// A searcher's sweep came up empty. The squad — not the searcher — decides what
+    /// happens next: if the hunt budget still holds, RE-TASK that searcher to a fresh,
+    /// wider point around the shared anchor (keeping it committed) and return true; if the
+    /// area is genuinely searched out / the budget is spent, END the hunt for EVERYONE and
+    /// return false so the caller stands down together with the rest of the squad.
+    /// </summary>
+    public bool NotifySearcherExhausted(TerroristController searcher)
+    {
+        if (!HuntActive) return false;
+        if (!HuntShouldContinue()) { EndHunt("area searched / time budget spent"); return false; }
+
+        // Keep this searcher on the hunt — send it to a fresh sector at a radius that grows
+        // with elapsed hunt time (PLS expanding-area model). Individual re-task, so it works
+        // even while the squad-wide fan-out is on cooldown (no searcher goes idle mid-hunt).
+        if (searcher != null)
+        {
+            Vector3 p = NextSearchPoint(searcher);
+            searcher.DispatchToInvestigate(p);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The DELIBERATE, squad-wide stand-down. Clears the hunt and sends every non-guardian
+    /// member home together (and clears their personal "I saw him" latch), so nobody is left
+    /// hunting alone and nobody quits early. This is the ONLY sanctioned way out of a hunt.
+    /// </summary>
+    public void EndHunt(string reason)
+    {
+        if (!HuntActive) return;
+        HuntActive  = false;             // must clear BEFORE StandDown so members don't re-bounce
+        _searchWave = 0;
+        Debug.Log($"[Squad {SquadId}] hunt ended ({reason}) — squad standing down together.");
+        foreach (var m in _members)
+            if (m != null) m.StandDown();
+    }
+
+    /// Reset the hunt (scenario reset). Does not command members.
+    public void ClearHunt()
+    {
+        HuntActive = false;
+        _searchWave = 0;
+        LastConfirmTime = -999f;
+        _huntStartTime  = -999f;
+    }
+
+    bool HasEligibleSearcher()
+    {
+        foreach (var m in _members)
+        {
+            if (m == null || m.isHostageGuardian)          continue;
+            if (m.currentState == TerroristState.Down)     continue;
+            return true;
+        }
+        return false;
+    }
+
+    /// A fresh point around the shared anchor for one searcher: a distinct bearing per
+    /// member, rotated over time, biased along the escape direction, at a time-expanding
+    /// radius. Always pulled back onto the NavMesh by SampleReachable.
+    Vector3 NextSearchPoint(TerroristController searcher)
+    {
+        float elapsed = Time.time - _huntStartTime;
+        float radius  = Mathf.Clamp(SearchRadiusMin + elapsed * SearchGrowthPerSec,
+                                    SearchRadiusMin, SearchRadiusMax);
+
+        int idx = _members.IndexOf(searcher);
+        if (idx < 0) idx = 0;
+        float ang = (idx * 73f + _searchTick * 37f) * Mathf.Deg2Rad;
+        _searchTick++;
+
+        Vector3 dir = new Vector3(Mathf.Sin(ang), 0f, Mathf.Cos(ang));
+        if (_sharedEscapeDir != Vector3.zero) dir = (dir + _sharedEscapeDir).normalized;
+
+        return SampleReachable(PointLastSeen + dir * radius, PointLastSeen);
     }
 
     // 0, +1, -1, +2, -2, … — spreads searchers alternately to either side of the escape line.

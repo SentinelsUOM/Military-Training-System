@@ -68,6 +68,24 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "Leave empty to keep spawn rotation.")]
     public Transform staticFaceTarget;
 
+    [Header("Idle scanning (look around on patrol)")]
+    [Tooltip("While idle/patrolling, the NPC periodically stops and sweeps its view left-right " +
+             "instead of only ever facing its direction of travel — so a trainee can't simply " +
+             "walk behind him. Off = old behaviour (walk the line, never look around).")]
+    public bool idleScan = true;
+
+    [Tooltip("Average seconds between look-arounds while idle.")]
+    public float idleScanInterval = 5f;
+
+    [Tooltip("How far to either side (degrees) the NPC turns to scan.")]
+    public float idleScanAngle = 65f;
+
+    [Tooltip("Turn speed (deg/sec) of the idle scan sweep — deliberately calm, not an alert snap.")]
+    public float idleScanTurnSpeed = 70f;
+
+    [Tooltip("Seconds the NPC holds each look direction, giving perception time to catch the trainee.")]
+    public float idleScanHoldTime = 0.8f;
+
     [Tooltip("Animator on this NPC (used to trigger death animation). Optional.")]
     public Animator animator;
 
@@ -494,7 +512,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
                     if (_investigateRoutine != null) StopCoroutine(_investigateRoutine);
                     _investigateRoutine = null;
                     _isInvestigating = false;
-                    InvestigatePosition(e.Origin); // walk to the contact now
+                    // A shot is fresh contact intel (the trainee's OWN free-fire included). Re-anchor
+                    // the WHOLE squad's hunt on it so everyone converges and it stays persistent —
+                    // not just me walking over while the others hold. BeginHunt resets the search to
+                    // this spot and re-tasks every searcher; falling back to a solo walk only if I
+                    // somehow have no squad.
+                    var sq = string.IsNullOrEmpty(squadId) ? null : Squad.Get(squadId);
+                    if (sq != null) sq.BeginHunt(e.Origin, Vector3.zero, this);
+                    else            InvestigatePosition(e.Origin); // walk to the contact now
                 }
                 break;
 
@@ -540,10 +565,19 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
             // ── Squad alert ────────────────────────────────────────────────────
             case ScenarioEventType.AllyDownSeen:
-                // Squadmate started shooting — raise readiness but wait for personal LOS
+                // Saw a squadmate go down (raised by AlertPropagator when a mate is killed — this
+                // is the path that fires WITHOUT an EventManager in the scene). Raise readiness...
                 if (currentState == TerroristState.Idle ||
                     currentState == TerroristState.Suspicious)
                     TransitionTo(TerroristState.Alert, e);
+                // ...and investigate the kill location as a SHARED, PERSISTENT hunt — the same
+                // reaction as TerroristDown. Without this, a survivor who lost the corpse-leash
+                // (see FindHurtAlly) would just stand at readiness with nowhere to go.
+                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId) && e.Origin != Vector3.zero)
+                {
+                    _lastKnownPlayerPos = e.Origin;
+                    Squad.Get(squadId)?.BeginHunt(e.Origin, Vector3.zero, this);
+                }
                 break;
 
             case ScenarioEventType.StressSpike:
@@ -564,6 +598,17 @@ public class TerroristController : MonoBehaviour, INPCResponder
                     currentState == TerroristState.Suspicious ||
                     currentState == TerroristState.Alert)
                     TransitionTo(TerroristState.Alert, e);
+
+                // A mate just died — his position is a fresh Last-Known-Point: the trainee was
+                // right there (Literature_Review_Module2.docx §4). Investigate it as a SHARED,
+                // PERSISTENT squad hunt rather than leashing onto the corpse. This gets the whole
+                // squad sweeping the kill location AND keeps them responsive to the trainee's own
+                // gunfire, instead of the survivor standing on the body forever.
+                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId))
+                {
+                    _lastKnownPlayerPos = e.Origin;
+                    Squad.Get(squadId)?.BeginHunt(e.Origin, Vector3.zero, this);
+                }
                 break;
         }
     }
@@ -823,6 +868,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 if (cam != null) { _lastSeenPlayer = cam; SetLookTarget(cam.position); _lastKnownPlayerPos = cam.position; }
                 _personallyConfirmedPlayer = true; // own eyes confirmed the target
                 _playerVisible = true;             // currently has eyes on the player
+                // SHARE the confirmed contact with the whole squad: a sighting is squad
+                // knowledge, not private to me. Writes the shared anchor, (re)starts the
+                // persistent hunt and re-arms its budget, so a mate who never got his own
+                // line of sight still commits to hunting instead of quitting.
+                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId))
+                    Squad.Get(squadId)?.ReportConfirmedContact(
+                        _lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                 if (currentState == TerroristState.Alert ||
                     currentState == TerroristState.Suspicious)
                     TransitionTo(TerroristState.Engage, e);
@@ -854,8 +906,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         var sq = Squad.Get(squadId);
                         if (sq != null)
                         {
-                            sq.SetEscapeContext(_lastKnownPlayerPos, _lastKnownPlayerHeading);
-                            sq.FanOutSearch(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
+                            // Mark the hunt PERSISTENT and shared: the whole squad now presses
+                            // this contact until they reacquire or collectively stand down —
+                            // not each man giving up on his own short timer.
+                            sq.BeginHunt(_lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                         }
                         else
                         {
@@ -877,6 +931,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     Coroutine _suspiciousRoutine;
     Coroutine _investigateRoutine;
     Coroutine _wanderRoutine;
+    Coroutine _idleScanRoutine;
     Coroutine _retreatRoutine;
     Coroutine _alertGiveUpRoutine;       // returns NPC to patrol if Alert never re-acquires
     bool      _hasRetreated;   // one retreat per life — reset only on (re)spawn
@@ -1008,6 +1063,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             case IdleMode.Patrol:
                 patrolLine?.ResumePatrol();
+                StartIdleScan(); // look around while patrolling (NPCs spawn straight into Idle,
+                                 // never through the TransitionTo(Idle) entry — start it here too)
                 break;
 
             case IdleMode.Wander:
@@ -1022,6 +1079,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         staticFaceTarget.position.x,
                         transform.position.y,
                         staticFaceTarget.position.z));
+                StartIdleScan(); // a stationary guard still sweeps his view
                 break;
         }
     }
@@ -1042,6 +1100,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
     void Update()
     {
         if (currentState == TerroristState.Down) return;
+
+        // ── Anti-wall safety net (idle only) ─────────────────────────────────
+        // Whatever left an idle NPC facing a wall — spawn rotation, a patrol waypoint tucked
+        // against masonry, the end of a scan — turn it back toward open space. Only while it is
+        // actually STANDING STILL (facing your travel direction as you walk is fine) and only in
+        // Idle (in combat the aim/door logic owns the facing). This is the hard guarantee that no
+        // terrorist is ever caught staring at a blank wall.
+        if (currentState == TerroristState.Idle &&
+            agent != null && agent.isActiveAndEnabled &&
+            agent.velocity.sqrMagnitude < 0.04f &&
+            FacingWallClose())
+        {
+            Vector3 to = OpenLookPoint() - transform.position; to.y = 0f;
+            if (to.sqrMagnitude > 0.01f)
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation, Quaternion.LookRotation(to), idleScanTurnSpeed * Time.deltaTime);
+        }
 
         // ── Stuck diagnostic ─────────────────────────────────────────────────
         // If the agent has a destination but isn't actually moving toward it,
@@ -1526,6 +1601,13 @@ public class TerroristController : MonoBehaviour, INPCResponder
             if (agent != null && agent.isActiveAndEnabled) agent.ResetPath();
         }
 
+        // ── Cancel idle scanning when leaving Idle ───────────────────────────
+        if (prev == TerroristState.Idle && _idleScanRoutine != null)
+        {
+            StopCoroutine(_idleScanRoutine);
+            _idleScanRoutine = null;
+        }
+
         // ── Cancel retreat when leaving Retreat ──────────────────────────────
         if (prev == TerroristState.Retreat && _retreatRoutine != null)
         {
@@ -1638,13 +1720,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // closes every give-up path (alert timeout, end-of-search, post-retreat) —
                 // which is why wounded terrorists were "suddenly giving up" mid-fight.
                 // The hostage guardian is exempt: his post IS the hostage.
-                if (_personallyConfirmedPlayer && !isHostageGuardian &&
-                    _lastKnownPlayerPos != Vector3.zero)
+                // Bounce back to Alert if I've personally seen the trainee OR my squad is still
+                // running its shared hunt — a non-guardian must not settle into Idle while the
+                // squad is committed. The ONLY sanctioned exit is Squad.EndHunt → StandDown, which
+                // clears both conditions first so this correctly lets everyone settle together.
+                bool squadHunting = SquadHunting;
+                if ((_personallyConfirmedPlayer || squadHunting) && !isHostageGuardian)
                 {
-                    Debug.Log($"[TerroristController] {gameObject.name}: has seen the trainee — " +
-                              $"NOT standing down. Resuming the hunt at {_lastKnownPlayerPos:F1}.");
-                    TransitionTo(TerroristState.Alert, null);
-                    break;
+                    // Seed my search anchor from the squad's shared last-seen point if I never
+                    // had my own (e.g. I only heard the shots).
+                    if (_lastKnownPlayerPos == Vector3.zero && squadHunting)
+                        _lastKnownPlayerPos = Squad.Get(squadId).PointLastSeen;
+                    if (_lastKnownPlayerPos != Vector3.zero)
+                    {
+                        Debug.Log($"[TerroristController] {gameObject.name}: contact still live " +
+                                  $"(seen={_personallyConfirmedPlayer}, squadHunt={squadHunting}) — " +
+                                  $"NOT standing down. Resuming the hunt at {_lastKnownPlayerPos:F1}.");
+                        TransitionTo(TerroristState.Alert, null);
+                        break;
+                    }
                 }
                 // Guardians don't use the shared patrol/wander idle modes — their movement
                 // is the leashed GuardianRoamRoutine so they never drift off the hostage.
@@ -1657,6 +1751,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 {
                     case IdleMode.Patrol:
                         patrolLine?.ResumePatrol();
+                        // Look around while patrolling — a guard who only ever faces his
+                        // direction of travel is trivially followed. (Wander does this inside
+                        // its own routine; Static below scans in place.)
+                        StartIdleScan();
                         break;
 
                     case IdleMode.Wander:
@@ -1673,6 +1771,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
                                 staticFaceTarget.position.x,
                                 transform.position.y,
                                 staticFaceTarget.position.z));
+                        // A stationary guard still sweeps his view — he doesn't just stare
+                        // at one spot forever.
+                        StartIdleScan();
                         break;
                 }
                 break;
@@ -1983,6 +2084,18 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
 
             Vector3 anchor = guardedHostage.transform.position;
+
+            // ── RUSHED: a mate is down or fighting. ──────────────────────────────
+            // The guardian is agitated — he WANTS to go help, but he cannot leave the hostage.
+            // So he paces, torn: advance to the DOOR and watch for the trainee coming, then hurry
+            // BACK to the hostage to make sure it hasn't bolted — over and over. This replaces the
+            // calm random patrol while the fight is on.
+            if (suspicious && SquadInContact())
+            {
+                yield return StartCoroutine(GuardianDoorHostagePace(anchor));
+                continue;
+            }
+
             float radius = suspicious ? guardLeashRadius : guardPatrolRadius;
 
             // Suspicious/alert: the guard's job is the WAY IN. Keep his weapon trained on the
@@ -2038,6 +2151,86 @@ public class TerroristController : MonoBehaviour, INPCResponder
             }
         }
         _guardRoamRoutine = null;
+    }
+
+    /// <summary>Is the guardian still in a state where the roam/pace should keep running?</summary>
+    bool GuardianStillActive() =>
+        (currentState == TerroristState.Idle ||
+         currentState == TerroristState.Suspicious ||
+         currentState == TerroristState.Alert) &&
+        guardedHostage != null &&
+        guardedHostage.currentState != HostageState.Down &&
+        !guardedHostage.IsHeld &&
+        agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh;
+
+    /// <summary>
+    /// The pressured pace: advance to the doorway and watch it for the trainee, then hurry back to
+    /// the hostage and check on it — the "I want to help but I can't leave him" behaviour. Bounded
+    /// in time so it can't get stuck, and it never breaks the leash from the hostage.
+    /// </summary>
+    IEnumerator GuardianDoorHostagePace(Vector3 anchor)
+    {
+        Transform door = NearestDoorTo(anchor);
+
+        // ── Phase A — go toward the door and cover it. ──────────────────────────
+        if (door != null && GuardianStillActive())
+        {
+            Vector3 toDoor = door.position - anchor; toDoor.y = 0f;
+            float reach = Mathf.Clamp(toDoor.magnitude - 0.5f, 1f, guardLeashRadius);
+            Vector3 watchPos = anchor + (toDoor.sqrMagnitude > 0.01f ? toDoor.normalized : transform.forward) * reach;
+
+            if (NavMesh.SamplePosition(watchPos, out NavMeshHit h, 2.5f, NavMesh.AllAreas))
+            {
+                agent.isStopped = false;
+                agent.SetDestination(h.position);
+            }
+            float t = 0f;
+            while (t < 4f && GuardianStillActive() && !agent.pathPending &&
+                   agent.remainingDistance > agent.stoppingDistance + 0.25f)
+            {
+                if (!_playerVisible) SetLookTarget(door.position); // weapon on the way in
+                t += Time.deltaTime;
+                yield return null;
+            }
+            if (agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+
+            // Tense glance down the doorway.
+            float hold = Random.Range(1f, 2f), w = 0f;
+            while (w < hold && GuardianStillActive())
+            {
+                if (!_playerVisible) SetLookTarget(door.position);
+                w += Time.deltaTime;
+                yield return null;
+            }
+        }
+
+        if (!GuardianStillActive()) yield break;
+
+        // ── Phase B — hurry back to the hostage and check on it. ────────────────
+        if (NavMesh.SamplePosition(anchor, out NavMeshHit h2, 2.5f, NavMesh.AllAreas))
+        {
+            agent.isStopped = false;
+            agent.SetDestination(h2.position);
+        }
+        {
+            float t = 0f;
+            while (t < 4f && GuardianStillActive() && !agent.pathPending &&
+                   agent.remainingDistance > agent.stoppingDistance + 0.5f)
+            {
+                t += Time.deltaTime;
+                yield return null;
+            }
+            if (agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+
+            // Make sure the hostage is still there and hasn't bolted.
+            float hold = Random.Range(0.8f, 1.5f), w = 0f;
+            while (w < hold && GuardianStillActive())
+            {
+                if (guardedHostage != null) SetLookTarget(guardedHostage.transform.position);
+                w += Time.deltaTime;
+                yield return null;
+            }
+        }
     }
 
     bool TryPickPointAround(Vector3 center, float radius, out Vector3 result)
@@ -2441,7 +2634,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // this, a wounded man would retreat, come back to Alert, then quietly forget the
         // whole thing and walk back to his idle post.
         while (currentState == TerroristState.Alert &&
-               (_personallyConfirmedPlayer || SquadInContact()))
+               (_personallyConfirmedPlayer || SquadInContact() || SquadHunting))
         {
             // Just HOLD him in Alert — do NOT issue movement from here.
             // This used to call InvestigatePosition() every 2s, which fought
@@ -2452,8 +2645,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
             yield return new WaitForSeconds(1f);
         }
 
-        // Still alert and not mid-search → no contact regained, stand down.
-        if (currentState == TerroristState.Alert && !_isInvestigating)
+        // Still alert and not mid-search → no contact regained. But never stand down alone while
+        // the squad hunt is live — that decision belongs to Squad.EndHunt so the whole squad
+        // stands down together.
+        if (currentState == TerroristState.Alert && !_isInvestigating && !SquadHunting)
         {
             Debug.Log($"[TerroristController] {gameObject.name}: lost contact — giving up, resuming patrol.");
             TransitionTo(TerroristState.Idle, null);
@@ -2506,8 +2701,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
         foreach (var npc in NPCRegistry.GetAll())
         {
             if (!(npc is TerroristController t) || t == this) continue;
-            if (t.currentState == TerroristState.Down) return t;
-            if (t.currentHealth <= allySupportHealthThreshold) return t;
+            // A DEAD mate is NOT a help target. He is Down forever, so returning him here
+            // leashed the survivor onto the corpse — HELP re-pathed to the body every second
+            // and overrode everything else, INCLUDING the survivor's response to the trainee's
+            // own gunfire ("he's stuck on the body and never comes for me"). The dead-mate
+            // reaction is handled once, as a hunt of the kill location, in RespondTo(TerroristDown).
+            // NOTE: a corpse has health <= 20, which is also <= allySupportHealthThreshold, so we
+            // must `continue` past Down before the wounded-ally check below — not fall through.
+            if (t.currentState == TerroristState.Down) continue;
+            if (t.currentHealth <= allySupportHealthThreshold) return t; // ALIVE but wounded — worth helping
         }
         return null;
     }
@@ -2689,13 +2891,43 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // No door lines up. Do NOT fall back to the raw threat position: that points straight
         // THROUGH a wall, and the NPC ends up solemnly aiming at blank masonry (which is
         // exactly what looked so wrong). Prefer ANY nearby doorway — a covered door always
-        // beats a stared-at wall — and if there isn't one, just keep facing where he already
-        // is rather than snapping onto the wall.
+        // beats a stared-at wall.
         Transform anyDoor = NearestDoorTo(transform.position);
         if (anyDoor != null && Vector3.Distance(anyDoor.position, transform.position) <= doorWatchRange)
             return anyDoor.position;
 
-        return transform.position + transform.forward * 5f;   // hold current facing
+        // Still nothing. NEVER hold a facing that might be into a wall — look at the most OPEN
+        // direction instead (into the room, down a corridor), so an NPC is always facing free
+        // space, never blank masonry.
+        return OpenLookPoint();
+    }
+
+    /// <summary>
+    /// A point in the MOST OPEN horizontal direction — the bearing with the most clearance before
+    /// a wall. Guarantees an NPC with nothing specific to watch still faces into free space (a
+    /// room, a corridor) rather than a wall a step in front of its nose. Biased slightly toward its
+    /// current facing so it doesn't spin on the spot when several directions are equally open.
+    /// </summary>
+    Vector3 OpenLookPoint()
+    {
+        Vector3 eye = transform.position + Vector3.up * 1.5f;
+        Vector3 fwd = transform.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.001f) fwd = Vector3.forward; else fwd.Normalize();
+
+        Vector3 best = fwd;
+        float   bestScore = -999f;
+        const float probe = 8f;
+
+        for (int a = 0; a < 360; a += 30)
+        {
+            Vector3 dir = Quaternion.Euler(0f, a, 0f) * Vector3.forward;
+            float clear = Physics.Raycast(eye, dir, out RaycastHit h, probe, _losBlockerMask, QueryTriggerInteraction.Ignore)
+                ? h.distance : probe;
+            // clearance is what matters; a small bonus for staying near current facing avoids jitter.
+            float score = clear + 1.5f * Vector3.Dot(dir, fwd);
+            if (score > bestScore) { bestScore = score; best = dir; }
+        }
+        return transform.position + best * 5f;
     }
 
     // Scene doors, cached briefly — used to pick which doorway to cover when the threat
@@ -2772,6 +3004,115 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     // ── Wander ────────────────────────────────────────────────────────────────
 
+    // ── Idle scanning (look around while patrolling / standing guard) ───────────
+
+    /// <summary>Kick off the periodic idle look-around (Patrol & Static modes). Wander folds the
+    /// same sweep into its own pause, so it doesn't use this.</summary>
+    void StartIdleScan()
+    {
+        if (!idleScan) return;
+        if (isHostageGuardian) return; // guardian sweeps via GuardianRoamRoutine, not this
+        if (_idleScanRoutine != null) StopCoroutine(_idleScanRoutine);
+        _idleScanRoutine = StartCoroutine(IdleScanRoutine());
+    }
+
+    IEnumerator IdleScanRoutine()
+    {
+        while (currentState == TerroristState.Idle)
+        {
+            // Let the NPC patrol/stand for a bit, then look around — BUT cut the wait short the
+            // instant it ends up facing a wall, so it never sits and stares at blank masonry.
+            float wait = idleScanInterval + Random.Range(-1f, 1.5f);
+            float w = 0f;
+            while (w < wait && currentState == TerroristState.Idle && !FacingWallClose())
+            {
+                w += Time.deltaTime;
+                yield return null;
+            }
+            if (currentState != TerroristState.Idle) break;
+
+            // Halt patrol movement for the sweep (Static has no movement to halt). PatrolLine with
+            // isStopped && no lookTarget neither moves nor rotates, so the sweep owns the facing.
+            bool resumePatrol = false;
+            if (patrolLine != null && !patrolLine.isStopped)
+            {
+                patrolLine.isStopped = true;
+                patrolLine.lookTarget = null;
+                resumePatrol = true;
+            }
+            if (agent != null && agent.isActiveAndEnabled && agent.isOnNavMesh) agent.ResetPath();
+
+            yield return StartCoroutine(ScanSweep());
+
+            if (resumePatrol && patrolLine != null && currentState == TerroristState.Idle)
+                patrolLine.isStopped = false;
+        }
+        _idleScanRoutine = null;
+    }
+
+    /// <summary>A calm look-around — but ONLY toward OPEN directions. A blind left/right sweep
+    /// turned NPCs standing near a wall to stare straight at blank masonry; instead we probe the
+    /// bearings for clearance and glance at a few OPEN ones (nearest current facing first, so it
+    /// reads as a natural look-around, not a spin). Holds each a beat so perception can catch the
+    /// trainee. Aborts if state changes.</summary>
+    /// <summary>True if the NPC is presently facing a wall/obstacle within arm's reach — the
+    /// signal to look away toward open space now rather than keep staring at it.</summary>
+    bool FacingWallClose()
+    {
+        Vector3 eye = transform.position + Vector3.up * 1.5f;
+        Vector3 fwd = transform.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.001f) return false;
+        fwd.Normalize();
+        // ~1.7 m: close enough that facing it reads as "staring at the wall". Anything the NPC's
+        // own body counts as clear.
+        return Physics.Raycast(eye, fwd, out RaycastHit h, 1.7f, ~0, QueryTriggerInteraction.Ignore)
+               && !h.collider.transform.IsChildOf(transform);
+    }
+
+    IEnumerator ScanSweep()
+    {
+        Vector3 eye = transform.position + Vector3.up * 1.5f;
+
+        // Gather bearings that are clear of walls/obstacles (own colliders don't count).
+        var open = new System.Collections.Generic.List<Vector3>();
+        for (int a = 0; a < 360; a += 24)
+        {
+            Vector3 dir = Quaternion.Euler(0f, a, 0f) * Vector3.forward;
+            bool hit = Physics.Raycast(eye, dir, out RaycastHit h, 2.5f, ~0, QueryTriggerInteraction.Ignore);
+            bool blocked = hit && h.distance < 1.8f && !h.collider.transform.IsChildOf(transform);
+            if (!blocked) open.Add(dir);
+        }
+        if (open.Count == 0) yield break; // boxed in on all sides — better to hold than force a wall-stare
+
+        // Nearest-to-current-facing first, so the glance-around looks natural.
+        Vector3 fwd = transform.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude > 0.001f) fwd.Normalize(); else fwd = Vector3.forward;
+        open.Sort((x, y) => Vector3.Dot(y, fwd).CompareTo(Vector3.Dot(x, fwd)));
+
+        // Glance at up to three spread OPEN bearings.
+        var picks = new System.Collections.Generic.List<Vector3> { open[0] };
+        if (open.Count > 2) picks.Add(open[open.Count / 2]);
+        if (open.Count > 1) picks.Add(open[open.Count - 1]);
+
+        foreach (Vector3 dir in picks)
+        {
+            Quaternion target = Quaternion.LookRotation(new Vector3(dir.x, 0f, dir.z));
+            while (Quaternion.Angle(transform.rotation, target) > 2f && currentState == TerroristState.Idle)
+            {
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation, target, idleScanTurnSpeed * Time.deltaTime);
+                yield return null;
+            }
+            float held = 0f;
+            while (held < idleScanHoldTime && currentState == TerroristState.Idle)
+            {
+                held += Time.deltaTime;
+                yield return null;
+            }
+            if (currentState != TerroristState.Idle) yield break;
+        }
+    }
+
     IEnumerator WanderRoutine()
     {
         while (currentState == TerroristState.Idle)
@@ -2794,9 +3135,14 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 }
             }
 
-            // Pause at this spot
-            float pause = wanderPauseTime + Random.Range(-0.5f, 0.5f);
-            yield return new WaitForSeconds(pause);
+            // Pause at this spot — and look around while doing so, rather than just standing.
+            if (idleScan)
+                yield return StartCoroutine(ScanSweep());
+            else
+            {
+                float pause = wanderPauseTime + Random.Range(-0.5f, 0.5f);
+                yield return new WaitForSeconds(pause);
+            }
         }
 
         _wanderRoutine = null;
@@ -3026,18 +3372,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         if (currentState == startState &&
             (startState == TerroristState.Suspicious || startState == TerroristState.Alert))
         {
-            // This room is clear. Re-split: ask the squad to fan out again, which — thanks to the
-            // swept-room memory — pushes searchers onto FRESH rooms rather than re-checking this
-            // one. Cooldown-gated, so a wave of "empty" reports produces at most one re-task.
-            // (The old behaviour sent the whole squad to the SAME point; that is what clumped
-            //  them. This is the "if they don't find me, they split again" behaviour.)
-            Vector3 reFocus = _lastKnownPlayerPos != Vector3.zero ? _lastKnownPlayerPos : soundPos;
-            if (!string.IsNullOrEmpty(squadId))
-                Squad.Get(squadId)?.FanOutSearch(reFocus, _lastKnownPlayerHeading, this);
+            // This room is clear. Whether the squad KEEPS hunting is NOT mine to decide alone —
+            // that was the bug: each searcher gave up on its own, so the mate who never got his
+            // own line of sight walked home while a comrade was still committed. Hand the
+            // decision to the squad: it either re-tasks me to a fresh sector (persistent hunt)
+            // or ends the hunt for EVERYONE together (a deliberate group stand-down).
+            var squad = string.IsNullOrEmpty(squadId) ? null : Squad.Get(squadId);
+            if (squad != null && squad.HuntActive)
+            {
+                // NotifySearcherExhausted either re-dispatches me (starting a fresh investigate
+                // routine that now owns my state) or calls EndHunt → StandDown, which already
+                // sent me to Idle. Either way this old routine is done — just exit without
+                // touching state, or we'd clobber the routine the squad just started.
+                squad.NotifySearcherExhausted(this);
+                yield break;
+            }
 
-            // If I have PERSONALLY seen the trainee I never give up — stay Alert and I'll get a
-            // fresh sector from the fan-out (or, failing that, keep scanning). If I only ever
-            // HEARD something, the area's clear to me now → stand down to Idle.
+            // No squad hunt in play (solo NPC, or a lone gunshot investigation): fall back to the
+            // per-NPC rule — a man who has personally SEEN the trainee keeps hunting; one who only
+            // HEARD something treats the area as clear and stands down.
             if (_personallyConfirmedPlayer)
             {
                 Debug.Log($"[TerroristController] {gameObject.name}: room clear but I've seen the trainee — staying on the hunt.");
@@ -3102,6 +3455,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
             agent.speed = _originalAgentSpeed;
     }
 
+    /// <summary>
+    /// Called by Squad.EndHunt when the squad collectively decides the contact is cold. Drops the
+    /// hunt and returns to patrol — TOGETHER with the rest of the squad — and clears the personal
+    /// "I've seen him" latch so the deliberate group stand-down actually sticks (otherwise the
+    /// Idle-entry catch-all would bounce me straight back to Alert, and the mission would never
+    /// settle). Guardians and men still in the fight are left alone.
+    /// </summary>
+    public void StandDown()
+    {
+        if (isHostageGuardian) return;
+        if (currentState == TerroristState.Down || currentState == TerroristState.Engage) return;
+
+        _personallyConfirmedPlayer = false; // the contact is genuinely cold now
+        if (_investigateRoutine != null) { StopCoroutine(_investigateRoutine); EndInvestigation(); }
+        if (currentState == TerroristState.Alert || currentState == TerroristState.Suspicious)
+            TransitionTo(TerroristState.Idle, null);
+    }
+
+    /// True while this NPC's squad is running a shared, persistent hunt. While set, no member
+    /// stands down on its own — stand-down is the squad's collective EndHunt().
+    bool SquadHunting =>
+        !string.IsNullOrEmpty(squadId) && (Squad.Get(squadId)?.HuntActive ?? false);
+
     // ── Leader coordination (squad directives) ────────────────────────────────
 
     /// <summary>
@@ -3151,6 +3527,25 @@ public class TerroristController : MonoBehaviour, INPCResponder
         var directive = new LeaderDirective(type, target, this, reason);
 
         Squad.Get(squadId)?.IssueDirective(directive);
+    }
+
+    /// <summary>
+    /// Promoted to squad Leader mid-mission because the previous leader was killed. Takes the role
+    /// and, if this NPC is already in the fight, immediately rallies the squad (Converge on the
+    /// last-known trainee position) so coordination resumes at once instead of waiting for the next
+    /// state change. Called by Squad's re-election.
+    /// </summary>
+    public void AssumeLeadership()
+    {
+        role = NPCRole.Leader;
+        Debug.Log($"[TerroristController] {gameObject.name}: assumed squad leadership.");
+
+        if ((currentState == TerroristState.Alert || currentState == TerroristState.Engage) &&
+            _lastKnownPlayerPos != Vector3.zero)
+        {
+            var rally = new ScenarioEvent(ScenarioEventType.GunshotHeard, _lastKnownPlayerPos, gameObject);
+            IssueDirectiveIfLeader(rally, LeaderDirectiveType.Converge);
+        }
     }
 
     /// <summary>
