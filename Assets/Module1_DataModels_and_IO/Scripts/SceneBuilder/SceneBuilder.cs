@@ -111,13 +111,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "as the magenta 'missing shader' colour.")]
         public Material furnitureMaterial;
 
-        [Tooltip("Use imported furniture models instead of shaped greyboxes. OFF by " +
-                 "default because the bundled prop packs (e.g. PandazoleHome) ship " +
-                 "Built-in-RP materials that render MAGENTA under this project's URP " +
-                 "pipeline. Only turn this on after upgrading those materials to URP " +
-                 "(Edit ▸ Rendering ▸ Materials ▸ Convert Selected…), or after mapping " +
-                 "your own URP-ready prefabs below.")]
-        public bool useFurniturePrefabs = false;
+        [Tooltip("Use imported furniture models instead of shaped greyboxes. ON by " +
+                 "default: the bundled PandazoleHome pack's shared material has been " +
+                 "upgraded to URP/Lit, so its props render correctly under this " +
+                 "project's URP pipeline. Auto-discovery is editor-only — for device " +
+                 "builds map the prefabs explicitly below (greybox is the fallback).")]
+        public bool useFurniturePrefabs = true;
 
         [Tooltip("OPTIONAL override, honoured whether or not 'Use Furniture Prefabs' " +
                  "is on. Force a specific prefab for a furniture type (use URP-ready " +
@@ -1020,11 +1019,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            // Uniform fit: shrink (never stretch a single axis) so the model's
-            // footprint fits within the reserved width×depth. Cap at 1 so small
-            // props keep their real size rather than being blown up to fill a box.
+            // Uniform fit: scale the model so its footprint fills the reserved
+            // width×depth — the planner's footprints ARE real-world dimensions, so
+            // matching them is what puts every prop at a believable human scale.
+            // Upscaling is capped so an undersized model is never blown up into a
+            // caricature of itself; past the cap it keeps its authored proportions.
+            const float MaxUpscale = 1.35f;
             float fit = Mathf.Min(size.x / natural.size.x, size.z / natural.size.z);
-            fit = Mathf.Min(fit, 1f);
+            fit = Mathf.Min(fit, MaxUpscale);
             go.transform.localScale = prefab.transform.localScale * fit;
 
             // Face into the room, then re-measure the placed bounds.
@@ -1040,6 +1042,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 floorY        - placed.min.y,
                 targetWorld.z - placed.center.z);
             go.transform.position += delta;
+
+            // Wall-anchored items must actually touch the wall: the uniform fit can
+            // leave the model shallower than its reserved footprint, and centring
+            // that slack strands e.g. a cupboard well off the wall. Push the model
+            // back (local −Z, axis-aligned in world after the 0/90/180/270 yaw) so
+            // its rear face lands on the footprint's rear edge. Chairs are the one
+            // type whose back faces AWAY from the anchor wall (they face their
+            // desk/table), so they stay centred where the plan put them.
+            if (f.type != FurnitureType.Chair && TryGetWorldBounds(go, out Bounds seated))
+            {
+                Vector3 back = rot * Vector3.back;
+                float rearNow = back.x * seated.center.x + back.z * seated.center.z
+                              + Mathf.Abs(back.x) * seated.extents.x
+                              + Mathf.Abs(back.z) * seated.extents.z;
+                float rearPlanned = back.x * targetWorld.x + back.z * targetWorld.z
+                                  + size.z * 0.5f;
+                float push = rearPlanned - rearNow;
+                if (push > 0.005f) go.transform.position += back * push;
+            }
 
             EnsureFurnitureCollider(go);
         }
@@ -1124,17 +1145,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 { FurnitureType.Table,     new[] { "Prop_Table_" } },
                 { FurnitureType.Desk,      new[] { "Prop_Desk_" } },
-                { FurnitureType.Chair,     new[] { "Prop_Chair_" } },
-                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_" } },
-                { FurnitureType.Barrel,    new[] { "Prop_SmallStorageBox_" } },
-                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_" } },
+                { FurnitureType.Chair,     new[] { "Prop_Chair_", "Prop_KitchenChair_", "Prop_OfficeChair_" } },
+                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_", "Prop_Storage_" } },
+                { FurnitureType.Barrel,    new[] { "Prop_TrashCan_" } },
+                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_", "Prop_Shelve_" } },
                 { FurnitureType.Cabinet,   new[] { "Prop_Cabinet_" } },
-                { FurnitureType.Bookshelf, new[] { "Prop_Cabinet_" } },
-                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },
-                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } },
+                { FurnitureType.Bookshelf, new[] { "Prop_Shelve_" } },
+                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },   // prefix excludes Prop_BabyBed_
+                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } }, // the one-piece sofas; 02/03/05/06 are modular sections
                 { FurnitureType.Locker,    new[] { "Prop_Wardrobe_" } },
-                { FurnitureType.SideTable, new[] { "Prop_KidsTable" } },
-                { FurnitureType.Stool,     new[] { "Prop_Chair_" } },
+                { FurnitureType.SideTable, new[] { "Prop_Nightstand_" } },
+                { FurnitureType.Stool,     new[] { "Prop_Pouffes_" } },
             };
 
         // Every prefab under the art folder, loaded and name-sorted once per build.
