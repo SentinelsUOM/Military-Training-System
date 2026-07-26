@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using UnityEngine;
+using MikeNspired.XRIStarterKit; // IDamageable
 
 public class NpcShooterRaycast : MonoBehaviour
 {
@@ -202,7 +203,20 @@ public class NpcShooterRaycast : MonoBehaviour
 
             // Pass the MUZZLE position, not the impact point — the trainee needs to know which
             // direction they are being shot FROM so they can turn and break line of sight.
-            if (health != null) health.TakeDamage(damage, firePoint.position);
+            if (health != null)
+            {
+                health.TakeDamage(damage, firePoint.position);
+            }
+            else
+            {
+                // Crossfire onto another damageable — the HOSTAGE especially. Route through the
+                // shared IDamageable interface (this assembly can't reference gameplay types like
+                // HostageController). Each hitbox decides what a terrorist's round means: the
+                // hostage bleeds and takes real damage; other terrorists ignore friendly fire.
+                // We pass THIS terrorist as the damager so the target can attribute the source.
+                var dmg = hit.collider.GetComponentInParent<IDamageable>();
+                if (dmg != null) dmg.TakeDamage(damage, gameObject);
+            }
         }
     }
 }
