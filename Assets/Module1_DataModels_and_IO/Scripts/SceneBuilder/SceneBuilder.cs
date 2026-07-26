@@ -606,6 +606,18 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             foreach (GameObject root in gameObject.scene.GetRootGameObjects())
             {
                 if (root == null || !IsTemplateRoot(root.name)) continue;
+
+                // The scene's global lighting rig lives INSIDE the template
+                // hierarchy (-------- ENVIRONMENT/LightAndReflectionProbes):
+                // hiding the sun/fill directional lights and the probes drops
+                // the whole world to flat ambient grey, so keep them lit.
+                foreach (Light l in root.GetComponentsInChildren<Light>(true))
+                    if (l.type == LightType.Directional) kept.Add(l.transform);
+                foreach (ReflectionProbe p in root.GetComponentsInChildren<ReflectionProbe>(true))
+                    kept.Add(p.transform);
+                foreach (LightProbeGroup g in root.GetComponentsInChildren<LightProbeGroup>(true))
+                    kept.Add(g.transform);
+
                 HideSubtreeExceptKept(root.transform, kept);
             }
 
