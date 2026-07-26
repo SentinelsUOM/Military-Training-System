@@ -208,6 +208,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "in metres. It drops to the floor from here if it has gravity.")]
         public Vector3 weaponSpawnOffset = new Vector3(0.3f, 1.0f, 0.6f);
 
+        [Tooltip("Extra yaw (degrees) applied to the weapon on top of the trainee's " +
+                 "facing. 90 lays it sideways - e.g. along the staging table's length.")]
+        public float weaponSpawnYaw = 0f;
+
+        [Tooltip("Controller-adjustment table moved in front of the trainee's spawn " +
+                 "point so its tools are in reach the moment the mission starts. " +
+                 "Assign every scene root that makes up the table (tabletop mesh, " +
+                 "interactables group, stray controls sitting on it) - they are moved " +
+                 "together as one rigid group, so items keep their spot on the " +
+                 "tabletop. The FIRST entry is the reference root: its position is " +
+                 "the table centre and, at 0 yaw, the table's front faces -Z (the " +
+                 "'Main Table' convention). Leave empty to leave the table alone.")]
+        public Transform[] stagingTableRoots;
+
+        [Tooltip("Where the table's centre lands relative to the trainee: (right, up, " +
+                 "forward) in metres. The default puts the tabletop just within " +
+                 "reach, facing the trainee.")]
+        public Vector3 tableSpawnOffset = new Vector3(0f, 0.86f, 1.6f);
+
         [Header("Safe Zone / Extraction")]
         [Tooltip("Spawn a 'safe spot' (extraction zone) just inside the entrance. " +
                  "Lead a rescued hostage back into it to complete the mission. Its " +
@@ -2546,6 +2565,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 Debug.Log($"[SceneBuilder] Trainee spawned outside entrance at {outsidePos:F1}, " +
                           $"at the head of the guide path facing the door.");
                 PlaceTraineeWeapon();
+                PlaceStagingTable();
                 return;
             }
 
@@ -2565,6 +2585,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 Debug.Log("[SceneBuilder] Trainee spawned at staging point " +
                           $"'{traineeStartPoint.name}'.");
                 PlaceTraineeWeapon();
+                PlaceStagingTable();
                 return;
             }
 
@@ -2581,6 +2602,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             Debug.Log($"[SceneBuilder] Trainee spawned at Module 1 position {spawnPos:F1} " +
                       $"(entry room, facing {t.facingDirection.ToVector3():F1}).");
             PlaceTraineeWeapon();
+            PlaceStagingTable();
         }
 
         /// <summary>
@@ -2701,7 +2723,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
 
             Vector3 pos = traineeRig.TransformPoint(weaponSpawnOffset);
-            Quaternion rot = Quaternion.Euler(0f, traineeRig.eulerAngles.y, 0f);
+            Quaternion rot = Quaternion.Euler(0f, traineeRig.eulerAngles.y + weaponSpawnYaw, 0f);
 
             var rb = traineeWeapon.GetComponent<Rigidbody>();
 
@@ -2726,6 +2748,133 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             }
 
             Debug.Log($"[SceneBuilder] Trainee weapon '{traineeWeapon.name}' placed at {pos:F1}.");
+        }
+
+        // Layout of the staging-table group relative to its reference root,
+        // captured on the first placement so repeated rebuilds keep every item
+        // in the same spot on the tabletop.
+        private Pose[] _stagingTableLocalPoses;
+
+        /// <summary>
+        /// Moves the controller-adjustment table (a rigid group of scene roots)
+        /// in front of the trainee's spawn, facing them, so they can tune their
+        /// controllers before moving out. Same teleport rules as the weapon:
+        /// rigidbodies go kinematic across the move so stale PhysX contacts from
+        /// rebuilt room colliders can't fling the items off the table.
+        /// </summary>
+        private void PlaceStagingTable()
+        {
+            if (traineeRig == null || stagingTableRoots == null || stagingTableRoots.Length == 0)
+                return;
+
+            Transform primary = stagingTableRoots[0];
+            if (primary == null)
+            {
+                Debug.LogWarning("[SceneBuilder] stagingTableRoots[0] (the reference root) " +
+                                 "is missing - table not moved.");
+                return;
+            }
+
+            if (_stagingTableLocalPoses == null ||
+                _stagingTableLocalPoses.Length != stagingTableRoots.Length)
+            {
+                _stagingTableLocalPoses = new Pose[stagingTableRoots.Length];
+                for (int i = 0; i < stagingTableRoots.Length; i++)
+                {
+                    Transform t = stagingTableRoots[i];
+                    if (t == null) continue;
+                    _stagingTableLocalPoses[i] = new Pose(
+                        primary.InverseTransformPoint(t.position),
+                        Quaternion.Inverse(primary.rotation) * t.rotation);
+                }
+            }
+
+            // The reference root at trainee yaw puts the table's front toward the
+            // trainee (front faces -Z at identity, and the offset is ahead of them).
+            // The spawn can sit in a narrow gap (e.g. between the generated building
+            // and the base map), so don't blindly drop the table dead ahead - it can
+            // end up inside a wall. Sweep directions around the trainee, keeping the
+            // table facing them from each, and take the first unobstructed one.
+            Quaternion baseYaw = Quaternion.Euler(0f, traineeRig.eulerAngles.y, 0f);
+            Quaternion yaw = baseYaw;
+            Vector3 centre = traineeRig.position + yaw * tableSpawnOffset;
+            float[] sweep = { 0f, 45f, -45f, 90f, -90f, 135f, -135f, 180f };
+            bool clear = false;
+            foreach (float angle in sweep)
+            {
+                Quaternion q = baseYaw * Quaternion.Euler(0f, angle, 0f);
+                Vector3 c = traineeRig.position + q * tableSpawnOffset;
+                if (IsStagingSpotClear(c, q))
+                {
+                    yaw = q; centre = c; clear = true;
+                    if (angle != 0f)
+                        Debug.Log($"[SceneBuilder] Staging table spot dead ahead is blocked; " +
+                                  $"rotated {angle:F0}° around the trainee to open ground.");
+                    break;
+                }
+            }
+            if (!clear)
+                Debug.LogWarning("[SceneBuilder] No unobstructed spot found for the staging " +
+                                 "table around the trainee - placing it dead ahead anyway.");
+
+            var bodies = new List<(Rigidbody rb, bool wasKinematic)>();
+            foreach (Transform root in stagingTableRoots)
+            {
+                if (root == null) continue;
+                foreach (Rigidbody rb in root.GetComponentsInChildren<Rigidbody>(true))
+                {
+                    bodies.Add((rb, rb.isKinematic));
+                    rb.isKinematic = true;
+                }
+            }
+
+            for (int i = 0; i < stagingTableRoots.Length; i++)
+            {
+                Transform t = stagingTableRoots[i];
+                if (t == null) continue;
+                Pose local = _stagingTableLocalPoses[i];
+                t.SetPositionAndRotation(centre + yaw * local.position, yaw * local.rotation);
+            }
+            Physics.SyncTransforms();
+
+            foreach ((Rigidbody rb, bool wasKinematic) in bodies)
+            {
+                rb.isKinematic = wasKinematic;
+                if (!wasKinematic)
+                {
+                    rb.linearVelocity  = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                }
+            }
+
+            Debug.Log($"[SceneBuilder] Staging table placed at {centre:F1}, " +
+                      "facing the trainee spawn.");
+        }
+
+        /// <summary>
+        /// True when the staging table's volume at the candidate pose overlaps no
+        /// foreign colliders (walls, generated rooms, furniture). Tests a box a
+        /// little larger than the tabletop, lifted off the ground so floor slabs
+        /// don't count as obstructions. The table's own colliders, the trainee rig
+        /// and the already-placed trainee weapon are ignored.
+        /// </summary>
+        private bool IsStagingSpotClear(Vector3 centre, Quaternion yaw)
+        {
+            var boxCentre = new Vector3(centre.x, traineeRig.position.y + 0.85f, centre.z);
+            var half = new Vector3(2.15f, 0.55f, 0.6f); // (length, height, depth) half-extents
+            foreach (Collider c in Physics.OverlapBox(boxCentre, half, yaw, ~0,
+                                                      QueryTriggerInteraction.Ignore))
+            {
+                Transform t = c.transform;
+                if (t.IsChildOf(traineeRig)) continue;
+                if (traineeWeapon != null && t.IsChildOf(traineeWeapon)) continue;
+                bool own = false;
+                foreach (Transform root in stagingTableRoots)
+                    if (root != null && t.IsChildOf(root)) { own = true; break; }
+                if (own) continue;
+                return false;
+            }
+            return true;
         }
 
         private void SpawnHostages(ScenarioData scenario)
