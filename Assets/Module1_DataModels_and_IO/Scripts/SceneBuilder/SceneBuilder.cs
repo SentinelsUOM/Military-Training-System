@@ -111,13 +111,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "as the magenta 'missing shader' colour.")]
         public Material furnitureMaterial;
 
-        [Tooltip("Use imported furniture models instead of shaped greyboxes. OFF by " +
-                 "default because the bundled prop packs (e.g. PandazoleHome) ship " +
-                 "Built-in-RP materials that render MAGENTA under this project's URP " +
-                 "pipeline. Only turn this on after upgrading those materials to URP " +
-                 "(Edit ▸ Rendering ▸ Materials ▸ Convert Selected…), or after mapping " +
-                 "your own URP-ready prefabs below.")]
-        public bool useFurniturePrefabs = false;
+        [Tooltip("Use imported furniture models instead of shaped greyboxes. ON by " +
+                 "default: the bundled PandazoleHome pack's shared material has been " +
+                 "upgraded to URP/Lit, so its props render correctly under this " +
+                 "project's URP pipeline. Auto-discovery is editor-only — for device " +
+                 "builds map the prefabs explicitly below (greybox is the fallback).")]
+        public bool useFurniturePrefabs = true;
 
         [Tooltip("OPTIONAL override, honoured whether or not 'Use Furniture Prefabs' " +
                  "is on. Force a specific prefab for a furniture type (use URP-ready " +
@@ -296,11 +295,21 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         private const float CorridorFloorThickness = 0.08f;
 
         // ── Window geometry (carved into solid exterior walls) ────────────────
-        private const float WindowWidth      = 1.0f;   // opening width along the wall
-        private const float WindowHeight     = 0.9f;   // opening height
-        private const float WindowSillHeight = 1.1f;   // floor → bottom of opening
-        private const float WindowSideMargin = 0.4f;   // min solid wall each side of the opening
-        private const float WindowPaneThickness = 0.04f;
+        // Residential proportions: sill just below waist height, openings ~1.4 m
+        // wide, and one window per ~3 m of wall so long walls carry an even
+        // rhythm of glazing instead of a single small hole.
+        private const float WindowWidth         = 1.4f;   // opening width along the wall
+        private const float WindowHeight        = 1.2f;   // opening height
+        private const float WindowSillHeight    = 0.95f;  // floor → bottom of opening
+        private const float WindowSideMargin    = 0.5f;   // min solid wall at each wall end
+        private const float WindowSpacing       = 3.2f;   // target wall length per window
+        private const float WindowMinGapBetween = 0.9f;   // min solid wall between openings
+        private const float WindowPaneThickness = 0.03f;
+        private const float WindowFrameWidth    = 0.07f;  // frame border cross-section
+        private const float WindowFrameDepth    = 0.18f;  // stands proud of the 0.12 m wall
+        private const float WindowMuntinWidth   = 0.04f;  // slim cross bars dividing panes
+        private const float WindowSillLedgeH    = 0.05f;  // protruding ledge under the sill
+        private const float WindowSillLedgeDepth = 0.24f; // ledge depth (proud both sides)
         // Height of the door opening. Above this, a header (transom) fills the
         // wall up to the ceiling so doorways aren't open to the full wall height.
         // Matches the door prefab's leaf top and jamb height (2.1 m).
@@ -1020,11 +1029,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            // Uniform fit: shrink (never stretch a single axis) so the model's
-            // footprint fits within the reserved width×depth. Cap at 1 so small
-            // props keep their real size rather than being blown up to fill a box.
+            // Uniform fit: scale the model so its footprint fills the reserved
+            // width×depth — the planner's footprints ARE real-world dimensions, so
+            // matching them is what puts every prop at a believable human scale.
+            // Upscaling is capped so an undersized model is never blown up into a
+            // caricature of itself; past the cap it keeps its authored proportions.
+            const float MaxUpscale = 1.35f;
             float fit = Mathf.Min(size.x / natural.size.x, size.z / natural.size.z);
-            fit = Mathf.Min(fit, 1f);
+            fit = Mathf.Min(fit, MaxUpscale);
             go.transform.localScale = prefab.transform.localScale * fit;
 
             // Face into the room, then re-measure the placed bounds.
@@ -1040,6 +1052,25 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 floorY        - placed.min.y,
                 targetWorld.z - placed.center.z);
             go.transform.position += delta;
+
+            // Wall-anchored items must actually touch the wall: the uniform fit can
+            // leave the model shallower than its reserved footprint, and centring
+            // that slack strands e.g. a cupboard well off the wall. Push the model
+            // back (local −Z, axis-aligned in world after the 0/90/180/270 yaw) so
+            // its rear face lands on the footprint's rear edge. Chairs are the one
+            // type whose back faces AWAY from the anchor wall (they face their
+            // desk/table), so they stay centred where the plan put them.
+            if (f.type != FurnitureType.Chair && TryGetWorldBounds(go, out Bounds seated))
+            {
+                Vector3 back = rot * Vector3.back;
+                float rearNow = back.x * seated.center.x + back.z * seated.center.z
+                              + Mathf.Abs(back.x) * seated.extents.x
+                              + Mathf.Abs(back.z) * seated.extents.z;
+                float rearPlanned = back.x * targetWorld.x + back.z * targetWorld.z
+                                  + size.z * 0.5f;
+                float push = rearPlanned - rearNow;
+                if (push > 0.005f) go.transform.position += back * push;
+            }
 
             EnsureFurnitureCollider(go);
         }
@@ -1124,17 +1155,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 { FurnitureType.Table,     new[] { "Prop_Table_" } },
                 { FurnitureType.Desk,      new[] { "Prop_Desk_" } },
-                { FurnitureType.Chair,     new[] { "Prop_Chair_" } },
-                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_" } },
-                { FurnitureType.Barrel,    new[] { "Prop_SmallStorageBox_" } },
-                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_" } },
+                { FurnitureType.Chair,     new[] { "Prop_Chair_", "Prop_KitchenChair_", "Prop_OfficeChair_" } },
+                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_", "Prop_Storage_" } },
+                { FurnitureType.Barrel,    new[] { "Prop_TrashCan_" } },
+                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_", "Prop_Shelve_" } },
                 { FurnitureType.Cabinet,   new[] { "Prop_Cabinet_" } },
-                { FurnitureType.Bookshelf, new[] { "Prop_Cabinet_" } },
-                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },
-                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } },
+                { FurnitureType.Bookshelf, new[] { "Prop_Shelve_" } },
+                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },   // prefix excludes Prop_BabyBed_
+                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } }, // the one-piece sofas; 02/03/05/06 are modular sections
                 { FurnitureType.Locker,    new[] { "Prop_Wardrobe_" } },
-                { FurnitureType.SideTable, new[] { "Prop_KidsTable" } },
-                { FurnitureType.Stool,     new[] { "Prop_Chair_" } },
+                { FurnitureType.SideTable, new[] { "Prop_Nightstand_" } },
+                { FurnitureType.Stool,     new[] { "Prop_Pouffes_" } },
             };
 
         // Every prefab under the art folder, loaded and name-sorted once per build.
@@ -1495,10 +1526,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         }
 
         /// <summary>
-        /// Builds a solid wall with a centred window opening: a solid sill below,
-        /// jambs either side, a header above, and (when <see cref="windowMaterial"/>
-        /// is assigned) a thin pane filling the opening. Falls back to a plain solid
-        /// wall when the opening can't fit the span or the room is too short.
+        /// Builds a solid wall with one or more evenly-spaced window openings —
+        /// long walls get a rhythm of windows (one per ~<see cref="WindowSpacing"/>
+        /// metres) rather than a single small hole. Each opening carries a full
+        /// framed unit: sill ledge, border frame, cross muntins and a glass pane
+        /// (a URP-safe glass material is generated when <see cref="windowMaterial"/>
+        /// is left empty, so openings are never just bare holes). Falls back to a
+        /// plain solid wall when no opening can fit the span or the room is too
+        /// short.
         /// </summary>
         private void BuildWindowWall(GameObject roomGo, string sideName, bool axisAlongX,
                                      float fixedCoord, float spanMin, float spanMax,
@@ -1506,9 +1541,17 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         {
             float span   = spanMax - spanMin;
             float center = (spanMin + spanMax) * 0.5f;
-            float winW   = Mathf.Min(WindowWidth, span - 2f * WindowSideMargin);
             float winTop = WindowSillHeight + WindowHeight;
 
+            // How many openings the wall can carry at the target rhythm, shrunk
+            // until the row (with end margins and inter-window gaps) fits.
+            int count = Mathf.Clamp(Mathf.RoundToInt(span / WindowSpacing), 1, 3);
+            while (count > 1 &&
+                   count * WindowWidth + (count - 1) * WindowMinGapBetween
+                       + 2f * WindowSideMargin > span)
+                count--;
+
+            float winW = Mathf.Min(WindowWidth, span - 2f * WindowSideMargin);
             if (winW < 0.5f || winTop > height - 0.1f)
             {
                 AddWallSegment(roomGo, $"Wall_{sideName}", axisAlongX, fixedCoord,
@@ -1516,56 +1559,158 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            float segLen    = (span - winW) * 0.5f;
-            float segOffset = winW * 0.5f + segLen * 0.5f;
+            // Opening centres, evenly distributed across the usable band.
+            float bandMin = spanMin + WindowSideMargin;
+            float bandMax = spanMax - WindowSideMargin;
+            var centres = new float[count];
+            for (int i = 0; i < count; i++)
+                centres[i] = Mathf.Lerp(bandMin, bandMax, (i + 0.5f) / count);
 
-            // Solid sill below the opening (full span).
+            // Solid sill band below and header band above the openings (full span).
             AddWallSegment(roomGo, $"Wall_{sideName}_Sill", axisAlongX, fixedCoord,
                            offset: center, length: span, height: WindowSillHeight, mat: mat);
-
-            // Header above the opening (full span).
             float headerH = height - winTop;
             if (headerH > 0.01f)
                 AddWallSegment(roomGo, $"Wall_{sideName}_Header", axisAlongX, fixedCoord,
                                offset: center, length: span, height: headerH, mat: mat, baseY: winTop);
 
-            // Jambs either side of the opening.
-            AddWallSegment(roomGo, $"Wall_{sideName}_A", axisAlongX, fixedCoord,
-                           offset: center - segOffset, length: segLen, height: WindowHeight,
-                           mat: mat, baseY: WindowSillHeight);
-            AddWallSegment(roomGo, $"Wall_{sideName}_B", axisAlongX, fixedCoord,
-                           offset: center + segOffset, length: segLen, height: WindowHeight,
-                           mat: mat, baseY: WindowSillHeight);
+            // Solid pieces of the window band: wall end → first opening, between
+            // openings, last opening → wall end.
+            float prevEdge = spanMin;
+            for (int i = 0; i <= count; i++)
+            {
+                float pieceMax = i < count ? centres[i] - winW * 0.5f : spanMax;
+                float len = pieceMax - prevEdge;
+                if (len > 0.01f)
+                    AddWallSegment(roomGo, $"Wall_{sideName}_{(char)('A' + i)}", axisAlongX,
+                                   fixedCoord, offset: (prevEdge + pieceMax) * 0.5f, length: len,
+                                   height: WindowHeight, mat: mat, baseY: WindowSillHeight);
+                if (i < count) prevEdge = centres[i] + winW * 0.5f;
+            }
 
-            // Glass pane in the opening, only when a material is supplied.
-            if (windowMaterial != null)
-                AddWindowPane(roomGo, $"Window_{sideName}", axisAlongX, fixedCoord, center, winW);
+            for (int i = 0; i < count; i++)
+                AddWindowUnit(roomGo, $"Window_{sideName}_{i + 1}", axisAlongX,
+                              fixedCoord, centres[i], winW);
         }
 
         /// <summary>
-        /// Drops a thin pane into a window opening, centred on the wall span at
-        /// sill height. Keeps its box collider so the trainee can't reach through.
+        /// Builds one complete window unit inside an opening: glass pane, border
+        /// frame strips (standing slightly proud of the wall on both faces), a
+        /// protruding sill ledge, and slim cross muntins that divide the glazing
+        /// into four panes. Every part is a solid primitive with a collider, so
+        /// the trainee still can't reach or walk through the opening.
         /// </summary>
-        private void AddWindowPane(GameObject roomGo, string name, bool axisAlongX,
+        private void AddWindowUnit(GameObject roomGo, string name, bool axisAlongX,
                                    float fixedCoord, float center, float width)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = name;
-            go.transform.SetParent(roomGo.transform, worldPositionStays: false);
+            var unit = new GameObject(name);
+            unit.transform.SetParent(roomGo.transform, worldPositionStays: false);
 
-            float cy = WindowSillHeight + WindowHeight * 0.5f;
-            if (axisAlongX)
+            Material glass = ResolveWindowGlassMaterial();
+            Material frame = ResolveWindowFrameMaterial();
+
+            float sill = WindowSillHeight;
+            float h    = WindowHeight;
+            float midY = sill + h * 0.5f;
+            float topY = sill + h;
+
+            // Places one box in room-local space; along = extent along the wall,
+            // vert = height, deep = extent through the wall.
+            void Box(string partName, float alongPos, float y, float along, float vert,
+                     float deep, Material material)
             {
-                go.transform.localPosition = new Vector3(center, cy, fixedCoord);
-                go.transform.localScale    = new Vector3(width, WindowHeight, WindowPaneThickness);
-            }
-            else
-            {
-                go.transform.localPosition = new Vector3(fixedCoord, cy, center);
-                go.transform.localScale    = new Vector3(WindowPaneThickness, WindowHeight, width);
+                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                go.name = partName;
+                go.transform.SetParent(unit.transform, worldPositionStays: false);
+                go.transform.localPosition = axisAlongX
+                    ? new Vector3(alongPos, y, fixedCoord)
+                    : new Vector3(fixedCoord, y, alongPos);
+                go.transform.localScale = axisAlongX
+                    ? new Vector3(along, vert, deep)
+                    : new Vector3(deep, vert, along);
+                if (material != null)
+                    go.GetComponent<Renderer>().sharedMaterial = material;
             }
 
-            go.GetComponent<Renderer>().sharedMaterial = windowMaterial;
+            // Glass, inset within the frame border.
+            Box("Glass", center, midY,
+                width - 2f * WindowFrameWidth, h - 2f * WindowFrameWidth,
+                WindowPaneThickness, glass);
+
+            // Border frame: bottom, top and side strips lining the opening.
+            Box("Frame_Bottom", center, sill + WindowFrameWidth * 0.5f,
+                width, WindowFrameWidth, WindowFrameDepth, frame);
+            Box("Frame_Top", center, topY - WindowFrameWidth * 0.5f,
+                width, WindowFrameWidth, WindowFrameDepth, frame);
+            Box("Frame_Left", center - (width - WindowFrameWidth) * 0.5f, midY,
+                WindowFrameWidth, h, WindowFrameDepth, frame);
+            Box("Frame_Right", center + (width - WindowFrameWidth) * 0.5f, midY,
+                WindowFrameWidth, h, WindowFrameDepth, frame);
+
+            // Cross muntins: one vertical, one horizontal → a four-pane look.
+            Box("Muntin_V", center, midY,
+                WindowMuntinWidth, h - 2f * WindowFrameWidth, WindowFrameDepth * 0.7f, frame);
+            Box("Muntin_H", center, midY,
+                width - 2f * WindowFrameWidth, WindowMuntinWidth, WindowFrameDepth * 0.7f, frame);
+
+            // Protruding exterior/interior sill ledge just below the opening.
+            Box("Sill_Ledge", center, sill - WindowSillLedgeH * 0.5f,
+                width + 2f * WindowFrameWidth, WindowSillLedgeH, WindowSillLedgeDepth, frame);
+        }
+
+        // Lazily-created window materials so windows read as real glazing even
+        // when the inspector slots are left empty (URP-safe, Standard fallback).
+        private Material _windowGlassMatCache;
+        private Material _windowFrameMatCache;
+
+        /// <summary>The assigned <see cref="windowMaterial"/>, or a generated
+        /// translucent pale-blue glass material as a fallback.</summary>
+        private Material ResolveWindowGlassMaterial()
+        {
+            if (windowMaterial != null) return windowMaterial;
+            if (_windowGlassMatCache != null) return _windowGlassMatCache;
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return null;
+
+            var mat = new Material(shader) { name = "GeneratedWindowGlassMat" };
+            var tint = new Color(0.62f, 0.75f, 0.82f, 0.32f);
+            mat.color = tint;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", tint);
+
+            // URP transparent surface setup (harmless no-ops under Standard).
+            if (mat.HasProperty("_Surface"))
+            {
+                mat.SetFloat("_Surface", 1f);   // 1 = Transparent
+                mat.SetFloat("_Blend", 0f);     // Alpha
+                mat.SetFloat("_ZWrite", 0f);
+                mat.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                mat.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                mat.SetOverrideTag("RenderType", "Transparent");
+                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            }
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.92f);
+            if (mat.HasProperty("_Metallic"))   mat.SetFloat("_Metallic", 0.1f);
+            return _windowGlassMatCache = mat;
+        }
+
+        /// <summary>Generated dark-anthracite frame material (URP-safe).</summary>
+        private Material ResolveWindowFrameMaterial()
+        {
+            if (_windowFrameMatCache != null) return _windowFrameMatCache;
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return null;
+
+            var mat = new Material(shader) { name = "GeneratedWindowFrameMat" };
+            var tint = new Color(0.16f, 0.17f, 0.18f, 1f);
+            mat.color = tint;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", tint);
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.55f);
+            return _windowFrameMatCache = mat;
         }
 
         /// <summary>

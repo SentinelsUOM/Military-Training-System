@@ -4,13 +4,10 @@ import { useEffect, useMemo, useState } from 'react'
 import styles from './MissionLauncher.module.css'
 import {
   DEFAULT_CONFIG,
-  DIFFICULTY_LABELS,
   ENTRY_TYPES,
-  HOSTAGE_RISK_LEVELS,
   LAYOUT_TYPES,
   MISSION_TYPES,
   PLACEMENT_STRATEGIES,
-  RANDOMNESS_LEVELS,
   ROOM_SIZES,
 } from '@/lib/scenarioEnums'
 
@@ -86,12 +83,8 @@ export default function MissionLauncher({ open, onClose }) {
       return `roomCountMin (${ms.roomCount.min}) > roomCountMax (${ms.roomCount.max}).`
     if (ec.terroristCount > ms.roomCount.max * 2)
       return `terroristCount (${ec.terroristCount}) exceeds roomCount.max x 2 (${ms.roomCount.max * 2}).`
-    if (ex.timeLimit != null && (ex.timeLimit < 60 || ex.timeLimit > 1800))
-      return `timeLimit (${ex.timeLimit}) must be in [60, 1800].`
-    if (ex.customLabel && ex.customLabel.length > 128)
-      return `customLabel length (${ex.customLabel.length}) exceeds 128 chars.`
     return null
-  }, [ms, ec, ex])
+  }, [ms, ec])
 
   // ── Build the wire payload (drops empty optionals) ──────────────────────
   const buildPayload = () => ({
@@ -107,14 +100,16 @@ export default function MissionLauncher({ open, onClose }) {
       hostageCount:      1,
       terroristCount:    ec.terroristCount,
       placementStrategy: ec.placementStrategy,
-      hostageRiskLevel:  ec.hostageRiskLevel,
+      // Fixed defaults — controls removed from the form. Literals (not state)
+      // so stale localStorage configs cannot re-inject old values.
+      hostageRiskLevel:  'medium',
     },
     executionControls: {
-      difficultyLevel: ex.difficultyLevel,
-      randomnessLevel: ex.randomnessLevel,
+      difficultyLevel: 3,
+      randomnessLevel: 'medium',
       seed:            ex.seed === '' || ex.seed == null ? null : Number(ex.seed),
-      timeLimit:       ex.timeLimit === '' || ex.timeLimit == null ? null : Number(ex.timeLimit),
-      customLabel:     ex.customLabel || null,
+      timeLimit:       null,
+      customLabel:     null,
     },
   })
 
@@ -241,24 +236,8 @@ export default function MissionLauncher({ open, onClose }) {
             <Select value={ec.placementStrategy} onChange={v => setEc({ placementStrategy: v })} options={PLACEMENT_STRATEGIES} />
           </Row>
 
-          <Row label="Hostage Risk Level">
-            <Select value={ec.hostageRiskLevel}  onChange={v => setEc({ hostageRiskLevel:  v })} options={HOSTAGE_RISK_LEVELS} />
-          </Row>
-
           {/* ── Execution Controls ────────────────────────────────────── */}
           <h3 className={styles.section}>Execution Controls</h3>
-
-          <Row label="Difficulty">
-            <RangeWithValue
-              min={1} max={5} value={ex.difficultyLevel}
-              onChange={v => setEx({ difficultyLevel: Number(v) })}
-              renderValue={v => DIFFICULTY_LABELS[v]}
-            />
-          </Row>
-
-          <Row label="Randomness">
-            <Select value={ex.randomnessLevel} onChange={v => setEx({ randomnessLevel: v })} options={RANDOMNESS_LEVELS} />
-          </Row>
 
           <Row label="Seed (optional)">
             <input
@@ -267,28 +246,6 @@ export default function MissionLauncher({ open, onClose }) {
               placeholder="empty = random"
               value={ex.seed ?? ''}
               onChange={e => setEx({ seed: e.target.value })}
-            />
-          </Row>
-
-          <Row label="Time Limit (s)">
-            <input
-              className={styles.textInput}
-              type="number"
-              min={60} max={1800}
-              placeholder="60-1800, empty = none"
-              value={ex.timeLimit ?? ''}
-              onChange={e => setEx({ timeLimit: e.target.value })}
-            />
-          </Row>
-
-          <Row label="Custom Label">
-            <input
-              className={styles.textInput}
-              type="text"
-              maxLength={128}
-              placeholder="optional"
-              value={ex.customLabel ?? ''}
-              onChange={e => setEx({ customLabel: e.target.value })}
             />
           </Row>
         </div>

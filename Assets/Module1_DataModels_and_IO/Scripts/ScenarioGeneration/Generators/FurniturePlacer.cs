@@ -12,6 +12,13 @@
 // always preserved so the NavMesh stays traversable and the trainee/NPCs can
 // cross every room and reach every doorway.
 //
+// Items are also GROUPED the way real rooms are furnished: chairs are never
+// scattered along walls on their own — they spawn tucked in front of the desk
+// or table they belong to, turned to face it; beds and sofas get a nightstand
+// seated beside them against the same wall. Companions pass the exact same
+// rejection checks (room bounds, door keep-outs, entity clearance, item gaps,
+// floor-coverage cap) as primary items, so all navigability guarantees hold.
+//
 // Design notes:
 //   * All randomness flows through the caller-supplied System.Random for full
 //     seed reproducibility [22] — same seed ⇒ identical furniture.
@@ -41,9 +48,22 @@ namespace TeamSentinels.ScenarioGeneration.Generators
     {
         // ── Geometry constants (metres) ──────────────────────────────────────
 
-        /// <summary>Keep furniture fully on the floor: inset of the outer wall
-        /// plane the item's footprint must stay within.</summary>
-        private const float EdgeInset = 0.15f;
+        /// <summary>Gap Module 1 leaves between adjacent room footprints. Must
+        /// match <c>LayoutGenerator.CorridorGap</c>.</summary>
+        private const float CorridorGap = 2.0f;
+
+        /// <summary>Half of SceneBuilder's 0.12 m procedural wall thickness.</summary>
+        private const float WallHalfThickness = 0.06f;
+
+        /// <summary>
+        /// How far the room's REAL interior extends beyond its nominal half-size
+        /// on every side. Rooms are laid out <see cref="CorridorGap"/> apart and
+        /// SceneBuilder builds each wall centred on the boundary plane halfway
+        /// into that gap, with the floor slab extended to meet it. Anchoring
+        /// furniture to THIS extent puts backs flush against the visible walls
+        /// instead of floating a metre inside the room.
+        /// </summary>
+        private const float InteriorOutset = CorridorGap * 0.5f - WallHalfThickness;
 
         /// <summary>Gap left between an item's back and the wall it lines.</summary>
         private const float WallGap = 0.05f;
@@ -129,18 +149,22 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                     FurnitureType.Crate, FurnitureType.Shelf, FurnitureType.Cabinet,
                     FurnitureType.Barrel, FurnitureType.Locker
                 },
+                // No standalone chairs here: chairs only ever appear tucked at a
+                // desk or table (see the companion pass), the way real rooms read.
                 [RoomType.Standard] = new[]
                 {
-                    FurnitureType.Table, FurnitureType.Desk, FurnitureType.Chair, FurnitureType.Chair,
+                    FurnitureType.Table, FurnitureType.Desk,
                     FurnitureType.Crate, FurnitureType.Shelf, FurnitureType.Cabinet,
                     FurnitureType.Bookshelf, FurnitureType.Barrel, FurnitureType.Sofa,
-                    FurnitureType.Locker, FurnitureType.SideTable, FurnitureType.Stool
+                    FurnitureType.Locker, FurnitureType.Stool
                 },
+                // Chairs stay standalone ONLY here: loose chairs along the walls of
+                // a holding room read as hostage seating, which suits the scenario.
                 [RoomType.HostageRoom] = new[]
                 {
                     FurnitureType.Chair, FurnitureType.Chair, FurnitureType.Desk, FurnitureType.Table,
                     FurnitureType.Cabinet, FurnitureType.Shelf, FurnitureType.Bed,
-                    FurnitureType.SideTable, FurnitureType.Stool
+                    FurnitureType.Stool
                 },
             };
 
@@ -278,7 +302,7 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                     usedArea += area;
                     placedRects.Add(footprint);
 
-                    room.furniture.Add(new FurnitureData
+                    var item = new FurnitureData
                     {
                         id          = $"furniture_{room.id}_{seated:00}",
                         type        = type,
@@ -286,10 +310,210 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                         size        = new SerializableVector3(w, h, d),
                         rotationY   = rotationY,
                         againstWall = wall
-                    });
+                    };
+                    room.furniture.Add(item);
                     placed = true;
+
+                    // Companion pass: dress the item the way real rooms are
+                    // furnished. Chairs belong to desks/tables; beds and sofas
+                    // get a nightstand beside them against the same wall.
+                    switch (type)
+                    {
+                        case FurnitureType.Desk:
+                            PlaceChairsAtParent(room, item, 1, sizeScale, randomness,
+                                keepouts, entityPositions, placedRects,
+                                ref usedArea, floorArea, ref seated, rng);
+                            break;
+                        case FurnitureType.Table:
+                            PlaceChairsAtParent(room, item, 1 + rng.Next(2), sizeScale, randomness,
+                                keepouts, entityPositions, placedRects,
+                                ref usedArea, floorArea, ref seated, rng);
+                            break;
+                        case FurnitureType.Bed:
+                        case FurnitureType.Sofa:
+                            PlaceSideTableBeside(room, item, sizeScale, randomness,
+                                keepouts, entityPositions, placedRects,
+                                ref usedArea, floorArea, ref seated, rng);
+                            break;
+                    }
                 }
             }
+        }
+
+        // ── Companion placement ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Seats up to <paramref name="count"/> chairs tucked in front of a
+        /// wall-anchored desk/table, pulled out slightly (as if in use) and turned
+        /// to face it. Chair yaw stays axis-aligned (parent + 180°), so footprint
+        /// maths remain exact AABBs. Chairs that fail any clearance check are
+        /// silently skipped — a desk without a chair is still believable.
+        /// </summary>
+        private void PlaceChairsAtParent(
+            RoomData room, FurnitureData parent, int count,
+            float sizeScale, RandomnessLevel randomness,
+            List<Vector3> keepouts, List<Vector3> entityPositions, List<Rect> placedRects,
+            ref float usedArea, float floorArea, ref int seated, System.Random rng)
+        {
+            FurnitureSpec spec = Catalogue[FurnitureType.Chair];
+            WallAxes(parent.againstWall, out Vector3 inward, out Vector3 tangent);
+            bool alongX = parent.againstWall == WallSide.North || parent.againstWall == WallSide.South;
+
+            // Lateral slots across the parent's front edge: centred for one chair,
+            // spread towards the ends for two. Width always runs along the wall.
+            float[] slots = count <= 1 ? new[] { 0f } : new[] { -0.27f, 0.27f };
+
+            for (int i = 0; i < count && i < slots.Length; i++)
+            {
+                float jitter = randomness == RandomnessLevel.Low
+                    ? 1.0f
+                    : 1.0f + (float)(rng.NextDouble() - 0.5) * 0.12f;
+                float w = spec.width  * sizeScale * jitter;
+                float d = spec.depth  * sizeScale * jitter;
+                float h = spec.height * sizeScale;
+
+                // Pulled-out gap between the parent's front edge and the chair.
+                // Kept above FurnitureGap so the no-overlap invariant holds.
+                float pull = 0.2f + (float)rng.NextDouble() * 0.15f;
+
+                Vector3 centre = parent.position.ToVector3()
+                               + inward  * (parent.size.z * 0.5f + d * 0.5f + pull)
+                               + tangent * (slots[i] * parent.size.x);
+
+                float halfFx = alongX ? w * 0.5f : d * 0.5f;
+                float halfFz = alongX ? d * 0.5f : w * 0.5f;
+                var rect = new Rect(centre.x - halfFx, centre.z - halfFz, halfFx * 2f, halfFz * 2f);
+
+                if (!TryCommitCompanion(room, FurnitureType.Chair, centre, rect,
+                        new Vector3(w, h, d), (parent.rotationY + 180f) % 360f, parent.againstWall,
+                        keepouts, entityPositions, placedRects, ref usedArea, floorArea, ref seated))
+                    continue;
+            }
+        }
+
+        /// <summary>
+        /// Seats one side table (nightstand) directly beside a wall-anchored bed
+        /// or sofa, back against the same wall, sharing its orientation. Tries the
+        /// randomly-picked side first, then the other; gives up quietly if neither
+        /// end has room.
+        /// </summary>
+        private void PlaceSideTableBeside(
+            RoomData room, FurnitureData parent,
+            float sizeScale, RandomnessLevel randomness,
+            List<Vector3> keepouts, List<Vector3> entityPositions, List<Rect> placedRects,
+            ref float usedArea, float floorArea, ref int seated, System.Random rng)
+        {
+            FurnitureSpec spec = Catalogue[FurnitureType.SideTable];
+            WallAxes(parent.againstWall, out Vector3 inward, out Vector3 tangent);
+            bool alongX = parent.againstWall == WallSide.North || parent.againstWall == WallSide.South;
+
+            float jitter = randomness == RandomnessLevel.Low
+                ? 1.0f
+                : 1.0f + (float)(rng.NextDouble() - 0.5) * 0.12f;
+            float w = spec.width  * sizeScale * jitter;
+            float d = spec.depth  * sizeScale * jitter;
+            float h = spec.height * sizeScale;
+
+            float firstSide = rng.Next(2) == 0 ? 1f : -1f;
+            foreach (float side in new[] { firstSide, -firstSide })
+            {
+                // Along the wall: parent half-width + gap + own half-width (local
+                // width always runs along the anchored wall). Across: shift so the
+                // table's back sits on the wall plane despite the depth difference.
+                Vector3 centre = parent.position.ToVector3()
+                               + tangent * (side * (parent.size.x * 0.5f + FurnitureGap + 0.05f + w * 0.5f))
+                               + inward  * ((d - parent.size.z) * 0.5f);
+
+                float halfFx = alongX ? w * 0.5f : d * 0.5f;
+                float halfFz = alongX ? d * 0.5f : w * 0.5f;
+                var rect = new Rect(centre.x - halfFx, centre.z - halfFz, halfFx * 2f, halfFz * 2f);
+
+                if (TryCommitCompanion(room, FurnitureType.SideTable, centre, rect,
+                        new Vector3(w, h, d), parent.rotationY, parent.againstWall,
+                        keepouts, entityPositions, placedRects, ref usedArea, floorArea, ref seated))
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// Validates a companion footprint against every invariant a primary item
+        /// obeys (floor bounds, door keep-outs, entity clearance, item gaps and the
+        /// floor-coverage cap) and, if it passes, records the item on the room.
+        /// </summary>
+        private bool TryCommitCompanion(
+            RoomData room, FurnitureType type, Vector3 centre, Rect rect, Vector3 size,
+            float rotationY, WallSide wall,
+            List<Vector3> keepouts, List<Vector3> entityPositions, List<Rect> placedRects,
+            ref float usedArea, float floorArea, ref int seated)
+        {
+            float area = rect.width * rect.height;
+            if ((usedArea + area) / floorArea > MaxFloorCoverage) return false;
+            if (!FootprintIsValid(room, rect, keepouts, entityPositions, placedRects)) return false;
+
+            seated++;
+            usedArea += area;
+            placedRects.Add(rect);
+            room.furniture.Add(new FurnitureData
+            {
+                id          = $"furniture_{room.id}_{seated:00}",
+                type        = type,
+                position    = new SerializableVector3(centre.x, 0f, centre.z),
+                size        = new SerializableVector3(size.x, size.y, size.z),
+                rotationY   = rotationY,
+                againstWall = wall
+            });
+            return true;
+        }
+
+        /// <summary>Room-inward normal and along-wall tangent for a wall side.</summary>
+        private static void WallAxes(WallSide wall, out Vector3 inward, out Vector3 tangent)
+        {
+            switch (wall)
+            {
+                case WallSide.North: inward = new Vector3(0f, 0f, -1f); break;
+                case WallSide.South: inward = new Vector3(0f, 0f,  1f); break;
+                case WallSide.East:  inward = new Vector3(-1f, 0f, 0f); break;
+                default:             inward = new Vector3( 1f, 0f, 0f); break; // West
+            }
+            tangent = (wall == WallSide.North || wall == WallSide.South)
+                ? new Vector3(1f, 0f, 0f)
+                : new Vector3(0f, 0f, 1f);
+        }
+
+        /// <summary>
+        /// The full rejection suite shared by companion items: footprint inside the
+        /// inset floor bounds, clear of doorway keep-outs, clear of entities, and
+        /// clear of every already-seated item.
+        /// </summary>
+        private bool FootprintIsValid(
+            RoomData room, Rect rect,
+            List<Vector3> keepouts, List<Vector3> entityPositions, List<Rect> placedRects)
+        {
+            const float eps = 1e-3f;
+            float cx = room.position.x;
+            float cz = room.position.z;
+            // Half-extents of the REAL interior: out to each wall's inner face,
+            // not just the room's nominal footprint (see InteriorOutset).
+            float halfW = room.size.width * 0.5f + InteriorOutset;
+            float halfD = room.size.depth * 0.5f + InteriorOutset;
+            if (rect.xMin < cx - halfW - eps || rect.xMax > cx + halfW + eps ||
+                rect.yMin < cz - halfD - eps || rect.yMax > cz + halfD + eps)
+                return false;
+
+            foreach (Vector3 k in keepouts)
+                if (RectOverlapsCircle(rect, k.x, k.z, DoorKeepout))
+                    return false;
+
+            if (entityPositions != null)
+                foreach (Vector3 e in entityPositions)
+                    if (PointInRect(e.x, e.z, rect, EntityClearance))
+                        return false;
+
+            foreach (Rect other in placedRects)
+                if (RectsOverlap(rect, other, FurnitureGap))
+                    return false;
+
+            return true;
         }
 
         /// <summary>
@@ -312,8 +536,10 @@ namespace TeamSentinels.ScenarioGeneration.Generators
 
             float cx = room.position.x;
             float cz = room.position.z;
-            float halfW = room.size.width * 0.5f - EdgeInset;
-            float halfD = room.size.depth * 0.5f - EdgeInset;
+            // Half-extents of the REAL interior: out to each wall's inner face,
+            // not just the room's nominal footprint (see InteriorOutset).
+            float halfW = room.size.width * 0.5f + InteriorOutset;
+            float halfD = room.size.depth * 0.5f + InteriorOutset;
 
             // World footprint half-extents: for east/west walls the item is turned
             // 90°, so its depth runs along X and width along Z.

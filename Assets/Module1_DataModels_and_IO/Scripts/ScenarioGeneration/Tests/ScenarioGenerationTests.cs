@@ -492,9 +492,13 @@ namespace TeamSentinels.ScenarioGeneration.Tests
 
         // Mirror of FurniturePlacer's clearance constants, used to assert the
         // placement guarantees hold on the generated output.
-        private const float FurnitureEdgeInset     = 0.15f;
-        private const float FurnitureDoorKeepout   = 1.35f;
-        private const float FurnitureEntityClear   = 0.6f;
+        // InteriorOutset: rooms sit 2 m apart and SceneBuilder builds each wall
+        // centred on the shared boundary plane (0.12 m thick), so the REAL
+        // interior — and the furniture anchoring bound — extends this far past
+        // the room's nominal half-size on every side.
+        private const float FurnitureInteriorOutset = 2.0f * 0.5f - 0.06f;
+        private const float FurnitureDoorKeepout    = 1.35f;
+        private const float FurnitureEntityClear    = 0.6f;
 
         private void VerifyFurnitureWithinRoomBounds()
         {
@@ -503,8 +507,8 @@ namespace TeamSentinels.ScenarioGeneration.Tests
                 LayoutData layout = PlaceFurniture(type, seed: 7);
                 foreach (RoomData room in layout.rooms)
                 {
-                    float hw = room.size.width * 0.5f - FurnitureEdgeInset + BoundsEpsilon;
-                    float hd = room.size.depth * 0.5f - FurnitureEdgeInset + BoundsEpsilon;
+                    float hw = room.size.width * 0.5f + FurnitureInteriorOutset + BoundsEpsilon;
+                    float hd = room.size.depth * 0.5f + FurnitureInteriorOutset + BoundsEpsilon;
                     foreach (FurnitureData f in room.furniture)
                     {
                         Rect r = Footprint(f);

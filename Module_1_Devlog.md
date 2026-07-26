@@ -800,3 +800,103 @@ Each entry follows this structure:
 - (Open) Coordinate final placement conventions with the base-map/environment owners; confirm clearance value holds across all canned configs.
 
 ---
+
+### 2026-07-25 — Door location fix: lateral jog + aligned wall openings
+
+**Status:** Bugfix — doors no longer always sit at the wall midpoint, and the rendered wall openings now line up with where the layout actually put each door.
+
+**Done:**
+- `LayoutGenerator.cs` (+152 lines): door placement gained a lateral offset along the shared wall. `ChooseDoorLateral` evaluates candidate positions (base midpoint ± `DoorLateralJog = 1.6 m`) and picks the one maximising clearance from doors already recorded on the same wall of either room (`Clearance` / `ClearanceOn` / `RecordLateral` bookkeeping keyed by `roomId|side`). `MaxJog` clamps the jog per room so an opening never eats into the corner: half-span − `DoorSightlineWidth`/2 (2.2 m) − `MinJamb` (0.4 m).
+- `SceneBuilder.cs` (+303 lines): wall builders now cut each opening at the door's **actual** lateral position instead of centring every opening — `OpeningOffset` maps the door's layout-space position onto the wall span (room size + `CorridorGap`) and clamps to leave a minimum jamb. New `OffsetEntranceFromInteriorDoors` nudges the exterior entrance opening laterally so it can't coincide with an interior door opening on the same wall.
+- `ScenarioGenerationTests.cs` updated for the new door-position behaviour.
+
+**Decisions:**
+- **Clearance-maximising candidate selection, not RNG.** The jog is a pure function of the layout (which doors already share the wall), so the fix stays fully seed-reproducible and needs no new config knob.
+
+**Issues:**
+- None noted after the fix; previously two doors on the same wall could overlap or a door's visual opening could sit at the wall centre while the door data sat elsewhere.
+
+**Next:**
+- Fix the remaining door *functionality* issues (leaf physics, NPC sensor alignment).
+
+---
+
+### 2026-07-26 — Door functionality fixes: leaf alignment + NPC sensor anchoring
+
+**Status:** Bugfix — instantiated doors now sit exactly in their wall openings and NPC door-assist works off the real door geometry.
+
+**Done:**
+- `NpcDoorAssist.cs` (+39 lines): the NPC sensor is now anchored to the actual door-leaf collider (`_leafCollider`) rather than assumed prefab geometry, so open/closed detection tracks the real doorway.
+- `SceneBuilder.cs` (+253 lines): new `DoorLiesOnWall` resolves which wall a door record actually belongs to, returning its lateral offset and wall plane (with `DoorPlaneTolerance = 1.25 m`); wall segments are then built from per-side door planes so opening, wall and door leaf coincide exactly on shared walls. `DoorFloorLift = 0.095 m` lifts the instantiated door so the leaf clears the floor slab. `BuildCeiling` extracted as its own builder during the wall refactor.
+
+**Decisions:**
+- **Measure the leaf, don't assume it.** Both the sensor anchoring and the floor lift are derived from the real prefab's colliders/bounds, so swapping the door art later won't silently break door behaviour.
+
+**Issues:**
+- None after the fix.
+
+**Next:**
+- Presentation polish: staging table at spawn, hide the template base map after generation.
+
+---
+
+### 2026-07-26 — Gun/staging table placed in front of the trainee spawn
+
+**Status:** The controller-adjustment (gun) table now follows the trainee's generated spawn point instead of living at a fixed scene position.
+
+**Done:**
+- `SceneBuilder.cs` (+151 lines): new `stagingTableRoots` (Transform array) is relocated in front of the trainee on every build via `PlaceStagingTable`. `tableSpawnOffset = (0, 0.86, 1.6)` positions the table centre in trainee-local right/up/forward; `weaponSpawnYaw` adds extra yaw to the weapon on top of the trainee's facing. Placement sweeps candidate angles and uses `IsStagingSpotClear` (ignoring the scenario's own colliders) to find an unobstructed spot; rigidbody props on the table are temporarily made kinematic during the move so items don't scatter, and their local poses (`_stagingTableLocalPoses`) are restored each build.
+- Large `XRI Starter Kit.unity` re-serialisation (net −3,685 lines) — stale hand-placed scene content removed now that table placement is runtime-driven.
+
+**Decisions:**
+- **Table follows the spawn, not the reverse.** With `spawnOutsideEntrance` the trainee's start moves every generation, so the equipment table must be computed from the live spawn pose rather than anchoring the spawn to a fixed table.
+
+**Issues:**
+- None noted.
+
+**Next:**
+- Hide the hand-built base-map template once a scenario is generated so the two buildings don't visually compete.
+
+---
+
+### 2026-07-26 — Hide base-map template after build + global lighting fix
+
+**Status:** After a successful build the XRI demo/base-map content is hidden, without killing the scene's global lighting.
+
+**Done:**
+- `SceneBuilder.cs` (+119 lines): new `hideTemplateAfterBuild` flag (default true). `HideTemplateContent` deactivates template roots identified by name (`TemplateRootContains` substrings + `TemplateRootExact` exact matches), tracking them in `_hiddenTemplateObjects` so `ShowTemplateContent` / `ClearScene` can restore them. `HideSubtreeExceptKept` walks each root and keeps required children alive while hiding the rest.
+- Follow-up lighting fix (+12 lines): the scene's global lighting rig lives **inside** the template hierarchy (`-------- ENVIRONMENT/LightAndReflectionProbes`), so hiding the template dropped the whole world to flat ambient grey. Directional `Light`s, `ReflectionProbe`s and `LightProbeGroup`s found under template roots are now added to the kept list before hiding.
+- Companion `XRI Starter Kit.unity` cleanup (−113 lines).
+
+**Decisions:**
+- **Hide, don't destroy.** Template objects are deactivated and tracked rather than deleted, so `ClearScene` returns the scene to its authored state and repeated generate/clear cycles are lossless.
+- **Keep the lighting rig by component type**, not by name — any directional light or probe under a template root survives, so re-organising the template hierarchy won't reintroduce the grey-out.
+
+**Issues:**
+- The lighting regression shipped in the first cut of the hide feature and was caught the same day — the kept-components fix above resolves it.
+
+**Next:**
+- Finalise which scenario parameters the evaluator dashboard actually exposes.
+
+---
+
+### 2026-07-26 — AAR dashboard: finalise mission input parameters
+
+**Status:** The web dashboard's Start Mission form is trimmed to the finalised evaluator-facing parameter set.
+
+**Done:**
+- `sentinels-aar/components/MissionLauncher.jsx` (net −43 lines): removed the form controls for **Hostage Risk Level**, **Difficulty**, **Randomness**, **Time Limit** and **Custom Label**. The wire payload now sends fixed defaults for those fields: `hostageRiskLevel = 'medium'`, `difficultyLevel = 3`, `randomnessLevel = 'medium'`, `timeLimit = null`, `customLabel = null`.
+- Remaining evaluator knobs: mission structure (room count min/max, room size, layout type, entry type), terrorist count, placement strategy, and the optional seed.
+- Client-side validation checks for the removed fields (timeLimit range, customLabel length) dropped along with their enum imports (`DIFFICULTY_LABELS`, `HOSTAGE_RISK_LEVELS`, `RANDOMNESS_LEVELS`).
+
+**Decisions:**
+- **Fixed defaults are literals, not state**, so a stale saved config in localStorage can never re-inject old values for the removed fields into the payload.
+- **Trim at the UI, keep the schema.** `ScenarioConfig` and the Unity-side pipeline still accept the full field set — only the dashboard surface is reduced, so canned configs and the in-headset `EvaluatorConfigPanel` are unaffected.
+
+**Issues:**
+- None.
+
+**Next:**
+- End-to-end demo pass with the finalised parameter set: dashboard → Quest → generated scenario → AAR capture.
+
+---
