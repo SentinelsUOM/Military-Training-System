@@ -240,6 +240,15 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         [Tooltip("Colour of the safe-spot floor marker (GTA-style checkpoint circle).")]
         public Color safeZoneColor = new Color(0.2f, 1f, 0.4f, 1f);
 
+        [Header("Template Cleanup")]
+        [Tooltip("Hide the XRI Starter Kit's demo content (base-map building, " +
+                 "mini games, interaction tables, demo NPCs) once the scenario " +
+                 "has been built, so only the generated mission is visible. The " +
+                 "trainee weapon and staging-table roots assigned above are kept " +
+                 "even though they live inside that template content. Everything " +
+                 "is restored by ClearScene.")]
+        public bool hideTemplateAfterBuild = true;
+
         [Header("Debug")]
         [Tooltip("Draw coloured spheres + facing arrows + entity-ID labels at " +
                  "every spawn point in the Scene view after Start Mission. " +
@@ -497,6 +506,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 LogNavMeshConnectivity(scenario);
                 SpawnHostages(scenario);
                 SpawnTerrorists(scenario);
+                // Hide the base-map template last: the weapon / staging-table
+                // moves above pull the kept objects out of harm's way first.
+                HideTemplateContent();
 
                 OnSceneBuildComplete?.Invoke(scenario);
 
@@ -520,6 +532,8 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// </summary>
         public void ClearScene()
         {
+            ShowTemplateContent();
+
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
@@ -541,6 +555,123 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             }
 
             ActiveScenario = null;
+        }
+
+        // ── Template cleanup ─────────────────────────────────────────────────
+
+        // Root GameObjects whose name contains one of these (case-insensitive)
+        // are XRI Starter Kit demo content. Mirrors the editor-only
+        // TemplateContentToggle so runtime builds hide the same set.
+        private static readonly string[] TemplateRootContains =
+        {
+            "INTERTABLES",
+            "MINI GAMES",
+            "ENVIRONMENT",
+            "[LookAnchor]",
+            "HandPoseReferenceTool",
+            "CoverPoint",
+        };
+
+        // Exact name match (case-insensitive) for short generic names where a
+        // substring match would be too broad.
+        private static readonly string[] TemplateRootExact =
+        {
+            "Cube",
+            "-------- NPC",
+        };
+
+        // Everything HideTemplateContent() deactivated, so ShowTemplateContent()
+        // can restore exactly that set (the hide skips subtrees holding the
+        // trainee weapon / staging table, so whole roots can't just be toggled).
+        private readonly List<GameObject> _hiddenTemplateObjects = new List<GameObject>();
+
+        /// <summary>
+        /// Deactivates the XRI Starter Kit's demo content (base-map building,
+        /// mini games, interaction tables, demo NPCs) so only the generated
+        /// mission stays visible. The trainee weapon and staging-table roots
+        /// are kept active even though they live inside that content — they
+        /// have already been moved to the trainee's spawn by this point.
+        /// </summary>
+        public void HideTemplateContent()
+        {
+            if (!hideTemplateAfterBuild) return;
+
+            var kept = new List<Transform>();
+            if (traineeWeapon != null) kept.Add(traineeWeapon);
+            if (stagingTableRoots != null)
+                foreach (Transform t in stagingTableRoots)
+                    if (t != null) kept.Add(t);
+
+            int before = _hiddenTemplateObjects.Count;
+            foreach (GameObject root in gameObject.scene.GetRootGameObjects())
+            {
+                if (root == null || !IsTemplateRoot(root.name)) continue;
+
+                // The scene's global lighting rig lives INSIDE the template
+                // hierarchy (-------- ENVIRONMENT/LightAndReflectionProbes):
+                // hiding the sun/fill directional lights and the probes drops
+                // the whole world to flat ambient grey, so keep them lit.
+                foreach (Light l in root.GetComponentsInChildren<Light>(true))
+                    if (l.type == LightType.Directional) kept.Add(l.transform);
+                foreach (ReflectionProbe p in root.GetComponentsInChildren<ReflectionProbe>(true))
+                    kept.Add(p.transform);
+                foreach (LightProbeGroup g in root.GetComponentsInChildren<LightProbeGroup>(true))
+                    kept.Add(g.transform);
+
+                HideSubtreeExceptKept(root.transform, kept);
+            }
+
+            int hidden = _hiddenTemplateObjects.Count - before;
+            if (hidden > 0)
+                Debug.Log($"[SceneBuilder] Hid {hidden} base-map template GameObject(s).");
+        }
+
+        /// <summary>Re-activates everything <see cref="HideTemplateContent"/>
+        /// hid. Called from <see cref="ClearScene"/> so a reset (and the start
+        /// of every rebuild) returns the scene to its pristine state.</summary>
+        public void ShowTemplateContent()
+        {
+            foreach (GameObject go in _hiddenTemplateObjects)
+                if (go != null) go.SetActive(true);
+            _hiddenTemplateObjects.Clear();
+        }
+
+        /// <summary>Deactivates <paramref name="node"/>'s subtree, but where a
+        /// kept transform lives inside it, recurses instead so only the kept
+        /// object's non-ancestor siblings are hidden.</summary>
+        private void HideSubtreeExceptKept(Transform node, List<Transform> kept)
+        {
+            foreach (Transform k in kept)
+                if (k == node) return;   // the kept object itself stays active
+
+            bool containsKept = false;
+            foreach (Transform k in kept)
+                if (k.IsChildOf(node)) { containsKept = true; break; }
+
+            if (!containsKept)
+            {
+                if (node.gameObject.activeSelf)
+                {
+                    node.gameObject.SetActive(false);
+                    _hiddenTemplateObjects.Add(node.gameObject);
+                }
+                return;
+            }
+
+            foreach (Transform child in node)
+                HideSubtreeExceptKept(child, kept);
+        }
+
+        private static bool IsTemplateRoot(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            foreach (string p in TemplateRootContains)
+                if (name.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            foreach (string p in TemplateRootExact)
+                if (string.Equals(name.Trim(), p, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
         }
 
         // ── Build pipeline ───────────────────────────────────────────────────
