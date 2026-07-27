@@ -801,7 +801,7 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         /// value, e.g. "hub_and_spoke") so CSV columns read exactly like the
         /// values in ScenarioConfig.json. Falls back to the C# member name.
         /// </summary>
-        private static string EnumToString<TEnum>(TEnum value) where TEnum : struct, Enum
+        internal static string EnumToString<TEnum>(TEnum value) where TEnum : struct, Enum
         {
             string name = value.ToString();
             System.Reflection.MemberInfo[] members = typeof(TEnum).GetMember(name);
