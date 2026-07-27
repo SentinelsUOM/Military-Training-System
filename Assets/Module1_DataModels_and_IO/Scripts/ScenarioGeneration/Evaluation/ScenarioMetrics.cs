@@ -619,7 +619,7 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         /// is stored twice — once on each room it connects — and both records
         /// share an ID and state, so the first record seen for an ID wins.
         /// </summary>
-        private static List<DoorData> CountUniqueDoors(LayoutData layout)
+        internal static List<DoorData> CountUniqueDoors(LayoutData layout)
         {
             var unique = new List<DoorData>();
             var seenIds = new HashSet<string>(StringComparer.Ordinal);

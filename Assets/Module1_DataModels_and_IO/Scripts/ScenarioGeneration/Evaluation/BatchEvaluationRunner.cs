@@ -167,7 +167,8 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         {
             LogSummary(ExecuteVariabilityExperiment(
                 "Experiment A", RandomnessLevel.Medium,
-                "ExperimentA_Variability_Medium.csv", SeedStreamA));
+                "ExperimentA_Variability_Medium.csv", SeedStreamA,
+                "ExperimentA_PairwiseDiversity_Medium.csv"));
         }
 
         /// <summary>
@@ -180,7 +181,8 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         {
             LogSummary(ExecuteVariabilityExperiment(
                 "Experiment A2", RandomnessLevel.High,
-                "ExperimentA2_Variability_High.csv", SeedStreamA2));
+                "ExperimentA2_Variability_High.csv", SeedStreamA2,
+                "ExperimentA2_PairwiseDiversity_High.csv"));
         }
 
         /// <summary>
@@ -241,9 +243,11 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
             var summaries = new List<ExperimentSummary>
             {
                 ExecuteVariabilityExperiment("Experiment A", RandomnessLevel.Medium,
-                    "ExperimentA_Variability_Medium.csv", SeedStreamA),
+                    "ExperimentA_Variability_Medium.csv", SeedStreamA,
+                    "ExperimentA_PairwiseDiversity_Medium.csv"),
                 ExecuteVariabilityExperiment("Experiment A2", RandomnessLevel.High,
-                    "ExperimentA2_Variability_High.csv", SeedStreamA2),
+                    "ExperimentA2_Variability_High.csv", SeedStreamA2,
+                    "ExperimentA2_PairwiseDiversity_High.csv"),
                 ExecuteExperimentB(),
                 ExecuteExperimentC(),
                 ExecuteExperimentD(),
@@ -289,13 +293,23 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         /// <param name="randomness">Randomness level held for the whole batch.</param>
         /// <param name="fileName">Output CSV file name.</param>
         /// <param name="seedStream">Offset selecting this experiment's seed stream.</param>
+        /// <param name="pairwiseFileName">
+        /// Output file for the pairwise diversity comparison of this batch.
+        /// </param>
         private ExperimentSummary ExecuteVariabilityExperiment(
-            string experimentName, RandomnessLevel randomness, string fileName, int seedStream)
+            string experimentName, RandomnessLevel randomness, string fileName,
+            int seedStream, string pairwiseFileName)
         {
             Stopwatch timer = Stopwatch.StartNew();
             var generator = new ScenarioGenerator();
             var seeds = new SeedSequence(masterSeed + seedStream);
             var rows = new List<string>(variabilitySamples);
+
+            // The variability experiments are the only ones that keep whole
+            // scenarios: per-scenario metrics show how far the metric
+            // DISTRIBUTION spreads, but only a head-to-head comparison shows
+            // whether individual scenarios actually differ from one another.
+            var scenarios = new List<ScenarioData>(variabilitySamples);
 
             int passed = 0;
             int errored = 0;
@@ -308,14 +322,53 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
                 GenerationOutcome outcome = GenerateOne(generator, config, seeds.Next());
                 if (outcome.validationPassed) passed++;
                 if (!outcome.succeeded) errored++;
+                if (outcome.scenario != null) scenarios.Add(outcome.scenario);
 
                 rows.Add(ComposeRow(null, outcome, null));
                 ReportProgress(experimentName, i + 1, variabilitySamples, passed, 10);
             }
 
+            ExportPairwiseDiversity(experimentName, pairwiseFileName, scenarios);
+
             timer.Stop();
             return Finish(experimentName, fileName, BuildHeader(null, null), rows,
                 variabilitySamples, passed, errored, timer);
+        }
+
+        /// <summary>
+        /// Compares every unique pair in a batch and writes the results to CSV.
+        /// Skipped with a warning when fewer than two scenarios generated
+        /// successfully, since a single scenario has nothing to compare against.
+        /// </summary>
+        private void ExportPairwiseDiversity(
+            string experimentName, string fileName, List<ScenarioData> scenarios)
+        {
+            if (scenarios == null || scenarios.Count < 2)
+            {
+                Debug.LogWarning($"[{experimentName}] Pairwise diversity skipped: " +
+                                 $"{scenarios?.Count ?? 0} scenarios available, need at least 2.");
+                return;
+            }
+
+            List<PairwiseDiversityResult> pairs = DiversityAnalyser.CompareAll(scenarios);
+
+            var rows = new List<string>(pairs.Count);
+            double editDistanceSum = 0;
+            double jaccardSum = 0;
+            foreach (PairwiseDiversityResult pair in pairs)
+            {
+                rows.Add(pair.ToCsvRow());
+                editDistanceSum += pair.graphEditDistance;
+                jaccardSum += pair.jaccardRoomConnectivity;
+            }
+
+            WriteCsv(fileName, DiversityAnalyser.ToCsvHeader(), rows);
+
+            float meanEditDistance = pairs.Count > 0 ? (float)(editDistanceSum / pairs.Count) : 0f;
+            float meanJaccard = pairs.Count > 0 ? (float)(jaccardSum / pairs.Count) : 0f;
+
+            Debug.Log($"[{experimentName}] Pairwise diversity: {pairs.Count} pairs, " +
+                      $"mean GED={meanEditDistance:F3}, mean Jaccard={meanJaccard:F3} → {fileName}");
         }
 
         /// <summary>
@@ -677,6 +730,7 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
                 return new GenerationOutcome
                 {
                     metrics = metrics,
+                    scenario = scenario,
                     succeeded = true,
                     validationPassed = validation?.passed ?? false,
                     warnings = validation?.warnings != null && validation.warnings.Count > 0
@@ -695,6 +749,7 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
                 return new GenerationOutcome
                 {
                     metrics = MakeFailedMetrics(config, seed),
+                    scenario = null,
                     succeeded = false,
                     validationPassed = false,
                     warnings = string.Empty,
@@ -896,6 +951,14 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         {
             /// <summary>Measured metrics, or a zeroed FAILED result when generation threw.</summary>
             public ScenarioMetricsResult metrics;
+
+            /// <summary>
+            /// The generated scenario, or null when generation threw. Retained
+            /// only by experiments that need the full data afterwards (the
+            /// variability experiments feed it to <see cref="DiversityAnalyser"/>);
+            /// other experiments let it fall out of scope immediately.
+            /// </summary>
+            public ScenarioData scenario;
 
             /// <summary>False when the pipeline threw before producing a scenario.</summary>
             public bool succeeded;
