@@ -55,7 +55,7 @@ export const DEFAULT_CONFIG = {
   schemaVersion: '1.0.0',
   missionStructure: {
     missionType: 'hostage_rescue',
-    roomCount:   { min: 5, max: 8 },
+    roomCount:   { min: 4, max: 4 },
     roomSize:    'medium',
     layoutType:  'branching',
     entryType:   'single',

@@ -37,7 +37,17 @@ export default function MissionLauncher({ open, onClose }) {
     if (savedUrl) setServerUrl(savedUrl)
     const savedCfg = window.localStorage.getItem(STORAGE_KEY_CONFIG)
     if (savedCfg) {
-      try { setConfig({ ...DEFAULT_CONFIG, ...JSON.parse(savedCfg) }) }
+      try {
+        const merged = { ...DEFAULT_CONFIG, ...JSON.parse(savedCfg) }
+        // Clamp values saved before the limits changed (rooms 3-5, terrorists <= 4).
+        const rooms = Math.min(5, Math.max(3, merged.missionStructure?.roomCount?.max ?? 4))
+        merged.missionStructure = { ...merged.missionStructure, roomCount: { min: rooms, max: rooms } }
+        merged.entityConfiguration = {
+          ...merged.entityConfiguration,
+          terroristCount: Math.min(4, Math.max(1, merged.entityConfiguration?.terroristCount ?? 4)),
+        }
+        setConfig(merged)
+      }
       catch { /* corrupt entry — ignore */ }
     }
   }, [])
@@ -66,23 +76,17 @@ export default function MissionLauncher({ open, onClose }) {
   const setEc = (patch) => setConfig(c => ({ ...c, entityConfiguration: { ...c.entityConfiguration, ...patch } }))
   const setEx = (patch) => setConfig(c => ({ ...c, executionControls:   { ...c.executionControls,   ...patch } }))
 
-  const setRoomMin = (v) => {
-    const min = Number(v)
-    const max = Math.max(min, ms.roomCount.max)
-    setMs({ roomCount: { min, max } })
-  }
-  const setRoomMax = (v) => {
-    const max = Number(v)
-    const min = Math.min(max, ms.roomCount.min)
-    setMs({ roomCount: { min, max } })
+  // Single room-count control; the wire format still carries min/max, so both
+  // are set to the same value.
+  const setRoomCount = (v) => {
+    const n = Number(v)
+    setMs({ roomCount: { min: n, max: n } })
   }
 
   // ── Lightweight client-side warning (mirror of EvaluatorConfigPanel) ────
   const warning = useMemo(() => {
-    if (ms.roomCount.min > ms.roomCount.max)
-      return `roomCountMin (${ms.roomCount.min}) > roomCountMax (${ms.roomCount.max}).`
     if (ec.terroristCount > ms.roomCount.max * 2)
-      return `terroristCount (${ec.terroristCount}) exceeds roomCount.max x 2 (${ms.roomCount.max * 2}).`
+      return `terroristCount (${ec.terroristCount}) exceeds roomCount x 2 (${ms.roomCount.max * 2}).`
     return null
   }, [ms, ec])
 
@@ -192,17 +196,10 @@ export default function MissionLauncher({ open, onClose }) {
             />
           </Row>
 
-          <Row label="Room Count Min">
+          <Row label="Room Count">
             <RangeWithValue
-              min={3} max={20} value={ms.roomCount.min}
-              onChange={setRoomMin}
-            />
-          </Row>
-
-          <Row label="Room Count Max">
-            <RangeWithValue
-              min={3} max={20} value={ms.roomCount.max}
-              onChange={setRoomMax}
+              min={3} max={5} value={ms.roomCount.max}
+              onChange={setRoomCount}
             />
           </Row>
 
@@ -227,7 +224,7 @@ export default function MissionLauncher({ open, onClose }) {
 
           <Row label="Terrorist Count">
             <RangeWithValue
-              min={1} max={8} value={ec.terroristCount}
+              min={1} max={4} value={ec.terroristCount}
               onChange={v => setEc({ terroristCount: Number(v) })}
             />
           </Row>
