@@ -900,3 +900,71 @@ Each entry follows this structure:
 - End-to-end demo pass with the finalised parameter set: dashboard → Quest → generated scenario → AAR capture.
 
 ---
+
+### 2026-07-27 — Furniture realism: grouped companions, real-wall anchoring, prefabs on by default
+
+**Status:** Interior furnishing goes from "boxes lining walls" to rooms that read as actually inhabited — furniture is grouped the way real rooms are, anchored to the *visible* walls, and realised with the PandazoleHome art pack by default.
+
+**Done:**
+- `FurniturePlacer.cs` (+246 lines): new **companion placement pass** — chairs never spawn standalone along walls anymore; they are tucked in front of the desk/table they belong to (pulled out 0.2–0.35 m as if in use, turned 180° to face it, 1 chair per desk, 1–2 per table). Beds and sofas get a `SideTable` nightstand seated beside them against the same wall. Companions run the exact same rejection checks as primary items (room bounds, door keep-outs, entity clearance, item gaps, floor-coverage cap) so every navigability guarantee still holds, and a companion that fails clearance is silently skipped — a desk without a chair is still believable.
+- Room-type pools updated to match: `Standard` rooms lost their standalone `Chair`/`SideTable` entries (chairs now only arrive via the companion pass); `HostageRoom` deliberately **keeps** loose wall chairs — they read as hostage seating, which suits the scenario.
+- **Real-interior anchoring fix:** replaced `EdgeInset` (0.15 m inside the nominal room bounds) with `InteriorOutset = CorridorGap/2 − WallHalfThickness` (0.94 m *outside* them). Rooms are laid out 2 m apart and SceneBuilder centres each 0.12 m wall on the boundary plane halfway into that gap — so the room's real interior extends well past its nominal half-size, and the old inset left "wall-anchored" furniture floating ~1 m inside the room. Backs now sit flush against the visible walls.
+- `SceneBuilder.cs` (+61 lines): `useFurniturePrefabs` default flipped **ON** — the PandazoleHome shared material (`Panda Mat.mat`) was upgraded to URP/Lit so the pack no longer renders magenta. Prefab uniform-fit now allows upscaling to `MaxUpscale = 1.35` (the planner's footprints are real-world dimensions, so filling them is what puts props at human scale; the cap stops undersized models becoming caricatures). New rear-face push: after fitting, wall-anchored models are pushed back so their rear face lands on the footprint's rear edge — the uniform fit can leave a model shallower than its reserved footprint and centring that slack stranded cupboards off the wall. Chairs are exempt (their back faces away from the anchor wall, towards their desk).
+- Prefab name-mapping expanded/corrected: chairs also match `Prop_KitchenChair_`/`Prop_OfficeChair_`, `Barrel → Prop_TrashCan_`, `Bookshelf → Prop_Shelve_`, `SideTable → Prop_Nightstand_`, `Stool → Pouffes`.
+- `ScenarioGenerationTests.cs` updated: bounds assertions now use `FurnitureInteriorOutset` instead of the old edge inset.
+
+**Decisions:**
+- **Grouping is a placer concern, not a SceneBuilder concern.** Companion items are ordinary `FurnitureData` records written into `Scenario.json`, so Module 4 replay and the greybox fallback get the same grouped layouts for free.
+- **Chairs axis-aligned (parent yaw + 180°), not freely rotated,** so footprint maths stay exact AABBs and the overlap/clearance checks remain valid.
+
+**Issues:**
+- Prefab auto-discovery is editor-only — device builds need the prefabs mapped explicitly in the inspector (greybox remains the fallback). Noted in the tooltip.
+
+**Next:**
+- Window realism pass on the exterior walls.
+
+---
+
+### 2026-07-27 — Window realism: multi-window rhythm + fully framed window units
+
+**Status:** Exterior glazing goes from one small bare hole per wall to evenly-spaced, residential-proportioned framed windows.
+
+**Done:**
+- `SceneBuilder.cs` (+165/−41 lines): window constants re-tuned to residential proportions — opening 1.4 × 1.2 m (was 1.0 × 0.9), sill dropped to 0.95 m (was 1.1). New rhythm constants: `WindowSpacing = 3.2 m` of wall per window (up to 3 per wall, shrunk until the row fits with `WindowMinGapBetween = 0.9 m` and 0.5 m end margins).
+- `BuildWindowWall` rebuilt: instead of one centred opening with jambs, it computes evenly-distributed opening centres across the usable band, builds a full-span sill band below and header band above, and fills the solid pieces between openings.
+- `AddWindowPane` replaced by `AddWindowUnit` — each opening now carries a complete framed unit: glass pane (inset), border frame strips standing proud of the wall on both faces (`WindowFrameDepth = 0.18 m` vs the 0.12 m wall), a protruding sill ledge, and slim cross muntins dividing the glazing into four panes. A URP-safe glass material is generated when `windowMaterial` is unassigned, so openings are never bare holes.
+- Every part is a solid primitive with a collider — the trainee still can't reach or walk through an opening.
+
+**Decisions:**
+- **Rhythm over size.** Long walls get more windows rather than one bigger one, matching how real buildings read from outside; count is derived from span, so no new config knob.
+
+**Issues:**
+- None noted.
+
+**Next:**
+- Apply the supervisor's scenario-parameter scale changes to the dashboard form.
+
+---
+
+### 2026-07-27 — Scenario config form: single Room Count (3–5), terrorist cap 4
+
+**Status:** Supervisor-requested input-scale changes to the dashboard's Start Mission form.
+
+**Done:**
+- `sentinels-aar/components/MissionLauncher.jsx` (net −3 lines): the **Room Count Min / Max** sliders are collapsed into a single **Room Count** slider with range 3–5. The wire payload still carries `roomCount: { min, max }` (both set to the slider value), so `ScenarioConfig`, the Unity loader and the JSON schema are untouched.
+- **Terrorist Count** slider max reduced from 8 to 4.
+- Configs restored from localStorage are clamped on load (rooms into 3–5, terrorists into 1–4), so a config saved before this change can't re-inject out-of-range values into the form or payload.
+- `scenarioEnums.js`: `DEFAULT_CONFIG.roomCount` changed from `{ min: 5, max: 8 }` to `{ min: 4, max: 4 }` — the old default sat outside the new slider range.
+- The now-impossible "min > max" client-side warning was removed; the terrorist-vs-rooms sanity warning remains.
+
+**Decisions:**
+- **Single value mapped onto the existing min/max wire shape** rather than changing the schema — evaluators think in "how many rooms", and keeping the range shape on the wire means zero Unity-side changes and full compatibility with canned configs.
+- **Clamp on restore, not just on input,** mirroring the earlier "literals, not state" defence: stale localStorage must never widen the finalised parameter scales.
+
+**Issues:**
+- The in-headset `EvaluatorConfigPanel` still exposes the old min/max sliders — flagged for a follow-up if the supervisor wants both UIs to match.
+
+**Next:**
+- End-to-end demo pass with the final parameter scales; decide whether `EvaluatorConfigPanel` should mirror the single room-count control.
+
+---
