@@ -19,7 +19,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.Serialization;
-using System.Text;
 using TeamSentinels.ScenarioGeneration.DataModels;
 using UnityEngine;
 
@@ -195,60 +194,65 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
         /// <returns>A single CSV record with no trailing newline.</returns>
         public string ToCsvRow()
         {
-            var sb = new StringBuilder();
+            // Fields are collected and joined rather than appended with inline
+            // separators: joining makes the column count structurally equal to
+            // the number of entries below, so an empty string field can never
+            // swallow its own separator and silently shift every later column.
+            string[] fields =
+            {
+                // 1. Layout complexity
+                ScenarioMetrics.FormatInt(roomCount),
+                ScenarioMetrics.FormatInt(doorCount),
+                ScenarioMetrics.FormatFloat(avgConnectivity),
+                ScenarioMetrics.FormatInt(graphDiameter),
+                ScenarioMetrics.FormatInt(maxDepth),
+                ScenarioMetrics.FormatFloat(cyclicityMeasure),
+                ScenarioMetrics.FormatInt(entryPointCount),
 
-            // 1. Layout complexity
-            ScenarioMetrics.AppendInt(sb, roomCount);
-            ScenarioMetrics.AppendInt(sb, doorCount);
-            ScenarioMetrics.AppendFloat(sb, avgConnectivity);
-            ScenarioMetrics.AppendInt(sb, graphDiameter);
-            ScenarioMetrics.AppendInt(sb, maxDepth);
-            ScenarioMetrics.AppendFloat(sb, cyclicityMeasure);
-            ScenarioMetrics.AppendInt(sb, entryPointCount);
+                // 2. Door state
+                ScenarioMetrics.FormatInt(doorsOpen),
+                ScenarioMetrics.FormatInt(doorsClosed),
+                ScenarioMetrics.FormatInt(doorsLocked),
+                ScenarioMetrics.FormatFloat(lockedDoorFraction),
 
-            // 2. Door state
-            ScenarioMetrics.AppendInt(sb, doorsOpen);
-            ScenarioMetrics.AppendInt(sb, doorsClosed);
-            ScenarioMetrics.AppendInt(sb, doorsLocked);
-            ScenarioMetrics.AppendFloat(sb, lockedDoorFraction);
+                // 3. Entity distribution
+                ScenarioMetrics.FormatFloat(avgEntityDistanceFromEntry),
+                ScenarioMetrics.FormatFloat(entityClusteringCoefficient),
+                ScenarioMetrics.FormatFloat(avgHostageTerroristDistance),
+                ScenarioMetrics.FormatFloat(minHostageTerroristDistance),
+                ScenarioMetrics.FormatFloat(entityDepthVariance),
+                ScenarioMetrics.FormatFloat(avgEntityDepth),
 
-            // 3. Entity distribution
-            ScenarioMetrics.AppendFloat(sb, avgEntityDistanceFromEntry);
-            ScenarioMetrics.AppendFloat(sb, entityClusteringCoefficient);
-            ScenarioMetrics.AppendFloat(sb, avgHostageTerroristDistance);
-            ScenarioMetrics.AppendFloat(sb, minHostageTerroristDistance);
-            ScenarioMetrics.AppendFloat(sb, entityDepthVariance);
-            ScenarioMetrics.AppendFloat(sb, avgEntityDepth);
+                // 4. Navigation complexity
+                ScenarioMetrics.FormatFloat(avgPatrolRouteLength),
+                ScenarioMetrics.FormatInt(stationaryGuardCount),
+                ScenarioMetrics.FormatInt(patrolCount),
+                ScenarioMetrics.FormatInt(roamingGuardCount),
+                ScenarioMetrics.FormatInt(hostageGuardianCount),
+                ScenarioMetrics.FormatFloat(patrolCoverage),
+                ScenarioMetrics.FormatFloat(avgWaypointCount),
 
-            // 4. Navigation complexity
-            ScenarioMetrics.AppendFloat(sb, avgPatrolRouteLength);
-            ScenarioMetrics.AppendInt(sb, stationaryGuardCount);
-            ScenarioMetrics.AppendInt(sb, patrolCount);
-            ScenarioMetrics.AppendInt(sb, roamingGuardCount);
-            ScenarioMetrics.AppendInt(sb, hostageGuardianCount);
-            ScenarioMetrics.AppendFloat(sb, patrolCoverage);
-            ScenarioMetrics.AppendFloat(sb, avgWaypointCount);
+                // 5. Furniture
+                ScenarioMetrics.FormatInt(totalFurnitureCount),
+                ScenarioMetrics.FormatFloat(avgFurniturePerRoom),
+                ScenarioMetrics.FormatFloat(furnitureFloorCoverage),
+                ScenarioMetrics.FormatInt(furnishedRoomCount),
 
-            // 5. Furniture
-            ScenarioMetrics.AppendInt(sb, totalFurnitureCount);
-            ScenarioMetrics.AppendFloat(sb, avgFurniturePerRoom);
-            ScenarioMetrics.AppendFloat(sb, furnitureFloorCoverage);
-            ScenarioMetrics.AppendInt(sb, furnishedRoomCount);
+                // 6. Input parameter echo
+                ScenarioMetrics.FormatString(layoutType),
+                ScenarioMetrics.FormatString(roomSizeCategory),
+                ScenarioMetrics.FormatString(entryType),
+                ScenarioMetrics.FormatInt(configRoomCount),
+                ScenarioMetrics.FormatInt(configTerroristCount),
+                ScenarioMetrics.FormatString(placementStrategy),
+                ScenarioMetrics.FormatString(hostageRiskLevel),
+                ScenarioMetrics.FormatInt(difficultyLevel),
+                ScenarioMetrics.FormatString(randomnessLevel),
+                ScenarioMetrics.FormatInt(seedUsed),
+                ScenarioMetrics.FormatString(scenarioId)
+            };
 
-            // 6. Input parameter echo
-            ScenarioMetrics.AppendString(sb, layoutType);
-            ScenarioMetrics.AppendString(sb, roomSizeCategory);
-            ScenarioMetrics.AppendString(sb, entryType);
-            ScenarioMetrics.AppendInt(sb, configRoomCount);
-            ScenarioMetrics.AppendInt(sb, configTerroristCount);
-            ScenarioMetrics.AppendString(sb, placementStrategy);
-            ScenarioMetrics.AppendString(sb, hostageRiskLevel);
-            ScenarioMetrics.AppendInt(sb, difficultyLevel);
-            ScenarioMetrics.AppendString(sb, randomnessLevel);
-            ScenarioMetrics.AppendInt(sb, seedUsed);
-            ScenarioMetrics.AppendString(sb, scenarioId);
-
-            return sb.ToString();
+            return string.Join(",", fields);
         }
     }
 
@@ -818,47 +822,31 @@ namespace TeamSentinels.ScenarioGeneration.Evaluation
             return name;
         }
 
-        /// <summary>Appends an integer field, prefixed by a comma unless it is the first field.</summary>
-        internal static void AppendInt(StringBuilder sb, int value)
-        {
-            AppendSeparator(sb);
-            sb.Append(value.ToString(CultureInfo.InvariantCulture));
-        }
+        /// <summary>Formats an integer field in invariant culture.</summary>
+        internal static string FormatInt(int value) =>
+            value.ToString(CultureInfo.InvariantCulture);
 
         /// <summary>
-        /// Appends a float field with four decimal places in invariant culture.
+        /// Formats a float field with four decimal places in invariant culture.
         /// Non-finite values (which no metric should produce) are written as 0
         /// so the CSV always parses.
         /// </summary>
-        internal static void AppendFloat(StringBuilder sb, float value)
+        internal static string FormatFloat(float value)
         {
-            AppendSeparator(sb);
             if (float.IsNaN(value) || float.IsInfinity(value)) value = 0f;
-            sb.Append(value.ToString("F4", CultureInfo.InvariantCulture));
+            return value.ToString("F4", CultureInfo.InvariantCulture);
         }
 
         /// <summary>
-        /// Appends a string field, quoting and escaping it when it contains a
-        /// comma, double quote, or line break.
+        /// Formats a string field, quoting and escaping it when it contains a
+        /// comma, double quote, or line break. Null and empty both render as an
+        /// empty field.
         /// </summary>
-        internal static void AppendString(StringBuilder sb, string value)
+        internal static string FormatString(string value)
         {
-            AppendSeparator(sb);
-            if (string.IsNullOrEmpty(value)) return;
-
-            if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0)
-            {
-                sb.Append('"').Append(value.Replace("\"", "\"\"")).Append('"');
-            }
-            else
-            {
-                sb.Append(value);
-            }
-        }
-
-        private static void AppendSeparator(StringBuilder sb)
-        {
-            if (sb.Length > 0) sb.Append(',');
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
         }
     }
 }
