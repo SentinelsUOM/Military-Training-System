@@ -31,3 +31,32 @@
   color: var(--muted);
   margin-top: 4px;
 }
+
+.benchmark {
+  font-size: 11px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.benchmarkWithin {
+  color: #3fb950;
+}
+
+.benchmarkOff {
+  color: #d29922;
+}
+
+.benchmarkUnvalidated {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.benchmarkTier {
+  font-size: 9px;
+  opacity: 0.6;
+  font-style: normal;
+}
