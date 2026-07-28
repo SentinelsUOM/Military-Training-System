@@ -228,6 +228,9 @@ namespace TeamSentinels.Module4.Logging
             {
                 sessionId       = _sessionId,
                 scenarioId      = _scenarioId,
+                // Evaluation tags: who played + which AI tier, set at scenario start.
+                playerId        = EvaluationContext.PlayerId,
+                npcLevel        = EvaluationContext.NpcLevel,
                 timestamp       = DateTime.UtcNow,
                 performance     = perf,
                 cognitiveSummary = cog,

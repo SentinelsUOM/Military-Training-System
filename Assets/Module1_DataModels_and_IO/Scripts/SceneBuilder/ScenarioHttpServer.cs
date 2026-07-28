@@ -285,6 +285,36 @@ namespace TeamSentinels.ScenarioGeneration.Scene
 
         // ── Generate / Start handler ────────────────────────────────────────
 
+        /// <summary>Extract the evaluation tier ("npcLevel": "dumb|medium|full") from the raw
+        /// request JSON. Defaults to Full if absent/unrecognised. Kept off the typed config model
+        /// so the generator/validator are untouched.</summary>
+        private static AILevel ParseNpcLevel(string body)
+        {
+            if (string.IsNullOrEmpty(body)) return AILevel.Advanced;
+            var m = System.Text.RegularExpressions.Regex.Match(
+                body, "\"npcLevel\"\\s*:\\s*\"(\\w+)\"",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success) return AILevel.Advanced;
+            switch (m.Groups[1].Value.ToLowerInvariant())
+            {
+                // Old aliases (dumb/medium/full) kept so any cached form still resolves.
+                case "basic":        case "dumb":   return AILevel.Basic;
+                case "intermediate": case "medium": return AILevel.Intermediate;
+                default:                            return AILevel.Advanced; // "advanced"/"full"
+            }
+        }
+
+        /// <summary>Pull a top-level string field ("name":"value") out of the raw request JSON.
+        /// Returns null if absent. Kept off the typed config model like ParseNpcLevel.</summary>
+        private static string ParseStringField(string body, string field)
+        {
+            if (string.IsNullOrEmpty(body)) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(
+                body, "\"" + System.Text.RegularExpressions.Regex.Escape(field) + "\"\\s*:\\s*\"([^\"]+)\"",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
         private void HandleGenerate(
             HttpListenerRequest req, HttpListenerResponse res, bool alsoBuild)
         {
@@ -292,6 +322,12 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             string body;
             using (var sr = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
                 body = sr.ReadToEnd();
+
+            // Module-2 evaluation tags. Read straight from the request body so we don't have to
+            // widen the strongly-typed ScenarioConfig model. npcLevel = ablation tier; playerId =
+            // participant code that groups the same player's Dumb/Medium/Full plays.
+            AILevel npcLevel = ParseNpcLevel(body);
+            string  playerId = ParseStringField(body, "playerId");
 
             // 2. Parse + validate config.
             ScenarioConfig config;
@@ -351,6 +387,15 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                         if (alsoBuild)
                         {
                             _state = STATE_BUILDING;
+                            // Apply the chosen evaluation tier to every terrorist this build spawns.
+                            sceneBuilder.npcAiLevel = npcLevel;
+                            // Tag the evaluation context so the SessionSummary (built at mission end)
+                            // records who played and at which AI tier — for the dashboard comparison.
+                            EvaluationContext.NpcLevel = npcLevel.ToString().ToLowerInvariant();
+                            EvaluationContext.PlayerId  = playerId;
+                            Debug.Log($"[ScenarioHttpServer] Building scenario at NPC LEVEL = {npcLevel}" +
+                                      $"  player={(string.IsNullOrEmpty(playerId) ? "(none)" : playerId)}. " +
+                                      $"If NPC LEVEL is wrong, refresh localhost:3000 so the form sends npcLevel.");
                             // BuildScene is synchronous and fires
                             // OnSceneBuildComplete (-> _state = "live") before
                             // returning, so we don't need to touch _state here.

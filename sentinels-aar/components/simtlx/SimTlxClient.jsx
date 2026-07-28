@@ -25,10 +25,17 @@ function dismissSession(sessionId) {
   } catch { /* storage unavailable — redirect loop is the worst case, acceptable */ }
 }
 
-export default function SimTlxClient({ session }) {
+// Optional props (used only by the combined Post-Mission Survey wrapper):
+//   onComplete()  — called after a successful save INSTEAD of redirecting to the AAR
+//   onSkip()      — called by the intro "skip" button INSTEAD of dismiss+home
+//   submitLabel   — text for the submit button (default 'Submit & Close Session')
+//   skipLabel     — text for the intro skip button (default 'Skip for now')
+// With none of these, behaviour is exactly as before (standalone /simtlx/[id] page).
+export default function SimTlxClient({ session, onComplete, onSkip, submitLabel, skipLabel }) {
   const router = useRouter()
   const perf = session.performance || {}
   const alreadyDone = Boolean(session.simTlx?.completedAt)
+  const embedded = typeof onComplete === 'function'
 
   // step -1 = intro, 0..8 = the nine dimensions, 9 = review/submit
   const [step, setStep] = useState(-1)
@@ -61,6 +68,8 @@ export default function SimTlxClient({ session }) {
       })
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save')
+      // Embedded (wrapper): hand control back so it can advance to the next survey.
+      if (embedded) { onComplete(); return }
       setSaved(true)
       // Session is saved & closed — hand the trainee back to the AAR.
       setTimeout(() => router.push(`/session/${session.sessionId}`), 1800)
@@ -72,11 +81,12 @@ export default function SimTlxClient({ session }) {
   }
 
   const handleSkip = () => {
+    if (typeof onSkip === 'function') { onSkip(); return }
     dismissSession(session.sessionId)
     router.push('/')
   }
 
-  if (alreadyDone && !saved) {
+  if (alreadyDone && !saved && !embedded) {
     return (
       <div className={styles.page}>
         <div className={styles.card}>
@@ -148,7 +158,7 @@ export default function SimTlxClient({ session }) {
               wrong answers.
             </p>
             <div className={styles.navRow}>
-              <button className={styles.skipBtn} onClick={handleSkip}>Skip for now</button>
+              <button className={styles.skipBtn} onClick={handleSkip}>{skipLabel || 'Skip for now'}</button>
               <button className={styles.primaryBtn} onClick={() => setStep(0)}>
                 Begin Assessment →
               </button>
@@ -195,7 +205,7 @@ export default function SimTlxClient({ session }) {
                 disabled={!allAnswered || submitting}
                 onClick={handleSubmit}
               >
-                {submitting ? 'Saving…' : 'Submit & Close Session'}
+                {submitting ? 'Saving…' : (submitLabel || 'Submit & Close Session')}
               </button>
             </div>
           </div>
