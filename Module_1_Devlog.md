@@ -968,3 +968,138 @@ Each entry follows this structure:
 - End-to-end demo pass with the final parameter scales; decide whether `EvaluatorConfigPanel` should mirror the single room-count control.
 
 ---
+
+### 2026-07-27 — Phase 5 evaluation: scenario metrics extraction
+
+**Status:** Phase 5, Stage 1. Building the measurement instrument for the evaluation study — turning a generated `ScenarioData` into a row of numbers.
+
+**Done:**
+- New `Scripts/ScenarioGeneration/Evaluation/ScenarioMetrics.cs` (864 lines). Plain C#, no `MonoBehaviour`, namespace `TeamSentinels.ScenarioGeneration.Evaluation`.
+- `ScenarioMetricsResult` carries **39 CSV columns in six groups**: layout complexity (`roomCount`, `doorCount`, `avgConnectivity`, `graphDiameter`, `maxDepth`, `cyclicityMeasure`, `entryPointCount`), door states (open/closed/locked + `lockedDoorFraction`), entity distribution (distance from entry, clustering coefficient, hostage–terrorist mean/min, depth mean/variance), navigation complexity (mean patrol route length, the four role counts, `patrolCoverage`, `avgWaypointCount`), furniture (total, per room, floor coverage, furnished rooms), and an echo of the 11 input parameters for grouping and correlation.
+- Public API: `Extract(ScenarioData)`, `ToCsvHeader()`, `ToCsvRow()`. Private helpers: `ComputeGraphDiameter` (all-pairs BFS), `ComputeClusteringCoefficient`, `ComputePatrolCoverage`, `CountUniqueDoors` (deduplicates the reciprocal door records by shared door ID), `GetEntryRoomPosition`, `ComputeFurnitureFloorCoverage`.
+- Enum echoes are written as their JSON wire values (`hub_and_spoke`, `front_loaded`, `small`) by reading each enum's `EnumMember` attribute, so CSV columns match exactly what the dashboard sends.
+- Verified in-editor against three contrasting configs (linear/3 rooms/1 terrorist, loop/8/6, hub-and-spoke/12/8): cyclicity is non-zero only for `loop` (0.125), diameter tracks topology (linear 3.00 > branching 2.66 > hub/loop 2.00), and degenerate input (empty layout, null collections) returns a full row of zeros rather than throwing.
+- Seed determinism confirmed: the same seed reproduces a byte-identical row across all 38 measured and echoed columns.
+
+**Decisions:**
+- **Echo `difficultyLevel`, `randomnessLevel` and `hostageRiskLevel` even though the evaluator form now fixes them.** Experiments C and D vary them programmatically, and the analysis needs those columns to group rows.
+- **`configRoomCount` read from `roomCount.min`,** since the dashboard collapses the range and sends min = max.
+- **Metrics derived from the scenario alone,** never from generator internals, so an exported `Scenario.json` batch can be re-measured later without re-running generation.
+
+**Issues:**
+- `scenarioId` is a fresh `Guid.NewGuid()` per `Generate()` call, so two runs with the same seed differ *only* in that column. Any duplicate detection or join must key on `seedUsed` plus the metric columns, not on `scenarioId`.
+
+**Next:**
+- Batch runner to drive the experiments and write the CSVs.
+
+---
+
+### 2026-07-27 — Phase 5 evaluation: batch experiment runner + first full run
+
+**Status:** Phase 5, Stage 2. Six experiments wired as one-click editor actions; first complete 2000-scenario dataset produced.
+
+**Done:**
+- New `Evaluation/BatchEvaluationRunner.cs` (1005 lines). `MonoBehaviour` with a `[ContextMenu]` entry per experiment, writing to `Assets/Module1_DataModels_and_IO/Output/EvaluationResults/`.
+- **Experiment A** — 100 scenarios at the production baseline (randomness medium). **A2** — same at high randomness, as a diversity ceiling. **B (PRIMARY)** — 1000 scenarios sweeping the six evaluator-facing form parameters across 20 levels, 50 each, everything else held at baseline. **C** — 150 across randomness low/medium/high. **D** — 150 across difficulty 1/3/5. **E** — 500 sampling the full pipeline space, deliberately including `roomCount` 3–15 and `terroristCount` 1–8, i.e. beyond what the form exposes.
+- Shared `MakeBaselineConfig()`: branching, 4 rooms, medium size, single entry, 3 terrorists, dispersed, hostage risk medium, difficulty 3, randomness medium.
+- Grouping columns per experiment: `variedParameter` + `parameterValue` (B), `randomnessBatch` (C), `difficultyBatch` (D), `withinFormRange` (E). `validationPassed`, `validationWarnings` and `errorMessage` on every file; `failureCategory` and `seedRetries` additionally on E.
+- **First full run: 2000 scenarios in 1.8 s, 0 generation exceptions, 95.8% overall validation pass** (Experiment E alone 83.2%).
+
+**Decisions:**
+- **Explicit per-scenario seeds instead of the pipeline's auto-seed.** `ScenarioGenerator` falls back to `Environment.TickCount`, whose ~15 ms resolution is far coarser than one generation (~1 ms), so a tight loop would hand many scenarios the *same* seed and collapse the very variability Experiment A exists to measure. Seeds now come from a master `System.Random` (`masterSeed` inspector field) with a uniqueness guard — unique per scenario *and* reproducible across re-runs.
+- **Per-experiment seed-stream offsets** (`masterSeed + 1…6`). Without them Experiment A, Experiment C's medium batch and Experiment D's difficulty-3 batch — all the identical baseline config — would draw the same seeds and be byte-identical repeats of each other instead of independent samples.
+- **Added a `seedRetries` column to Experiment E.** The pipeline silently retries a failed scenario up to three times with `seed + 1`, so a bare pass rate reports "passed *eventually*". The column shows 355 scenarios passed first time, 38 needed one retry, 15 needed two, and 92 exhausted all three — without it, 53 scenarios that only passed on retry would have been indistinguishable from clean passes.
+- **Generator logging suppressed during batches** (inspector toggle). The pipeline emits ~16 log lines per scenario; a full suite would put ~32,000 entries in the console and stall the editor. Nothing is lost — validation results and exceptions are captured into the CSV.
+- **Failed generations still emit a row** with `scenarioId = FAILED` and the input-parameter echo populated from the config, so a failure remains attributable to the parameter combination that caused it.
+
+**Issues:**
+- Runs are synchronous, so the editor is unresponsive for the duration — acceptable at ~2 s for the full suite.
+- Output CSVs live under `Assets/`, so Unity generates a `.meta` beside each one.
+
+**Next:**
+- Pairwise diversity measure — per-scenario metrics show distribution spread, not whether individual scenarios actually differ.
+
+---
+
+### 2026-07-27 — Phase 5 evaluation: pairwise diversity analyser
+
+**Status:** Phase 5, Stage 3. Head-to-head structural comparison between scenarios, closing the gap left by per-scenario metrics.
+
+**Done:**
+- New `Evaluation/DiversityAnalyser.cs` (510 lines), plain C#. `PairwiseDiversityResult` carries seven measures: `graphEditDistance` (symmetric difference of the room-edge sets), `entityPositionDistance` (mean Euclidean distance between entities matched by type then index), `jaccardRoomConnectivity`, `roleDistributionDistance`, `depthProfileDistance` (Manhattan distance between depth histograms), `doorStateDistance` (doors paired by position-sorted index; surplus doors count as mismatches), `furnitureCountDistance`.
+- `Compare(a, b)`, `CompareAll(list)` (warns above 100 scenarios, since pairs grow as n(n−1)/2), plus CSV header/row.
+- Runner updated (+73 lines): `GenerationOutcome` now carries the `ScenarioData`, and Experiments A and A2 retain their batches → **4950 pairs each** → `ExperimentA_PairwiseDiversity_Medium.csv` and `ExperimentA2_PairwiseDiversity_High.csv`.
+- `ScenarioMetrics.CountUniqueDoors` made `internal` and reused, so both files share one definition of "unique door".
+- Verified: all 4950 rows in each file join back to a row in the corresponding metrics CSV; no duplicate or self-pairs; distances arithmetically correct on hand-built 1/3/8-room layouts.
+
+**Key findings (feed directly into RQ4):**
+- At the production baseline, `graphEditDistance` takes **only the values 0 and 2** and Jaccard only 0.5 and 1.0. Solving the pair counts, Experiment A's 100 scenarios resolve to **exactly two distinct room topologies, split 70/30**; A2 at high randomness produces the *same two* topologies at 60/40. High randomness adds no new topology.
+- `graphEditDistance`, `roleDistributionDistance` and `depthProfileDistance` are **identical in 100% of A's 4950 pairs** — at 4 rooms a single edge change necessarily moves one room's depth and one NPC's role. Re-tested at 12 rooms they decouple completely (0% equal; means 9.57 / 0.00 / 4.47), confirming the three measures are genuinely distinct and the collinearity is a property of the small baseline.
+
+**Decisions:**
+- **Room *indices* (in id order), not room IDs, as graph node identity,** so layouts with different room counts remain comparable — the nth room of A is matched against the nth room of B.
+- **Jaccard kept as a similarity rather than converted to a distance,** because that is how it is conventionally reported; it is the one field where larger means *more alike*.
+
+**Issues:**
+- The collinearity above means those three columns must be treated as **one signal, not three**, in any analysis run at the 4-room baseline.
+
+**Next:**
+- Audit the whole Evaluation folder before running the dataset that the report will cite.
+
+---
+
+### 2026-07-27 — Phase 5 evaluation: tooling audit + CSV row assembly fix
+
+**Status:** Phase 5, Stage 4. Eight-point audit of the three Evaluation scripts, one latent defect found and fixed.
+
+**Done:**
+- Audited `ScenarioMetrics.cs`, `BatchEvaluationRunner.cs` and `DiversityAnalyser.cs` for: degenerate-input handling, CSV quoting and column alignment, `CompareAll` with differing room counts, Experiment B grouping columns, Experiment E `withinFormRange`, `Path.Combine` + directory creation, `MonoBehaviour` confinement, and `FurnitureData` field-name agreement with `LayoutModels.cs`. **All eight pass.**
+- Degenerate inputs verified directly: single-room, zero-room and null layouts, plus null furniture / navigation-context / entity lists, all return a full 39-column row without throwing.
+- Column alignment verified with a quote-aware parser across all eight output files, including rows whose `validationWarnings` contain commas.
+- Dry run at reduced counts (A = 5, B = 3 per level) produced 5 / 10 / 60 rows — pairwise = C(5,2), B = 20 levels × 3 — with furniture and door-state metrics non-zero, grouping columns on every row, and no exceptions. Full counts restored and the suite re-run.
+- Audit written up in `DEVLOG.md` (+105 lines).
+
+**Decisions:**
+- **Row assembly switched from append-with-separator to format-and-join.** `ScenarioMetricsResult.ToCsvRow()` had built its row by appending to a `StringBuilder`, deciding "is this the first field?" by testing `sb.Length > 0`. Correct in practice because `roomCount` always leads — but had the column order ever changed to lead with a string field that happened to be empty, that field would have swallowed its own separator and shifted every later column, producing a silently corrupt CSV with no error. Fields are now formatted into a `string[]` and joined, so the column count is structurally equal to the array length. The three `Append*` helpers became `FormatInt` / `FormatFloat` / `FormatString`; all three Evaluation files now build rows the same way.
+
+**Issues:**
+- **`doorsOpen` has zero variance at the 4-room baseline** — 0 open doors across all 300 doors in Experiment A, versus 45 across Experiment B's 3050. Not a metrics defect: `LayoutGenerator.DecideDoorState` locks any door touching the hostage room and closes any door touching the entry room, so only a direct standard-to-standard edge can be open. A 4-room layout has one entry, one hostage room and two standard rooms, and neither generated topology connects those two directly. The column therefore cannot contribute to Experiments A and A2.
+
+**Next:**
+- Statistical analysis over the 2000-scenario dataset.
+
+---
+
+### 2026-07-29 — Phase 5 evaluation: statistical analysis and results pack
+
+**Status:** Phase 5 complete. Full statistical treatment of the 2000-scenario dataset, packaged for the report.
+
+**Done:**
+- `Output/EvaluationResults/MODULE1_RESULTS.md` (296 lines) — machine-readable results summary with YAML front-matter, per-experiment sections, an RQ mapping, direct answers to RQ1–RQ4, a limitations list and an artifact index.
+- Statistical method: Shapiro-Wilk per group → one-way ANOVA + Tukey HSD when all groups are normal, otherwise Kruskal-Wallis + Dunn with Bonferroni correction. Effect sizes η² (ANOVA) and ε² (Kruskal-Wallis); Mann-Whitney U with rank-biserial for the A vs A2 diversity comparison. Stack: pandas, scipy, scikit-posthocs, matplotlib, seaborn.
+- Committed artifacts: `tables/B_SUMMARY_traceability_matrix.csv`, `tables/E_reliability_summary.csv`, and six figures (`FigA1` diversity histograms, `FigB1` layoutType boxplots, `FigB5` terroristCount boxplots, `FigD1` difficulty boxplots, `FigE1` pass rate by scope, `FigE3` pass-rate heatmap).
+
+**Headline results:**
+- **RQ4 / Experiment A:** at production settings the room **graph is deterministic** — `roomCount`, `doorCount`, `avgConnectivity`, `cyclicityMeasure`, `entryPointCount` and locked-door count all have CV = 0%. Variation is *tactical*, not topological: `roamingGuardCount` CV 153.5%, `entityDepthVariance` 65.8%, `minHostageTerroristDistance` 60.6%, `entityClusteringCoefficient` 36.6%, `patrolCoverage` 35.5%, `totalFurnitureCount` 17.6%. Mean pairwise entity-position distance 10.06 m is the dominant continuous axis of variation.
+- **RQ4 / A vs A2:** high randomness gives a statistically detectable but practically marginal gain (graph edit distance +14.3%, p < 0.0001, rank-biserial 0.061); placement and furniture diversity actually *decrease* slightly. Re-exposing the randomness control would unlock little.
+- **RQ1 / Experiment B:** every structural form parameter maps to its intended layout metrics with large, highly significant effects — `layoutType` → `avgConnectivity` and `cyclicityMeasure` (ε² = 1.000), `maxDepth` (0.890), `graphDiameter` (0.765); `roomCount` → actual room count (1.000) and `graphDiameter` (0.734); `roomSize` → `avgFurniturePerRoom` (0.878) and `avgEntityDistanceFromEntry` (0.689); `placementStrategy` → `entityDepthVariance` (0.420) and clustering (0.327).
+- **RQ2 / Experiments B and D:** guard and patrol composition is deterministic and monotonic in `terroristCount` (`patrolCount` ε² = 1.000, `avgPatrolRouteLength` and `patrolCoverage` 0.901) and reconfigured by difficulty — at difficulty 5 patrolling guards convert to stationary, collapsing `patrolCount` and `patrolCoverage` to 0, while minimum hostage–terrorist distance rises monotonically (3.00 → 3.51 → 3.93 m). Roles are structure-derived, not arbitrary.
+- **RQ3 / Experiment E:** **100% validation pass (43/43) for every configuration an evaluator can actually request**, versus 81.6% (373/457) in the extended range and 83.2% overall. All 84 failures are `EntityBounds` (90.5%) and `EntityOverlap` (9.5%), confined entirely to the unreachable extended range; worst case is high terrorist counts in small rooms (8 terrorists in a small 4-room branching layout → 0% pass).
+- **Experiment C:** at a fixed config, randomness produces no measurable structural change; only `entityDepthVariance` drifts and not significantly (p = 0.061).
+
+**Decisions:**
+- **`withinFormRange` split reported as the primary reliability figure.** The pipeline's overall 83.2% understates what evaluators experience, because it includes configurations the form cannot produce; the form-reachable 100% is the number that describes the delivered system.
+
+**Issues:**
+- **Known issue — `entryType`:** changes `entryPointCount` (single → 1, multiple → 3) but has *zero* effect on `avgConnectivity` (constant 1.50) or `doorsOpen` (constant 0). Entries attach as exterior access points with no interior re-wiring, so the parameter is traceable on access only. Flagged in the limitations list.
+- **Artifact gap:** `MODULE1_RESULTS.md` references roughly 17 tables and 13 figures, but only 2 tables and 6 figures are committed. The remainder need regenerating (or the artifact index trimming) before the report cites them.
+- **Front-loaded placement deviates from design:** uses `ceil(maxDepth/3)` rather than the design document's `ceil(maxDepth/2)`, concentrating threats closer to the entry than specified.
+- **Patrol route truncation:** multi-room routes are present in `Scenario.json` but Module 2's `PatrolLine` exposes only start/end, so routes collapse to 2 waypoints at runtime.
+- **Furniture metrics are not comparable across generator versions** — the companion-grouping pass raised furniture density relative to earlier builds.
+- The 43 form-reachable rows in Experiment E give a 95% confidence interval of roughly 92–100% on that headline pass rate; raising `validationSamples` or stratifying the sampler would tighten it.
+
+**Next:**
+- Write up Phase 5 for the project report using `MODULE1_RESULTS.md` as the ground truth; regenerate the missing tables/figures first.
+- Decide whether to act on the `entryType` interior-connectivity gap and the front-loaded depth deviation, or document both as known limitations.
+
+---
