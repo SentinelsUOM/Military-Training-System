@@ -26,21 +26,21 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
 
   const LIMIT = 20
 
-  // Auto-redirect into the SIM-TLX questionnaire when a mission has just
-  // completed (or failed): Unity uploads the session at mission end, and this
-  // poll notices the fresh session that has no questionnaire yet. Sessions the
-  // trainee explicitly skipped are excluded via localStorage.
+  // Auto-redirect into the combined Post-Mission Survey (workload + enemy-AI) when a
+  // mission has just completed (or failed): Unity uploads the session at mission end,
+  // and this poll notices the fresh session that is still missing EITHER survey.
+  // Sessions the trainee explicitly skipped are excluded via localStorage.
   useEffect(() => {
     let cancelled = false
     const check = async () => {
       if (document.hidden) return
       try {
-        const res = await fetch('/api/sessions/pending-simtlx')
+        const res = await fetch('/api/sessions/pending-survey')
         if (!res.ok) return
         const data = await res.json()
         if (cancelled || !data.sessionId) return
         if (dismissedSessionIds().includes(data.sessionId)) return
-        router.push(`/simtlx/${data.sessionId}`)
+        router.push(`/survey/${data.sessionId}`)
       } catch { /* dashboard offline / API hiccup — try again next tick */ }
     }
     check()
@@ -95,6 +95,12 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
           <p className={styles.sub}>After-Action Review Dashboard — VR Military Training</p>
         </div>
         <div className={styles.headerActions}>
+          <button
+            className={styles.seedBtn}
+            onClick={() => router.push('/evaluation')}
+          >
+            Evaluation Results
+          </button>
           <button
             className={styles.seedBtn}
             onClick={() => setLauncherOpen(true)}

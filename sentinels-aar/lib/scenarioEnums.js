@@ -51,6 +51,14 @@ export const DIFFICULTY_LABELS = {
   5: '5 (Hardest)',
 }
 
+// Module-2 evaluation: the behavioural tier applied to every terrorist. Same scenario +
+// same seed at a different level = the ablation baselines. Values match C# enum AILevel.
+export const NPC_LEVELS = [
+  { value: 'basic',        label: 'Basic (reactive only)'              },
+  { value: 'intermediate', label: 'Intermediate (+ coordination & search)' },
+  { value: 'advanced',     label: 'Advanced (all behaviours)'          },
+]
+
 export const DEFAULT_CONFIG = {
   schemaVersion: '1.0.0',
   missionStructure: {
@@ -72,5 +80,7 @@ export const DEFAULT_CONFIG = {
     seed:            null,
     timeLimit:       null,
     customLabel:     null,
+    npcLevel:        'advanced',   // evaluation tier: basic | intermediate | advanced
+    playerId:        '',       // evaluation: participant code, groups their 3 plays
   },
 }

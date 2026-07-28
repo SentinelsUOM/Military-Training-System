@@ -125,6 +125,13 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                  "the source art's native size.")]
         public List<FurniturePrefabMapping> furniturePrefabs = new List<FurniturePrefabMapping>();
 
+        [Header("Evaluation — NPC behavioural level")]
+        [Tooltip("Behavioural tier applied to EVERY terrorist in the built scenario, for the " +
+                 "Module-2 evaluation (ablation). Dumb = reactive only; Medium = + search/hunt + " +
+                 "squad coordination; Full = everything. Set this (via the scenario form) and rebuild " +
+                 "the SAME seed to get the same scenario at a different AI level for comparison.")]
+        public AILevel npcAiLevel = AILevel.Advanced;
+
         [Header("NPC Prefabs")]
         [Tooltip("Terrorist prefab. Must have a TerroristController component.")]
         public GameObject terroristPrefab;
@@ -3511,6 +3518,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             };
 
             controller.AssignRoleAndSquad(combatRole, "squad_alpha");
+
+            // Evaluation tier: set the whole squad to the chosen behavioural level so the SAME
+            // scenario can be generated as Dumb / Medium / Full and compared (ablation baseline).
+            controller.ApplyAILevel(npcAiLevel);
         }
 
         private void ConfigurePatrolLine(TerroristController controller, NavigationContextEntry nav)

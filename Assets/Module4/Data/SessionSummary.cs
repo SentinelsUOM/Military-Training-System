@@ -20,6 +20,16 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("scenarioId")]
         public string scenarioId;
 
+        /// <summary>Evaluation participant code (e.g. "P03") — groups the same player's
+        /// Dumb/Medium/Full plays for the Module-2 comparison. Null on non-study runs.</summary>
+        [JsonProperty("playerId")]
+        public string playerId;
+
+        /// <summary>Enemy-AI tier this scenario ran at: "dumb" | "medium" | "full".
+        /// The ablation independent variable. Null on non-study runs.</summary>
+        [JsonProperty("npcLevel")]
+        public string npcLevel;
+
         [JsonProperty("timestamp")]
         public DateTime timestamp;
 

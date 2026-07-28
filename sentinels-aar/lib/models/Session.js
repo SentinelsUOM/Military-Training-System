@@ -129,10 +129,30 @@ const SimTlxSchema = new mongoose.Schema(
   { _id: false }
 )
 
+// Module-2 enemy-AI evaluation questionnaire (Survey 2), filled on the dashboard
+// after the session — the counterpart to simTlx. `ratings` holds the raw per-item
+// answers ({ scaleKey: { itemKey: value } }); `derived` holds the per-sub-scale means
+// computed in /api/sessions/[id]/aieval (see lib/aiEval.js). Mixed because the rating
+// tree is nested/variable. Null until the trainee completes it.
+const AiEvalSchema = new mongoose.Schema(
+  {
+    completedAt: Date,
+    ratings:     mongoose.Schema.Types.Mixed,
+    derived:     mongoose.Schema.Types.Mixed
+  },
+  { _id: false }
+)
+
 const SessionSchema = new mongoose.Schema(
   {
     sessionId:       { type: String, required: true, unique: true, index: true },
     scenarioId:      { type: String, required: true },
+
+    // Evaluation grouping keys (Module-2 ablation study). playerId links the same
+    // participant's Dumb/Medium/Full plays; npcLevel is the AI tier that scenario ran.
+    // Uploaded by Unity when set on the scenario form; null on non-study sessions.
+    playerId:        { type: String, index: true },
+    npcLevel:        String,   // dumb | medium | full
     // Top-level "timestamp" sent by Unity (DateTime when EndSession ran).
     // Distinct from Mongoose-managed createdAt/updatedAt.
     timestamp:       Date,
@@ -236,7 +256,10 @@ const SessionSchema = new mongoose.Schema(
     // Post-mission subjective workload questionnaire. Null until the trainee
     // completes it on the dashboard; its absence is what marks a session as
     // "pending SIM-TLX" for the auto-redirect flow.
-    simTlx: SimTlxSchema
+    simTlx: SimTlxSchema,
+
+    // Post-mission enemy-AI evaluation questionnaire (Survey 2). Null until completed.
+    aiEval: AiEvalSchema
   },
   { timestamps: true }
 )

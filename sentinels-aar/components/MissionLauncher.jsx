@@ -7,6 +7,7 @@ import {
   ENTRY_TYPES,
   LAYOUT_TYPES,
   MISSION_TYPES,
+  NPC_LEVELS,
   PLACEMENT_STRATEGIES,
   ROOM_SIZES,
 } from '@/lib/scenarioEnums'
@@ -114,6 +115,8 @@ export default function MissionLauncher({ open, onClose }) {
       seed:            ex.seed === '' || ex.seed == null ? null : Number(ex.seed),
       timeLimit:       null,
       customLabel:     null,
+      npcLevel:        ex.npcLevel ?? 'advanced',   // evaluation tier for the terrorists
+      playerId:        (ex.playerId ?? '').trim() || null, // evaluation participant code
     },
   })
 
@@ -235,6 +238,24 @@ export default function MissionLauncher({ open, onClose }) {
 
           {/* ── Execution Controls ────────────────────────────────────── */}
           <h3 className={styles.section}>Execution Controls</h3>
+
+          <Row label="Player ID">
+            <input
+              className={styles.textInput}
+              type="text"
+              placeholder="e.g. P03 (groups this player's 3 plays)"
+              value={ex.playerId ?? ''}
+              onChange={e => setEx({ playerId: e.target.value })}
+            />
+          </Row>
+
+          <Row label="NPC Level">
+            <Select
+              value={ex.npcLevel ?? 'advanced'}
+              onChange={v => setEx({ npcLevel: v })}
+              options={NPC_LEVELS}
+            />
+          </Row>
 
           <Row label="Seed (optional)">
             <input

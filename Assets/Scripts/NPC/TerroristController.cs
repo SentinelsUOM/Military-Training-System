@@ -5,6 +5,16 @@ using UnityEngine.AI;
 public enum IdleMode { Patrol, Wander, Static }
 
 /// <summary>
+/// Behavioural sophistication tier — set per scenario for the Module‑2 EVALUATION (ablation).
+/// Cumulative: Dumb ⊂ Medium ⊂ Full. Same scenario + same seed, only this changes.
+///   Dumb   — reactive only: see → shoot; lose sight → give up. No search, no squad, no cover/morale/retreat.
+///   Medium — Dumb + the TEAM layer: persistent search/hunt + squad coordination (converge / flank / support / leader).
+///   Full   — Medium + individual polish: cover & morale posture, retreat when wounded, idle scanning,
+///            and the hostage‑guardian threat‑escalation ladder (warn → warning shot → execute).
+/// </summary>
+public enum AILevel { Basic, Intermediate, Advanced }
+
+/// <summary>
 /// Full terrorist FSM controller with all Module 2 transitions.
 ///
 /// States
@@ -107,6 +117,29 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     [Tooltip("Squad identifier assigned from Scenario JSON at spawn time. Leave blank = no squad.")]
     public string squadId = "";
+
+    [Header("Evaluation — behavioural level (ablation)")]
+    [Tooltip("Behavioural tier used to build the evaluation baselines. Dumb = reactive only; " +
+             "Medium = + search/hunt + squad coordination; Full = everything. SceneBuilder sets " +
+             "this on every terrorist from the scenario's chosen NPC-Level, so the SAME scenario " +
+             "can be generated at each level and compared.")]
+    public AILevel aiLevel = AILevel.Advanced;
+
+    // ── Derived behavioural gates (cumulative) ─────────────────────────────────
+    bool AllowTeam           => aiLevel >= AILevel.Intermediate; // search/hunt + squad coordination
+    bool AllowCoverMorale    => aiLevel == AILevel.Advanced;     // posture escalation to cover-and-peek
+    bool AllowRetreat        => aiLevel == AILevel.Advanced;     // fall back when wounded
+    bool AllowIdleScan       => aiLevel == AILevel.Advanced;     // look around while patrolling
+    bool AllowGuardianLadder => aiLevel == AILevel.Advanced;     // warn → warning shot → execute
+
+    /// <summary>Set this NPC's evaluation tier. Called by SceneBuilder at spawn from the scenario's
+    /// NPC-Level so the whole squad runs at one consistent level.</summary>
+    public void ApplyAILevel(AILevel level)
+    {
+        aiLevel  = level;
+        idleScan = AllowIdleScan; // keep the serialized bool consistent with the tier
+        if (!AllowIdleScan && _idleScanRoutine != null) { StopCoroutine(_idleScanRoutine); _idleScanRoutine = null; }
+    }
 
     [Tooltip("Hostage guardian: stays on the hostage and NEVER leaves to investigate, " +
              "converge or flank. It only engages what it personally sees, then keeps " +
@@ -505,7 +538,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // and not wait for the next support-routine tick. So: kill the current search and
                 // re-task straight onto the new contact. The look-first phase of the new
                 // investigation keeps it from looking robotic.
-                if (newSpot && fromMate && !isHostageGuardian && currentState != TerroristState.Engage)
+                if (newSpot && fromMate && !isHostageGuardian && AllowTeam && currentState != TerroristState.Engage)
                 {
                     Debug.Log($"[TerroristController] {gameObject.name}: fresh contact from {e.Instigator.name} at " +
                               $"{e.Origin:F1} — dropping my search and CONVERGING there now.");
@@ -573,7 +606,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // ...and investigate the kill location as a SHARED, PERSISTENT hunt — the same
                 // reaction as TerroristDown. Without this, a survivor who lost the corpse-leash
                 // (see FindHurtAlly) would just stand at readiness with nowhere to go.
-                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId) && e.Origin != Vector3.zero)
+                if (!isHostageGuardian && AllowTeam && !string.IsNullOrEmpty(squadId) && e.Origin != Vector3.zero)
                 {
                     _lastKnownPlayerPos = e.Origin;
                     Squad.Get(squadId)?.BeginHunt(e.Origin, Vector3.zero, this);
@@ -604,7 +637,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // PERSISTENT squad hunt rather than leashing onto the corpse. This gets the whole
                 // squad sweeping the kill location AND keeps them responsive to the trainee's own
                 // gunfire, instead of the survivor standing on the body forever.
-                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId))
+                if (!isHostageGuardian && AllowTeam && !string.IsNullOrEmpty(squadId))
                 {
                     _lastKnownPlayerPos = e.Origin;
                     Squad.Get(squadId)?.BeginHunt(e.Origin, Vector3.zero, this);
@@ -635,7 +668,8 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // a non-fatal hit shouldn't sprint away from nothing).
         // Guardians NEVER retreat — they never leave the hostage; when wounded they
         // reach for the hostage as a shield instead (handled in GuardianPressureTick).
-        if (retreatHealthThreshold > 0f &&
+        if (AllowRetreat &&
+            retreatHealthThreshold > 0f &&
             currentHealth <= retreatHealthThreshold &&
             !_hasRetreated &&
             !isHostageGuardian &&
@@ -664,6 +698,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// </summary>
     void AddEscalation(float amount)
     {
+        if (!AllowCoverMorale) return;                      // Full tier only — else stays HoldAndShoot
         if (amount <= 0f) return;
         if (posture == CombatPosture.CoverAndPeek) return; // already at the cautious posture
 
@@ -872,7 +907,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 // knowledge, not private to me. Writes the shared anchor, (re)starts the
                 // persistent hunt and re-arms its budget, so a mate who never got his own
                 // line of sight still commits to hunting instead of quitting.
-                if (!isHostageGuardian && !string.IsNullOrEmpty(squadId))
+                if (!isHostageGuardian && AllowTeam && !string.IsNullOrEmpty(squadId))
                     Squad.Get(squadId)?.ReportConfirmedContact(
                         _lastKnownPlayerPos, _lastKnownPlayerHeading, this);
                 if (currentState == TerroristState.Alert ||
@@ -897,7 +932,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
                         TransitionTo(TerroristState.Alert, e);
                     // Guardian holds its post — it does NOT chase/search; it keeps
                     // guarding the hostage and re-engages only if the player returns.
-                    if (!isHostageGuardian)
+                    // AllowTeam gates the search/hunt: a DUMB terrorist just loses you and
+                    // gives up (no moving to your last-seen spot, no fan-out).
+                    if (!isHostageGuardian && AllowTeam)
                     {
                         // Tell the squad WHICH WAY the trainee ran, then trigger the collaborative
                         // chase: everyone sweeps forward along the escape direction (line-abreast).
@@ -1239,10 +1276,11 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 _guardRoamRoutine = StartCoroutine(GuardianRoamRoutine());
             GuardianPressureTick();
         }
-        else if (_squadSupportRoutine == null && currentState != TerroristState.Down)
+        else if (AllowTeam && _squadSupportRoutine == null && currentState != TerroristState.Down)
         {
             // Non-guardians run the HELP / COVER / SWEEP brain so a squadmate never just
-            // stands frozen while his mate is in a firefight.
+            // stands frozen while his mate is in a firefight. TEAM tier only — a DUMB
+            // terrorist fights alone and never converges/supports.
             _squadSupportRoutine = StartCoroutine(SquadSupportRoutine());
         }
 
@@ -1830,6 +1868,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
     void StartHostageLeverage()
     {
         if (!isHostageGuardian) return;
+        if (!AllowGuardianLadder) return;   // Full tier only — the warn→warning-shot→execute ladder.
+                                            // Lower tiers: the guardian still guards & shoots, but
+                                            // never runs the leverage/execution escalation.
         if (guardedHostage == null) guardedHostage = FindNearestHostage();  // lazy auto-bind
         if (guardedHostage == null) return;
         if (_leverageRoutine != null) return;                       // already running
@@ -3010,6 +3051,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// same sweep into its own pause, so it doesn't use this.</summary>
     void StartIdleScan()
     {
+        if (!AllowIdleScan) return;    // Full tier only — patrol look-around
         if (!idleScan) return;
         if (isHostageGuardian) return; // guardian sweeps via GuardianRoamRoutine, not this
         if (_idleScanRoutine != null) StopCoroutine(_idleScanRoutine);
@@ -3191,6 +3233,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// </summary>
     public void InvestigatePosition(Vector3 soundPos, bool allowEscalation = false)
     {
+        // DUMB tier never investigates: walking to a gunshot / a mate's death / a lost contact
+        // is a SEARCH behaviour (Medium+). This is the single choke point for "go and look" — it
+        // is also what EventManager dispatches an investigator through — so gating it here stops a
+        // Dumb terrorist from ever coming to find you. It still HEARS and turns (that's handled in
+        // RespondTo), it just doesn't move to hunt.
+        if (!AllowTeam) return;
         // Guardian never leaves the hostage to investigate — its search is the leashed
         // GuardianRoamRoutine, so it just declines here (silently; this fires on every
         // gunshot and used to spam the console).
@@ -3518,6 +3566,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// </summary>
     void IssueDirectiveIfLeader(ScenarioEvent trigger, LeaderDirectiveType type)
     {
+        if (!AllowTeam) return;                 // squad coordination is a TEAM-tier behaviour
         if (role != NPCRole.Leader) return;
         if (string.IsNullOrEmpty(squadId)) return;
 
@@ -3559,6 +3608,7 @@ public class TerroristController : MonoBehaviour, INPCResponder
     /// </summary>
     void FollowActiveDirective()
     {
+        if (!AllowTeam) return;                 // squad coordination is a TEAM-tier behaviour
         if (_activeDirective == null) return;
         if (agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh) return;
 
