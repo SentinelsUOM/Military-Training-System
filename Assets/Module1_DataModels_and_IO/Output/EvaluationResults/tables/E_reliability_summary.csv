@@ -1,0 +1,4 @@
+scope,n,pass,fail,pass_rate_%
+Overall (full pipeline space),500,416,84,83.2
+"Form-reachable (roomCount 3-5, terrorist 1-4) [PRIMARY]",43,43,0,100.0
+Extended-range (outside form),457,373,84,81.62
