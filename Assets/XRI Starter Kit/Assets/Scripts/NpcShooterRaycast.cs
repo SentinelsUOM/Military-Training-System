@@ -42,6 +42,16 @@ public class NpcShooterRaycast : MonoBehaviour
     /// True while the NPC is actively firing. Read by TerroristController to sync Engage state.
     public bool IsFiring => loop != null;
 
+    /// <summary>Raised once per live combat round fired at the player (FireOnce). Read-only
+    /// telemetry — does NOT affect spread/damage/rate. TerroristController forwards it to the
+    /// event bus as EnemyShotFired so the dashboard can compute enemy hit-rate per AI level.
+    /// Warning/execution shots are intentionally excluded (they aren't aimed at the trainee).</summary>
+    public event System.Action OnShotFired;
+
+    /// <summary>Raised when a live round actually resolves a hit on the trainee's PlayerHealth.
+    /// Forwarded as EnemyHitPlayer. Read-only telemetry.</summary>
+    public event System.Action OnPlayerHit;
+
     // ✅ TEST buttons in inspector (right click component header)
     [ContextMenu("TEST -> StartFiring")]
     void TestStartFiring() => StartFiring();
@@ -176,6 +186,9 @@ public class NpcShooterRaycast : MonoBehaviour
         if (muzzleFlash != null) muzzleFlash.Play();
         if (fireAudioSource != null && fireClip != null) fireAudioSource.PlayOneShot(fireClip);
 
+        // Telemetry: one live round left the barrel (counted whether it hits or misses).
+        OnShotFired?.Invoke();
+
         Vector3 dir = (ResolveAimPoint() - firePoint.position).normalized;
 
         float angle = spreadDegrees * Mathf.Deg2Rad;
@@ -206,6 +219,7 @@ public class NpcShooterRaycast : MonoBehaviour
             if (health != null)
             {
                 health.TakeDamage(damage, firePoint.position);
+                OnPlayerHit?.Invoke();   // telemetry: this round connected with the trainee
             }
             else
             {

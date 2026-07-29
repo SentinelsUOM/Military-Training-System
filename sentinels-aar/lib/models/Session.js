@@ -171,6 +171,17 @@ const SessionSchema = new mongoose.Schema(
       missionDuration:   Number,
       friendlyFireCount: Number,
 
+      // Distance-aware accuracy — accuracyScore is hitRate ÷ expectedHitRateAtRange (NYPD
+      // SOP-9), not a raw ratio. These make that transparent. See PerformanceCalculator.cs.
+      avgEngagementDistance: Number,   // metres; -1/absent = no hit-distance data (old sessions)
+      accuracyExpertRate:    Number,   // the NYPD rate this session was judged against
+
+      // Scenario-normalized speed target — replaces the flat 300s cap when scenario
+      // metadata is available. Coefficients are design defaults, not research-sourced.
+      speedTargetTime:     Number,
+      speedRoomCount:      Number,
+      speedTerroristCount: Number,
+
       // Operator (player) safety — how safely the trainee conducted themselves,
       // distinct from safetyScore (the hostage's safety). See PLAYER_SAFETY_SCORE.md.
       operatorSafetyScore: Number,
@@ -179,7 +190,12 @@ const SessionSchema = new mongoose.Schema(
       opWeaponDiscipline:  Number,
       opThreatResponse:    Number,
       opExposedSeconds:    Number,
-      opFinalHealth:       Number
+      opFinalHealth:       Number,
+
+      // Negligent discharge — rounds fired with no terrorist visible at all. Folded into
+      // opWeaponDiscipline. Benchmark: expert ~17%, novice ~61%.
+      opNegligentDischarges:    Number,
+      opNegligentDischargeRate: Number
     },
 
     cognitiveSummary: {
@@ -210,7 +226,10 @@ const SessionSchema = new mongoose.Schema(
       sourceActorId:String,
       targetActorId:String,
       roomId:       String,
-      tags:         [String]
+      tags:         [String],
+      // Shooter↔target range at the moment of a hit; -1/absent = not captured.
+      // Used for distance-aware accuracy — see PerformanceCalculator.cs.
+      distance:     Number
     }],
 
     npcStateChanges: [{

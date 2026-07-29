@@ -235,7 +235,8 @@ namespace TeamSentinels.Module4.Logging
             hostagesTotal = Mathf.Max(hostagesTotal, 1);
 
             PerformanceSummary perf = PerformanceCalculator.Calculate(
-                _events, _hostageHistory, duration, hostagesTotal);
+                _events, _hostageHistory, duration, hostagesTotal,
+                _npcStateChanges, _layout, EvaluationContext.NpcLevel);
 
             List<IncidentRecord> incidents = IncidentExtractor.Extract(
                 _events, _npcStateChanges, _hostageHistory);

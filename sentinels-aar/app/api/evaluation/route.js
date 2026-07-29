@@ -16,15 +16,18 @@ const LEVEL_ALIASES = { dumb: 'basic', medium: 'intermediate', full: 'advanced' 
 // The survey sub-scale means we compare (from aiEval.derived, see lib/aiEval.js).
 const SURVEY_KEYS = ['perceivedIntelligence', 'animacy', 'realism', 'ueqPragmatic', 'ueqHedonic']
 // The objective metrics we compare (from the session's own telemetry).
-const METRIC_KEYS = ['reactionTime', 'accuracy', 'duration', 'overallScore']
+const METRIC_KEYS = ['reactionTime', 'accuracy', 'enemyAccuracy', 'duration', 'overallScore']
 
 function metricsOf(s) {
   const p = s.performance || {}
   const c = s.cognitiveSummary || {}
-  const accuracy = p.totalShots > 0 ? Math.round((p.hits / p.totalShots) * 1000) / 10 : null
+  const accuracy      = p.totalShots > 0 ? Math.round((p.hits / p.totalShots) * 1000) / 10 : null
+  // Enemy hit-rate: how well the terrorist AI shot the trainee (objective ablation measure).
+  const enemyAccuracy = p.enemyShots > 0 ? Math.round((p.enemyHits / p.enemyShots) * 1000) / 10 : null
   return {
     reactionTime: c.averageReactionTime ?? null,
     accuracy,
+    enemyAccuracy,
     duration:     p.missionDuration ?? null,
     overallScore: p.overallScore ?? null,
     missionSuccess: p.missionSuccess ?? null,

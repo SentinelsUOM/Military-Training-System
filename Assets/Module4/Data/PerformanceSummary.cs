@@ -34,6 +34,15 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("misses")]
         public int misses;
 
+        // ── Enemy fire (Module-2 evaluation) ─────────────────────────────────
+        // How well the terrorist AI shot the trainee — an OBJECTIVE behavioural
+        // measure of the AI level (smarter AI should land more of its shots).
+        [JsonProperty("enemyShots")]
+        public int enemyShots;   // live rounds the terrorists fired at the trainee
+
+        [JsonProperty("enemyHits")]
+        public int enemyHits;    // those rounds that actually hit the trainee
+
         [JsonProperty("hostagesSaved")]
         public int hostagesSaved;
 
@@ -48,6 +57,27 @@ namespace TeamSentinels.Module4.Data
 
         [JsonProperty("overallScore")]
         public float overallScore;
+
+        // ── Distance-aware accuracy ──────────────────────────────────────────
+        // accuracyScore above is now hitRate ÷ expectedHitRateAtRange, NOT a raw ratio —
+        // see PerformanceCalculator. These two fields make that transparent to the AAR.
+        [JsonProperty("avgEngagementDistance")]
+        public float avgEngagementDistance = -1f;   // metres; -1 = no hit-distance data
+
+        [JsonProperty("accuracyExpertRate")]
+        public float accuracyExpertRate;            // the NYPD SOP-9 rate this session was judged against
+
+        // ── Scenario-normalized speed ────────────────────────────────────────
+        // speedScore above is judged against speedTargetTime (rooms/terrorists/difficulty
+        // aware), not a flat 300 s. Coefficients are design defaults — see PerformanceCalculator.cs.
+        [JsonProperty("speedTargetTime")]
+        public float speedTargetTime;
+
+        [JsonProperty("speedRoomCount")]
+        public int speedRoomCount;
+
+        [JsonProperty("speedTerroristCount")]
+        public int speedTerroristCount;
 
         // ── Operator (player) safety ─────────────────────────────────────────
         // How safely the TRAINEE conducted themselves — distinct from safetyScore,
@@ -73,6 +103,14 @@ namespace TeamSentinels.Module4.Data
 
         [JsonProperty("opFinalHealth")]
         public int opFinalHealth;          // trainee HP at mission end (−1 = not captured)
+
+        // Negligent discharge — rounds fired with no terrorist visible at all. Folded into
+        // opWeaponDiscipline alongside friendly fire. Benchmark: expert ≈17%, novice ≈61%.
+        [JsonProperty("opNegligentDischarges")]
+        public int opNegligentDischarges;
+
+        [JsonProperty("opNegligentDischargeRate")]
+        public float opNegligentDischargeRate;   // negligentDischarges / totalShots
 
         #endregion
 

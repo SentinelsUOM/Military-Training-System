@@ -7,6 +7,8 @@ import ScoreBar from '@/components/ui/ScoreBar'
 import styles from './SummaryTab.module.css'
 import { scoreColor, scorePercent, chartTheme } from '@/lib/utils'
 import { deriveCognitiveScores } from '@/lib/cognitiveDerived'
+import { benchmarkPos } from '@/lib/expertBenchmarks'
+import { hostageBreakdown, accuracyBreakdown, speedBreakdown } from '@/lib/scoreBreakdowns'
 
 export default function SummaryTab({ session }) {
   const perf = session.performance || {}
@@ -22,6 +24,13 @@ export default function SummaryTab({ session }) {
   // to proxies computed from movement/reaction telemetry when that happens.
   const cogScores = deriveCognitiveScores(session)
   const isEstimated = cogScores.source === 'derived'
+
+  // Full sub-parameter breakdowns (like Operator Safety) for the three outcome scores.
+  // Each is decomposed into research-grounded components + an expert benchmark. Computed
+  // client-side from session data — see lib/scoreBreakdowns.js.
+  const hostageBox  = hostageBreakdown(session)
+  const accuracyBox = accuracyBreakdown(session)
+  const speedBox    = speedBreakdown(session)
 
   // Operator (player) safety is only present on sessions recorded after the feature shipped.
   const hasOp = perf.operatorSafetyScore != null
@@ -88,6 +97,8 @@ export default function SummaryTab({ session }) {
         </div>
       </div>
 
+      <ScoreBox {...hostageBox} title="Hostage Safety — was the hostage protected?" />
+
       {hasOp && (
         <div className={styles.card} style={{ marginBottom: 16 }}>
           <h3 className={styles.cardTitle}>Operator Safety — how safely you conducted yourself</h3>
@@ -101,16 +112,28 @@ export default function SummaryTab({ session }) {
             <ScoreBar label="Operator Safety (overall)" value={perf.operatorSafetyScore} color={scoreColor(perf.operatorSafetyScore)} />
             <ScoreBar label="Survivability — health kept"        value={perf.opSurvivability}    color={scoreColor(perf.opSurvivability)} />
             <ScoreBar label="Exposure Control — time unseen"     value={perf.opExposureControl}  color={scoreColor(perf.opExposureControl)} />
-            <ScoreBar label="Weapon Discipline — no friendly fire" value={perf.opWeaponDiscipline} color={scoreColor(perf.opWeaponDiscipline)} />
+            <ScoreBar
+              label={`Weapon Discipline — friendly fire + negligent discharge${perf.opNegligentDischargeRate != null ? `  ·  ${Math.round(perf.opNegligentDischargeRate * 100)}% wild shots` : ''}`}
+              value={perf.opWeaponDiscipline} color={scoreColor(perf.opWeaponDiscipline)} />
             <ScoreBar label="Threat Response — reaction speed"   value={perf.opThreatResponse}   color={scoreColor(perf.opThreatResponse)} />
           </div>
           <div className={styles.combatGrid} style={{ marginTop: 12 }}>
             <CombatStat label="Final Health" value={perf.opFinalHealth != null && perf.opFinalHealth >= 0 ? `${perf.opFinalHealth} HP` : '—'}
               warn={perf.opFinalHealth != null && perf.opFinalHealth <= 30} />
             <CombatStat label="Time Exposed" value={perf.opExposedSeconds != null ? `${perf.opExposedSeconds.toFixed(0)} s` : '—'} />
+            <CombatStat label="Negligent Discharges"
+              value={perf.opNegligentDischarges != null ? perf.opNegligentDischarges : '—'}
+              warn={perf.opNegligentDischarges > 0} />
           </div>
+          <p style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic', margin: '8px 0 0', lineHeight: 1.4 }}>
+            Negligent discharge = a round fired with no terrorist visible at all. Benchmark: expert ≈17% of shots, novice ≈61% (qualification-failure studies) — so some wild shots under stress is normal.
+          </p>
         </div>
       )}
+
+      <ScoreBox {...accuracyBox} title="Accuracy — how well you shot" />
+
+      <ScoreBox {...speedBox} title="Speed — how quickly you worked" />
 
       <div className={styles.botGrid}>
         <div className={styles.card}>
@@ -174,6 +197,84 @@ export default function SummaryTab({ session }) {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// A full score box mirroring the Operator Safety box: title + explainer, the overall score
+// and its sub-parameters as bars, then a real-world expert comparison at the bottom.
+function ScoreBox({ title, subtitle, overall, overallLabel, subs = [], expert, emptyNote, expertNote }) {
+  const shown = subs.filter(s => s.value != null)
+  return (
+    <div className={styles.card} style={{ marginBottom: 16 }}>
+      <h3 className={styles.cardTitle}>{title}</h3>
+      {subtitle && (
+        <p style={{ color: 'var(--muted)', fontSize: 13, lineHeight: 1.5, margin: '2px 0 12px' }}>{subtitle}</p>
+      )}
+
+      <div className={styles.scoreBars}>
+        <ScoreBar label={overallLabel} value={overall ?? 0} color={scoreColor(overall ?? 0)} />
+        {shown.map(s => (
+          <ScoreBar
+            key={s.label}
+            label={s.hint ? `${s.label}  ·  ${s.hint}` : s.label}
+            value={s.value}
+            color={scoreColor(s.value)}
+          />
+        ))}
+      </div>
+
+      {emptyNote && (
+        <p style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic', margin: '10px 0 0' }}>{emptyNote}</p>
+      )}
+
+      {expert && <ExpertCompare {...expert} />}
+
+      {expertNote && (
+        <p style={{ fontSize: 11.5, color: 'var(--muted)', fontStyle: 'italic', margin: '12px 0 0', lineHeight: 1.4,
+          paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          {expertNote}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// The "vs real-world expert" footer of a score box: trainee value on a novice→expert gradient,
+// with a verdict (Expert / Proficient / Developing / Novice) and the cited source.
+function ExpertCompare({ label, value, valueText, b, note }) {
+  const pos = benchmarkPos(value, b)
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Compared to real-world expert — {label}</span>
+        {pos && (
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: pos.color, border: `1px solid ${pos.color}`, borderRadius: 4, padding: '1px 8px' }}>
+            {pos.verdict}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 22, fontWeight: 700, color: pos ? pos.color : 'var(--text)' }}>{valueText}</span>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>you</span>
+      </div>
+
+      <div style={{ position: 'relative', height: 7, borderRadius: 4, background: 'linear-gradient(90deg,#f87171,#fbbf24,#34d399)', opacity: 0.45 }}>
+        {pos && (
+          <div style={{
+            position: 'absolute', top: -3, left: `calc(${(pos.pct * 100).toFixed(0)}% - 2px)`,
+            width: 4, height: 13, borderRadius: 2, background: pos.color, boxShadow: '0 0 0 2px #0d1117',
+          }} />
+        )}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>
+        <span>Novice {b.fmt(b.novice)}</span>
+        <span>Expert {b.fmt(b.expert)}</span>
+      </div>
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2, opacity: 0.7 }}>{b.source}</div>
+
+      {note && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 7, fontStyle: 'italic', lineHeight: 1.45 }}>{note}</div>}
     </div>
   )
 }

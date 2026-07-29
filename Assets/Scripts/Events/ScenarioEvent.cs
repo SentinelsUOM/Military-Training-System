@@ -27,6 +27,15 @@ public class ScenarioEvent
     /// Optional target actor identifier (e.g. which NPC was seen or downed).
     public readonly string TargetActorId;
 
+    /// Optional world-space distance relevant to this event (e.g. shooter↔target range
+    /// at the moment of a hit). -1 means "not captured". Module 4 uses this for
+    /// distance-aware accuracy scoring — see PerformanceCalculator.
+    public readonly float Distance;
+
+    /// Optional detector-supplied tags (e.g. "no_target_in_los" for a negligent
+    /// discharge). Merged into Module4Bridge's own tag derivation.
+    public readonly System.Collections.Generic.List<string> Tags;
+
     static int _idCounter;
 
     public ScenarioEvent(
@@ -34,7 +43,9 @@ public class ScenarioEvent
         Vector3           origin,
         GameObject        instigator    = null,
         string            roomId        = null,
-        string            targetActorId = null)
+        string            targetActorId = null,
+        float             distance      = -1f,
+        System.Collections.Generic.List<string> tags = null)
     {
         EventId       = ++_idCounter;
         Type          = type;
@@ -43,6 +54,8 @@ public class ScenarioEvent
         Timestamp     = Time.time;
         RoomId        = roomId;
         TargetActorId = targetActorId;
+        Distance      = distance;
+        Tags          = tags;
     }
 
     public override string ToString() =>

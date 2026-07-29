@@ -44,4 +44,11 @@ public enum ScenarioEventType
     // silently renumbers everything below it and repoints every existing detector at
     // the wrong event.
     HostageHit,          // A bullet damaged a hostage but did NOT kill them (trainee friendly fire)
+
+    // ── Enemy-fire telemetry (Module-2 evaluation) ─────────────────────────────
+    // Raised by TerroristController from its shooter's read-only fire/hit callbacks.
+    // Pure telemetry for the dashboard's enemy hit-rate metric — NOT consumed by any
+    // NPC/AI logic, so they change no behaviour. Appended at the end to preserve ordinals.
+    EnemyShotFired,      // A terrorist fired one live combat round at the trainee
+    EnemyHitPlayer,      // A terrorist's live round connected with the trainee
 }
