@@ -52,6 +52,11 @@ namespace TeamSentinels.Module4.Logging
         // Building geometry of the played scenario, set by SetLayout() after StartSession.
         private LayoutSnapshot _layout;
 
+        // Trainee health at mission end, for the operator-safety survivability score.
+        // -1 = not captured (survivability then assumes the trainee finished unhurt).
+        private int _finalPlayerHealth = -1;
+        private int _maxPlayerHealth   = 100;
+
         // Live body-movement track, registered by CognitiveMovementRecorder at the
         // start of recording. The recorder keeps appending samples to this same
         // instance, so whatever is in it at EndSession() is what gets serialised.
@@ -97,6 +102,8 @@ namespace TeamSentinels.Module4.Logging
             _sessionStartTime = Time.time;
             _sessionActive    = true;
             _layout           = null;   // cleared per session; SetLayout() fills it if a scenario is known
+            _finalPlayerHealth = -1;    // cleared per session; SetPlayerHealth() fills it at EndSession
+            _maxPlayerHealth   = 100;
             _movementTrack    = null;   // cleared per session; SetMovementTrack() re-registers
 
             _events.Clear();
@@ -187,6 +194,17 @@ namespace TeamSentinels.Module4.Logging
             _reactionTimes.Add(seconds);
         }
 
+        /// <summary>
+        /// Records the trainee's health at mission end, for the operator-safety survivability
+        /// score. Call once just before EndSession (Module4SessionController does this). Safe to
+        /// skip — survivability then assumes the trainee finished unhurt.
+        /// </summary>
+        public void SetPlayerHealth(int current, int max)
+        {
+            _finalPlayerHealth = Mathf.Max(0, current);
+            if (max > 0) _maxPlayerHealth = max;
+        }
+
         /// <summary>Accepts a pre-built ReplayFrame from ReplayRecorder.</summary>
         public void AddReplayFrames(List<ReplayFrame> frames)
         {
@@ -223,6 +241,11 @@ namespace TeamSentinels.Module4.Logging
                 _events, _npcStateChanges, _hostageHistory);
 
             CognitiveSummary cog = BuildCognitiveSummary();
+
+            // Operator (player) safety — needs the reaction time from the cognitive summary and
+            // the trainee's final health, so it runs after both are known.
+            PerformanceCalculator.ComputeOperatorSafety(
+                perf, _events, cog.averageReactionTime, _finalPlayerHealth, _maxPlayerHealth);
 
             var summary = new SessionSummary
             {

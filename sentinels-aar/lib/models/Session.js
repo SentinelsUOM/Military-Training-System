@@ -169,7 +169,17 @@ const SessionSchema = new mongoose.Schema(
       hostagesSaved:     Number,
       hostagesTotal:     Number,
       missionDuration:   Number,
-      friendlyFireCount: Number
+      friendlyFireCount: Number,
+
+      // Operator (player) safety — how safely the trainee conducted themselves,
+      // distinct from safetyScore (the hostage's safety). See PLAYER_SAFETY_SCORE.md.
+      operatorSafetyScore: Number,
+      opSurvivability:     Number,
+      opExposureControl:   Number,
+      opWeaponDiscipline:  Number,
+      opThreatResponse:    Number,
+      opExposedSeconds:    Number,
+      opFinalHealth:       Number
     },
 
     cognitiveSummary: {

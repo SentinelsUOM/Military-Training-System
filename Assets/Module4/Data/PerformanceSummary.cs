@@ -49,6 +49,31 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("overallScore")]
         public float overallScore;
 
+        // ── Operator (player) safety ─────────────────────────────────────────
+        // How safely the TRAINEE conducted themselves — distinct from safetyScore,
+        // which is the HOSTAGE's safety. Grounded in survivability doctrine (exposure)
+        // and the validated CQB assessment instrument. See PLAYER_SAFETY_SCORE.md.
+        [JsonProperty("operatorSafetyScore")]
+        public float operatorSafetyScore;
+
+        [JsonProperty("opSurvivability")]
+        public float opSurvivability;      // health kept (0 if downed)
+
+        [JsonProperty("opExposureControl")]
+        public float opExposureControl;    // 1 − time spent in enemy line-of-sight
+
+        [JsonProperty("opWeaponDiscipline")]
+        public float opWeaponDiscipline;   // 1 − friendly-fire penalty
+
+        [JsonProperty("opThreatResponse")]
+        public float opThreatResponse;     // faster reaction = safer
+
+        [JsonProperty("opExposedSeconds")]
+        public float opExposedSeconds;     // raw seconds detected (for transparency)
+
+        [JsonProperty("opFinalHealth")]
+        public int opFinalHealth;          // trainee HP at mission end (−1 = not captured)
+
         #endregion
 
         #region Public API

@@ -23,11 +23,15 @@ export default function SummaryTab({ session }) {
   const cogScores = deriveCognitiveScores(session)
   const isEstimated = cogScores.source === 'derived'
 
+  // Operator (player) safety is only present on sessions recorded after the feature shipped.
+  const hasOp = perf.operatorSafetyScore != null
+
   const radarData = [
     { axis: 'Overall',  value: Math.round((perf.overallScore  || 0) * 100) },
-    { axis: 'Safety',   value: Math.round((perf.safetyScore   || 0) * 100) },
+    { axis: 'Hostage',  value: Math.round((perf.safetyScore   || 0) * 100) },
     { axis: 'Accuracy', value: Math.round((perf.accuracyScore || 0) * 100) },
     { axis: 'Speed',    value: Math.round((perf.speedScore    || 0) * 100) },
+    ...(hasOp ? [{ axis: 'Operator', value: Math.round((perf.operatorSafetyScore || 0) * 100) }] : []),
   ]
 
   const cogBarData = [
@@ -61,10 +65,13 @@ export default function SummaryTab({ session }) {
         <div className={styles.card}>
           <h3 className={styles.cardTitle}>Score Breakdown</h3>
           <div className={styles.scoreBars}>
-            <ScoreBar label="Overall"  value={perf.overallScore}  color={scoreColor(perf.overallScore)} />
-            <ScoreBar label="Safety"   value={perf.safetyScore}   color={scoreColor(perf.safetyScore)} />
-            <ScoreBar label="Accuracy" value={perf.accuracyScore} color={scoreColor(perf.accuracyScore)} />
-            <ScoreBar label="Speed"    value={perf.speedScore}    color={scoreColor(perf.speedScore)} />
+            <ScoreBar label="Overall"        value={perf.overallScore}  color={scoreColor(perf.overallScore)} />
+            <ScoreBar label="Hostage Safety" value={perf.safetyScore}   color={scoreColor(perf.safetyScore)} />
+            {hasOp && (
+              <ScoreBar label="Operator Safety" value={perf.operatorSafetyScore} color={scoreColor(perf.operatorSafetyScore)} />
+            )}
+            <ScoreBar label="Accuracy"       value={perf.accuracyScore} color={scoreColor(perf.accuracyScore)} />
+            <ScoreBar label="Speed"          value={perf.speedScore}    color={scoreColor(perf.speedScore)} />
           </div>
 
           <div className={styles.combatGrid}>
@@ -80,6 +87,30 @@ export default function SummaryTab({ session }) {
           </div>
         </div>
       </div>
+
+      {hasOp && (
+        <div className={styles.card} style={{ marginBottom: 16 }}>
+          <h3 className={styles.cardTitle}>Operator Safety — how safely you conducted yourself</h3>
+          <p style={{ color: 'var(--muted)', fontSize: 13, lineHeight: 1.5, margin: '2px 0 12px' }}>
+            Different from <strong>Hostage Safety</strong> (was the hostage protected). This measures whether
+            <strong> you</strong> stayed safe: did you survive, keep out of the enemy's line of sight, handle your
+            weapon safely, and react quickly. You can rescue the hostage and still score low here — a sign you'd
+            have been hit in reality.
+          </p>
+          <div className={styles.scoreBars}>
+            <ScoreBar label="Operator Safety (overall)" value={perf.operatorSafetyScore} color={scoreColor(perf.operatorSafetyScore)} />
+            <ScoreBar label="Survivability — health kept"        value={perf.opSurvivability}    color={scoreColor(perf.opSurvivability)} />
+            <ScoreBar label="Exposure Control — time unseen"     value={perf.opExposureControl}  color={scoreColor(perf.opExposureControl)} />
+            <ScoreBar label="Weapon Discipline — no friendly fire" value={perf.opWeaponDiscipline} color={scoreColor(perf.opWeaponDiscipline)} />
+            <ScoreBar label="Threat Response — reaction speed"   value={perf.opThreatResponse}   color={scoreColor(perf.opThreatResponse)} />
+          </div>
+          <div className={styles.combatGrid} style={{ marginTop: 12 }}>
+            <CombatStat label="Final Health" value={perf.opFinalHealth != null && perf.opFinalHealth >= 0 ? `${perf.opFinalHealth} HP` : '—'}
+              warn={perf.opFinalHealth != null && perf.opFinalHealth <= 30} />
+            <CombatStat label="Time Exposed" value={perf.opExposedSeconds != null ? `${perf.opExposedSeconds.toFixed(0)} s` : '—'} />
+          </div>
+        </div>
+      )}
 
       <div className={styles.botGrid}>
         <div className={styles.card}>
