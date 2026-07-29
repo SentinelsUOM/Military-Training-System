@@ -1,21 +1,44 @@
 import { NextResponse } from 'next/server'
+import zlib from 'zlib'
+import { promisify } from 'util'
 import { connectDB } from '@/lib/mongodb'
 import Session from '@/lib/models/Session'
+
+const gunzip = promisify(zlib.gunzip)
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type'
+  'Access-Control-Allow-Headers': 'Content-Type, Content-Encoding'
 }
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders })
 }
 
+// Read the JSON body, transparently gunzipping it when the client sent
+// `Content-Encoding: gzip` (Unity's DashboardUploader compresses large session
+// payloads so they transmit reliably). Falls back to plain parsing so existing
+// non-gzip clients keep working, and tolerates an upstream proxy having already
+// decompressed the body.
+async function readJsonBody(request) {
+  const enc = (request.headers.get('content-encoding') || '').toLowerCase()
+  const raw = Buffer.from(await request.arrayBuffer())
+  if (enc.includes('gzip')) {
+    try {
+      return JSON.parse((await gunzip(raw)).toString('utf-8'))
+    } catch {
+      // Already-decompressed upstream — parse the raw bytes as text.
+      return JSON.parse(raw.toString('utf-8'))
+    }
+  }
+  return JSON.parse(raw.toString('utf-8'))
+}
+
 export async function POST(request) {
   try {
     await connectDB()
-    const body = await request.json()
+    const body = await readJsonBody(request)
 
     if (!body.sessionId || !body.scenarioId) {
       return NextResponse.json(

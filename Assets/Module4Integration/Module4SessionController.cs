@@ -352,6 +352,11 @@ public class Module4SessionController : MonoBehaviour
 
         _missionEnded = true;
         Debug.Log($"[Module4SessionController] Ending session — reason: {reason}");
+
+        // Capture the trainee's final health for the operator-safety survivability score.
+        if (playerHealth != null)
+            SessionLogger.Instance.SetPlayerHealth(playerHealth.health, playerHealth.maxHealth);
+
         SessionLogger.Instance.EndSession();
 
         // The result is decided — FREEZE the simulation. Without this the NPC AI kept
