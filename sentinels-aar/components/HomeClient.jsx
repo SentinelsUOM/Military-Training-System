@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import MetricCard from '@/components/ui/MetricCard'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import MissionLauncher from '@/components/MissionLauncher'
+import ThemeToggle from '@/components/ui/ThemeToggle'
 import SimTlxTrend from '@/components/SimTlxTrend'
 import { dismissedSessionIds } from '@/components/simtlx/SimTlxClient'
 import styles from './HomeClient.module.css'
@@ -95,6 +96,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
           <p className={styles.sub}>After-Action Review Dashboard — VR Military Training</p>
         </div>
         <div className={styles.headerActions}>
+          <ThemeToggle />
           <button
             className={styles.seedBtn}
             onClick={() => router.push('/evaluation')}
@@ -147,6 +149,18 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
             value={scorePercent(stats.averageAccuracyScore)}
             color={scoreColor(stats.averageAccuracyScore)}
           />
+          <MetricCard
+            label="Avg Speed Score"
+            value={scorePercent(stats.averageSpeedScore)}
+            color={scoreColor(stats.averageSpeedScore)}
+          />
+          {stats.averageOperatorSafetyScore != null && (
+            <MetricCard
+              label="Avg Operator Safety"
+              value={scorePercent(stats.averageOperatorSafetyScore)}
+              color={scoreColor(stats.averageOperatorSafetyScore)}
+            />
+          )}
           <MetricCard
             label="Avg Reaction Time"
             value={stats.averageReactionTime != null ? stats.averageReactionTime.toFixed(2) : '—'}

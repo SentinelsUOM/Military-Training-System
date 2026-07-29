@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList
 } from 'recharts'
 import styles from './SimTlxTab.module.css'
-import { chartTheme } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 import {
   SIM_TLX_DIMENSIONS, SIM_TLX_COMPOSITES, SIM_TLX_SCALE_MAX,
   SIM_TLX_COLORS, workloadColor
@@ -12,6 +12,7 @@ import {
 import { evaluateWorkloadReasoning, CITATIONS } from '@/lib/workloadReasoning'
 
 export default function SimTlxTab({ session }) {
+  const chartTheme = useChartTheme()
   const simTlx = session.simTlx
   const ratings = simTlx?.ratings || {}
   const derived = simTlx?.derived || {}

@@ -5,12 +5,14 @@ import {
 } from 'recharts'
 import ScoreBar from '@/components/ui/ScoreBar'
 import styles from './SummaryTab.module.css'
-import { scoreColor, scorePercent, chartTheme } from '@/lib/utils'
+import { scoreColor, scorePercent } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 import { deriveCognitiveScores } from '@/lib/cognitiveDerived'
-import { benchmarkPos } from '@/lib/expertBenchmarks'
+import { benchmarkPos, hitsByDistanceBand } from '@/lib/expertBenchmarks'
 import { hostageBreakdown, accuracyBreakdown, speedBreakdown } from '@/lib/scoreBreakdowns'
 
 export default function SummaryTab({ session }) {
+  const chartTheme = useChartTheme()
   const perf = session.performance || {}
   const cog  = session.cognitiveSummary || {}
   const cfg  = session.scenarioConfig || {}
@@ -31,6 +33,11 @@ export default function SummaryTab({ session }) {
   const hostageBox  = hostageBreakdown(session)
   const accuracyBox = accuracyBreakdown(session)
   const speedBox    = speedBreakdown(session)
+
+  // Where a trainee's hits landed by NYPD SOP-9 distance band, with the expert/novice
+  // hit-rate context at each range — see lib/expertBenchmarks.js for why this is a hit
+  // distribution, not a computed rate per band (only hits carry a recorded distance).
+  const distanceBands = hitsByDistanceBand(session)
 
   // Operator (player) safety is only present on sessions recorded after the feature shipped.
   const hasOp = perf.operatorSafetyScore != null
@@ -131,7 +138,7 @@ export default function SummaryTab({ session }) {
         </div>
       )}
 
-      <ScoreBox {...accuracyBox} title="Accuracy — how well you shot" />
+      <ScoreBox {...accuracyBox} title="Accuracy — how well you shot" distanceBands={distanceBands} />
 
       <ScoreBox {...speedBox} title="Speed — how quickly you worked" />
 
@@ -203,7 +210,7 @@ export default function SummaryTab({ session }) {
 
 // A full score box mirroring the Operator Safety box: title + explainer, the overall score
 // and its sub-parameters as bars, then a real-world expert comparison at the bottom.
-function ScoreBox({ title, subtitle, overall, overallLabel, subs = [], expert, emptyNote, expertNote }) {
+function ScoreBox({ title, subtitle, overall, overallLabel, subs = [], expert, emptyNote, expertNote, distanceBands }) {
   const shown = subs.filter(s => s.value != null)
   return (
     <div className={styles.card} style={{ marginBottom: 16 }}>
@@ -228,6 +235,8 @@ function ScoreBox({ title, subtitle, overall, overallLabel, subs = [], expert, e
         <p style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic', margin: '10px 0 0' }}>{emptyNote}</p>
       )}
 
+      {distanceBands && <DistanceBandTable data={distanceBands} />}
+
       {expert && <ExpertCompare {...expert} />}
 
       {expertNote && (
@@ -236,6 +245,66 @@ function ScoreBox({ title, subtitle, overall, overallLabel, subs = [], expert, e
           {expertNote}
         </p>
       )}
+    </div>
+  )
+}
+
+// Where a trainee's hits landed by NYPD SOP-9 distance band, with the expert/novice hit-rate
+// at each range shown for context. NOT a hit-rate computed per band — only hits carry a
+// recorded distance (a miss never reaches NPCHitBox), so this is a hit distribution, and
+// says so plainly rather than implying a rate this session's data can't actually support.
+function DistanceBandTable({ data }) {
+  const { bands, exact, totalHits } = data
+  if (!bands.length) {
+    return (
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', marginBottom: 4 }}>
+          Hits by engagement range
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+          {totalHits === 0 ? 'No hits this session — nothing to break down by range.' : 'No per-hit distance recorded for this session.'}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted)', marginBottom: 6 }}>
+        Hits by engagement range
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', fontWeight: 600, color: 'var(--muted)', fontSize: 11, paddingBottom: 5 }}>Range</th>
+            <th style={{ textAlign: 'right', fontWeight: 600, color: 'var(--muted)', fontSize: 11, paddingBottom: 5 }}>Your hits</th>
+            <th style={{ textAlign: 'right', fontWeight: 600, color: 'var(--muted)', fontSize: 11, paddingBottom: 5 }}>Expert rate here</th>
+            <th style={{ textAlign: 'right', fontWeight: 600, color: 'var(--muted)', fontSize: 11, paddingBottom: 5 }}>Novice rate here</th>
+          </tr>
+        </thead>
+        <tbody>
+          {bands.map(b => (
+            <tr key={b.label}>
+              <td style={{ padding: '3px 0', color: 'var(--text)' }}>{b.label}</td>
+              <td style={{ padding: '3px 0', textAlign: 'right', color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                {b.count} <span style={{ color: 'var(--muted)' }}>({Math.round(b.pct * 100)}%)</span>
+              </td>
+              <td style={{ padding: '3px 0', textAlign: 'right', color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>
+                {Math.round(b.expert * 100)}%
+              </td>
+              <td style={{ padding: '3px 0', textAlign: 'right', color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>
+                {Math.round(b.novice * 100)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.4, opacity: 0.85 }}>
+        {exact ? 'Measured' : 'Estimated from replay'} distance per hit, {totalHits} hit{totalHits === 1 ? '' : 's'} total.
+        Shows WHERE this session's hits landed by range — a miss doesn't record a distance, so this
+        isn't a hit-rate per band, just where the successful shots came from, next to how hard a real
+        officer finds each range (NYPD SOP-9).
+      </div>
     </div>
   )
 }
@@ -264,7 +333,7 @@ function ExpertCompare({ label, value, valueText, b, note }) {
         {pos && (
           <div style={{
             position: 'absolute', top: -3, left: `calc(${(pos.pct * 100).toFixed(0)}% - 2px)`,
-            width: 4, height: 13, borderRadius: 2, background: pos.color, boxShadow: '0 0 0 2px #0d1117',
+            width: 4, height: 13, borderRadius: 2, background: pos.color, boxShadow: '0 0 0 2px var(--bg)',
           }} />
         )}
       </div>

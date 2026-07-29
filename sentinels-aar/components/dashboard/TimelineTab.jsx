@@ -4,11 +4,13 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer
 } from 'recharts'
 import styles from './TimelineTab.module.css'
-import { formatTime, categoryColor, chartTheme } from '@/lib/utils'
+import { formatTime, categoryColor } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 
 const CATEGORY_ORDER = ['Combat', 'Movement', 'Communication', 'Cognitive', 'System', 'Other']
 
 export default function TimelineTab({ session }) {
+  const chartTheme = useChartTheme()
   const events = session.events || []
   const duration = session.performance?.missionDuration || 1
 

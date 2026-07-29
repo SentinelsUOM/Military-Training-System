@@ -3,12 +3,13 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
 } from 'recharts'
 import styles from './SimTlxTrend.module.css'
-import { chartTheme } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 import { SIM_TLX_COMPOSITES, SIM_TLX_COLORS } from '@/lib/simTlx'
 
 // Workload trend across the sessions currently loaded on the overview page.
 // One line per tracked SIM-TLX composite plus the overall workload index.
 export default function SimTlxTrend({ sessions }) {
+  const chartTheme = useChartTheme()
   const rated = (sessions || [])
     .filter(s => s.simTlx?.derived?.overallWorkload != null)
     // sessions arrive newest-first; the time axis reads left → right

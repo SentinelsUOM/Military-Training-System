@@ -15,8 +15,16 @@ const LEVEL_ALIASES = { dumb: 'basic', medium: 'intermediate', full: 'advanced' 
 
 // The survey sub-scale means we compare (from aiEval.derived, see lib/aiEval.js).
 const SURVEY_KEYS = ['perceivedIntelligence', 'animacy', 'realism', 'ueqPragmatic', 'ueqHedonic']
-// The objective metrics we compare (from the session's own telemetry).
-const METRIC_KEYS = ['reactionTime', 'accuracy', 'enemyAccuracy', 'duration', 'overallScore']
+// The objective metrics we compare (from the session's own telemetry). The last three
+// (safetyScore/speedScore/operatorSafetyScore) are Module 4's OWN scores — everything
+// before them belongs to Module 2/3 (AI behaviour, cognitive telemetry). See METRIC_KEYS
+// vs MODULE4_SCORE_KEYS below.
+const METRIC_KEYS = ['reactionTime', 'accuracy', 'enemyAccuracy', 'duration', 'overallScore', 'safetyScore', 'speedScore', 'operatorSafetyScore']
+// Module 4's own 5 scores specifically (subset of METRIC_KEYS) — used to build the
+// "Module 4 Score Validity" panel and the repeated-trial / expert-benchmark sections.
+const MODULE4_SCORE_KEYS = ['overallScore', 'safetyScore', 'accuracy', 'speedScore', 'operatorSafetyScore']
+
+const round3 = (n) => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n)
 
 function metricsOf(s) {
   const p = s.performance || {}
@@ -29,9 +37,13 @@ function metricsOf(s) {
     accuracy,
     enemyAccuracy,
     duration:     p.missionDuration ?? null,
-    overallScore: p.overallScore ?? null,
+    overallScore: round3(p.overallScore) ?? null,
     missionSuccess: p.missionSuccess ?? null,
-    friendlyFire: p.friendlyFireCount ?? null
+    friendlyFire: p.friendlyFireCount ?? null,
+    // Module 4's own scores (0-1 scale, unlike the percentage-formatted accuracy above).
+    safetyScore:         round3(p.safetyScore) ?? null,
+    speedScore:          round3(p.speedScore) ?? null,
+    operatorSafetyScore: round3(p.operatorSafetyScore) ?? null
   }
 }
 
@@ -57,13 +69,14 @@ export async function GET() {
       playerId: { $nin: [null, ''] },
       npcLevel: { $nin: [null, ''] }
     })
-      .select('sessionId playerId npcLevel performance cognitiveSummary aiEval.derived simTlx.derived createdAt')
+      .select('sessionId playerId npcLevel performance cognitiveSummary aiEval.derived simTlx.derived createdAt trialIndex')
       .sort({ createdAt: -1 })
       .lean()
 
     // ── Group by player, keep the most-recent session per level ────────────
     const byPlayer = {}
     const perLevel = { basic: [], intermediate: [], advanced: [] } // for averages
+    const byPlayerLevel = {} // ALL sessions per player+level, for the repeated-trial section
 
     for (const s of sessions) {
       let lvl = String(s.npcLevel).toLowerCase()
@@ -81,6 +94,10 @@ export async function GET() {
 
       byPlayer[s.playerId] = byPlayer[s.playerId] || { playerId: s.playerId, levels: {} }
       if (!byPlayer[s.playerId].levels[lvl]) byPlayer[s.playerId].levels[lvl] = play // newest first
+
+      const key = `${s.playerId}::${lvl}`
+      byPlayerLevel[key] = byPlayerLevel[key] || { playerId: s.playerId, level: lvl, trials: [] }
+      byPlayerLevel[key].trials.push(play)
     }
 
     const players = Object.values(byPlayer).sort((a, b) => a.playerId.localeCompare(b.playerId))
@@ -96,8 +113,19 @@ export async function GET() {
       averages[lvl] = { n: plays.length, survey, metrics, workload: mean(plays.map(p => p.workload)) }
     }
 
+    // ── Repeated trials: same player + same level, played more than once ───
+    // Sorted oldest→newest (trial 1, 2, 3…) since that's the natural reading order.
+    // No filtering beyond "played the same level more than once" — an earlier attempt to
+    // filter by "has a completed survey" turned out not to reliably separate real study
+    // plays from leftover dev-test sessions (some dev sessions DO have a survey attached
+    // from earlier UI testing), so this shows exactly what the data says, honestly.
+    const retests = Object.values(byPlayerLevel)
+      .filter(g => g.trials.length > 1)
+      .map(g => ({ ...g, trials: [...g.trials].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)) }))
+      .sort((a, b) => a.playerId.localeCompare(b.playerId) || a.level.localeCompare(b.level))
+
     return NextResponse.json(
-      { players, averages, surveyKeys: SURVEY_KEYS, metricKeys: METRIC_KEYS },
+      { players, averages, retests, surveyKeys: SURVEY_KEYS, metricKeys: METRIC_KEYS, module4ScoreKeys: MODULE4_SCORE_KEYS },
       { headers: corsHeaders }
     )
   } catch (err) {

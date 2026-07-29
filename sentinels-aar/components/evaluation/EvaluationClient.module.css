@@ -1,5 +1,5 @@
-.page { min-height: 100vh; background: var(--bg, #0d1117); padding: 2rem 1rem; }
-.wrap { max-width: 900px; margin: 0 auto; }
+.page { min-height: 100vh; background: var(--bg, #0d1117); padding: 2rem clamp(1rem, 3vw, 2.5rem) 3rem; }
+.wrap { max-width: var(--content-max, 1680px); margin: 0 auto; }
 
 .head {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap;
@@ -17,7 +17,7 @@
 .btn:hover:not(:disabled), .linkBtn:hover { border-color: var(--accent, #3987e5); color: var(--text, #e6edf3); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 
-.section { background: var(--surface, #161b22); border: 1px solid var(--border, #2a2f38); border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+.section { background: var(--surface, #161b22); border: 1px solid var(--border, #2a2f38); border-radius: var(--radius-lg, 14px); box-shadow: var(--shadow-card); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
 .sectionHead { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: .75rem; }
 .h2 { font-size: 1.05rem; color: var(--text, #e6edf3); margin: 0 0 .75rem; }
 .sectionHead .h2 { margin: 0; }
@@ -43,7 +43,7 @@
 /* ── Statistics panel ─────────────────────────────────────────────── */
 .stats { display: flex; flex-direction: column; gap: 1rem; }
 .statsIntro { color: var(--text-dim, #b9c2cc); font-size: .82rem; line-height: 1.6; margin: 0 0 .25rem; }
-.statBlock { border: 1px solid var(--border, #2a2f38); border-radius: 10px; padding: .85rem 1rem; background: rgba(255,255,255,.015); }
+.statBlock { border: 1px solid var(--border, #2a2f38); border-radius: 10px; padding: .85rem 1rem; background: var(--surface-2); }
 .statHead { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: .45rem; }
 .statTitle { font-weight: 700; color: var(--text, #e6edf3); font-size: .95rem; }
 .statMeta { color: var(--text-muted, #8b949e); font-size: .75rem; }
@@ -55,6 +55,47 @@
 .pairTable tr:last-child td { border-bottom: none; }
 .alphaNote { color: var(--text-muted, #8b949e); font-size: .72rem; margin-top: .4rem; }
 
+/* ── Module tab bar ────────────────────────────────────────────────── */
+.tabBar { display: flex; gap: .4rem; margin-bottom: 1.25rem; flex-wrap: wrap; border-bottom: 1px solid var(--border, #2a2f38); }
+.tabBtn {
+  padding: .55rem 1rem; font-size: .82rem; font-weight: 600; cursor: pointer;
+  border: none; border-bottom: 2px solid transparent; background: transparent;
+  color: var(--text-muted, #8b949e); transition: all .12s ease; margin-bottom: -1px;
+}
+.tabBtn:hover { color: var(--text-dim, #b9c2cc); }
+.tabBtnActive { color: var(--accent, #3987e5); border-bottom-color: var(--accent, #3987e5); }
+
+/* Each module's full section stack. Non-active tabs are hidden on screen but kept in
+   the DOM (not conditionally unmounted) so print can reveal all three sequentially —
+   see @media print below. */
+.tabBody { }
+.tabBodyHidden { display: none; }
+
+/* Shown only when printing — gives each module section a heading in the printed
+   document even though on-screen that's carried by the tab bar instead. */
+.printOnlyHeading { display: none; }
+
+/* ── Expert-benchmark comparison (novice→expert bar) ─────────────────── */
+.benchGrid { display: flex; flex-direction: column; gap: .9rem; }
+.benchRow { }
+.benchLabelRow { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .3rem; }
+.benchLabel { font-size: .85rem; color: var(--text-dim, #b9c2cc); font-weight: 600; flex: 1; }
+.benchValue { font-size: .95rem; font-weight: 700; color: var(--text, #e6edf3); font-variant-numeric: tabular-nums; }
+.benchVerdict {
+  font-size: .68rem; font-weight: 700; border: 1px solid currentColor; border-radius: 4px;
+  padding: 1px 7px; text-transform: uppercase; letter-spacing: .04em;
+}
+.benchBar {
+  position: relative; height: 7px; border-radius: 4px;
+  background: linear-gradient(90deg, #f87171, #fbbf24, #34d399); opacity: .45;
+}
+.benchBarFill {
+  position: absolute; top: -3px; width: 4px; height: 13px; border-radius: 2px;
+  background: var(--accent, #3987e5); box-shadow: 0 0 0 2px var(--bg, #0d1117);
+  transform: translateX(-2px);
+}
+.benchMeta { font-size: .72rem; color: var(--text-muted, #8b949e); margin-top: .3rem; }
+
 @media print {
   .page { background: #fff; color: #000; }
   .actions, .linkBtn, .btn { display: none !important; }
@@ -64,4 +105,17 @@
   .table th, .table td, .pairTable td { border-color: #ccc; }
   .groupRow td { background: #f0f0f0 !important; }
   .sig { color: #0a7a44 !important; }
+  .benchLabel, .benchValue { color: #000 !important; }
+  .benchMeta { color: #333 !important; }
+  .benchBarFill { box-shadow: 0 0 0 2px #fff; }
+
+  /* The whole point of print: show all three module sections in sequence, not just
+     whichever tab happened to be active on screen. */
+  .tabBar { display: none !important; }
+  .tabBodyHidden { display: block !important; }
+  .printOnlyHeading {
+    display: block !important; font-size: 1.3rem; color: #000 !important;
+    margin: 1.5rem 0 .75rem; padding-top: 1.5rem; border-top: 2px solid #000;
+  }
+  .tabBody:first-child .printOnlyHeading { border-top: none; padding-top: 0; margin-top: 0; }
 }

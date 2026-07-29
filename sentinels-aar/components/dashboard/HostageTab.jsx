@@ -4,7 +4,8 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine
 } from 'recharts'
 import styles from './HostageTab.module.css'
-import { formatTime, stateColor, chartTheme } from '@/lib/utils'
+import { formatTime, stateColor } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 
 // ── Research-grounded state model ───────────────────────────────────────────
 // Each state's `pct` (distress-index contribution) and `justification` are grounded in
@@ -163,6 +164,7 @@ function DistressChartTooltip({ active, payload, label }) {
 }
 
 export default function HostageTab({ session }) {
+  const chartTheme = useChartTheme()
   const history = session.hostageHistory || []
   const duration = session.performance?.missionDuration || 1
 

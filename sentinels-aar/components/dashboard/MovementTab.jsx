@@ -6,7 +6,8 @@ import {
 } from 'recharts'
 import MetricCard from '@/components/ui/MetricCard'
 import styles from './MovementTab.module.css'
-import { formatTime, chartTheme } from '@/lib/utils'
+import { formatTime } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 import { evaluateMovementAgainstExperts, CITATIONS } from '@/lib/movementBenchmarks'
 
 const CROUCH_THRESHOLD = 0.35
@@ -27,23 +28,23 @@ function ChartCard({ title, children }) {
   )
 }
 
-const axisProps = {
-  stroke: chartTheme.label,
-  tick: { fill: chartTheme.label, fontSize: 11 },
-  tickLine: false,
-}
-
-const tooltipProps = {
-  contentStyle: {
-    background: chartTheme.tooltip,
-    border: '1px solid var(--border)',
-    borderRadius: 6,
-    fontSize: 12,
-  },
-  labelFormatter: (t) => `t = ${formatTime(t)}`,
-}
-
 export default function MovementTab({ session }) {
+  const chartTheme = useChartTheme()
+  const axisProps = {
+    stroke: chartTheme.label,
+    tick: { fill: chartTheme.label, fontSize: 11 },
+    tickLine: false,
+  }
+  const tooltipProps = {
+    contentStyle: {
+      background: chartTheme.tooltip,
+      border: '1px solid var(--border)',
+      borderRadius: 6,
+      fontSize: 12,
+    },
+    labelFormatter: (t) => `t = ${formatTime(t)}`,
+  }
+
   const track = session.movementTrack
   const samples = track?.samples || []
   const stats = track?.stats || {}
@@ -278,6 +279,12 @@ const CHANNEL_BENCH_KEY = {
 }
 
 function ReactionSection({ track, bench }) {
+  const chartTheme = useChartTheme()
+  const axisProps = {
+    stroke: chartTheme.label,
+    tick: { fill: chartTheme.label, fontSize: 11 },
+    tickLine: false,
+  }
   const reactions = track?.reactions || []
   const rs = track?.reactionStats || {}
 
@@ -488,7 +495,7 @@ function PathMap({ samples, layout }) {
           ))}
           {doors.map((d, i) => (
             <circle key={i} cx={sx(d.x)} cy={sy(d.z)} r={strokeW * 2}
-              fill="none" stroke="#8b949e" strokeWidth={strokeW * 0.6} />
+              fill="none" stroke="var(--muted)" strokeWidth={strokeW * 0.6} />
           ))}
           {walkPts.length > 1 && (
             <polyline points={walkPts.join(' ')} fill="none"
@@ -502,11 +509,11 @@ function PathMap({ samples, layout }) {
           ))}
           {start && (
             <circle cx={sx(start.head.x)} cy={sy(start.head.z)} r={strokeW * 3}
-              fill="#3fb950" stroke="#0d1117" strokeWidth={strokeW * 0.8} />
+              fill="#3fb950" stroke="var(--bg)" strokeWidth={strokeW * 0.8} />
           )}
           {end && (
             <circle cx={sx(end.head.x)} cy={sy(end.head.z)} r={strokeW * 3}
-              fill="#f85149" stroke="#0d1117" strokeWidth={strokeW * 0.8} />
+              fill="#f85149" stroke="var(--bg)" strokeWidth={strokeW * 0.8} />
           )}
         </svg>
       </div>

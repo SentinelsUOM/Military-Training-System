@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AI_EVAL_SCALES, AI_EVAL_ITEM_COUNT } from '@/lib/aiEval'
 import { formatTime } from '@/lib/utils'
+import ThemeToggle from '@/components/ui/ThemeToggle'
 import styles from './AiEvalClient.module.css'
 
 // Sessions the trainee explicitly skipped for the AI-Eval survey.
@@ -101,6 +102,7 @@ export default function AiEvalClient({ session, onComplete, onSkip, onExit, onBa
   return (
     <div className={styles.page}>
       <div className={styles.card}>
+        <div className={styles.themeRow}><ThemeToggle /></div>
         <header className={styles.header}>
           <div>
             <div className={styles.kicker}>Mission Debrief</div>

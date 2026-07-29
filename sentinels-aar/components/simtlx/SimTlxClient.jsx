@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { SIM_TLX_DIMENSIONS, SIM_TLX_SCALE_MAX } from '@/lib/simTlx'
 import { formatTime } from '@/lib/utils'
+import ThemeToggle from '@/components/ui/ThemeToggle'
 import styles from './SimTlxClient.module.css'
 
 // Sessions the trainee explicitly skipped — the home page reads this to stop
@@ -120,6 +121,7 @@ export default function SimTlxClient({ session, onComplete, onSkip, submitLabel,
   return (
     <div className={styles.page}>
       <div className={styles.card}>
+        <div className={styles.themeRow}><ThemeToggle /></div>
         <header className={styles.header}>
           <div>
             <div className={styles.kicker}>Mission Debrief</div>

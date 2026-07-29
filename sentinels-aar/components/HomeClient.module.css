@@ -1,7 +1,7 @@
 .page {
-  max-width: 1200px;
+  max-width: var(--content-max, 1680px);
   margin: 0 auto;
-  padding: 2rem 1.5rem;
+  padding: 2rem clamp(1.25rem, 3vw, 2.5rem) 3rem;
 }
 
 .header {
@@ -56,15 +56,26 @@
 
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 0.85rem;
+  margin-bottom: 2.25rem;
+}
+
+/* Below this, forcing every tile onto one row makes them too narrow to read —
+   fall back to wrapping so tablet/mobile stays legible. */
+@media (max-width: 1000px) {
+  .statsGrid {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
 }
 
 .tableSection {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 

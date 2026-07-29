@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import styles from './MissionLauncher.module.css'
+import ThemeToggle from '@/components/ui/ThemeToggle'
 import {
   DEFAULT_CONFIG,
   ENTRY_TYPES,
@@ -170,7 +171,10 @@ export default function MissionLauncher({ open, onClose }) {
       <div className={styles.panel} onClick={e => e.stopPropagation()}>
         <header className={styles.head}>
           <h2 id="ml-title" className={styles.title}>Scenario Configuration</h2>
-          <button className={styles.closeBtn} onClick={onClose} aria-label="Close">✕</button>
+          <div className={styles.headActions}>
+            <ThemeToggle />
+            <button className={styles.closeBtn} onClick={onClose} aria-label="Close">✕</button>
+          </div>
         </header>
 
         {/* ── Server connection ────────────────────────────────────────── */}
