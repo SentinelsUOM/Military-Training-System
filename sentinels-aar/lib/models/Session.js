@@ -226,7 +226,10 @@ const SessionSchema = new mongoose.Schema(
       sourceActorId:String,
       targetActorId:String,
       roomId:       String,
-      tags:         [String]
+      tags:         [String],
+      // Shooter↔target range at the moment of a hit; -1/absent = not captured.
+      // Used for distance-aware accuracy — see PerformanceCalculator.cs.
+      distance:     Number
     }],
 
     npcStateChanges: [{

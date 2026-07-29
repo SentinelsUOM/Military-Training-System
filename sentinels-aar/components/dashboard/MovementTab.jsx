@@ -7,6 +7,7 @@ import {
 import MetricCard from '@/components/ui/MetricCard'
 import styles from './MovementTab.module.css'
 import { formatTime, chartTheme } from '@/lib/utils'
+import { evaluateMovementAgainstExperts, CITATIONS } from '@/lib/movementBenchmarks'
 
 const CROUCH_THRESHOLD = 0.35
 
@@ -78,6 +79,7 @@ export default function MovementTab({ session }) {
   const weaponPct = duration > 0 ? Math.round(((stats.timeWeaponHeld || 0) / duration) * 100) : 0
   const movingPct = duration > 0 ? Math.round(((stats.timeMoving || 0) / duration) * 100) : 0
   const handTravel = (stats.leftHandDistance || 0) + (stats.rightHandDistance || 0)
+  const bench = evaluateMovementAgainstExperts(session)
 
   return (
     <div className={styles.wrap}>
@@ -95,6 +97,7 @@ export default function MovementTab({ session }) {
           unit=" m/s"
           color="var(--accent)"
           subtitle={`peak ${(stats.maxSpeed || 0).toFixed(2)} m/s`}
+          benchmark={bench.avgSpeed}
         />
         <MetricCard
           label="Time Crouched"
@@ -102,6 +105,7 @@ export default function MovementTab({ session }) {
           unit=""
           color="#d29922"
           subtitle={`${stats.crouchCount || 0} crouch events`}
+          benchmark={bench.timeCrouched}
         />
         <MetricCard
           label="Head Scanning"
@@ -109,6 +113,7 @@ export default function MovementTab({ session }) {
           unit="°"
           color="#bc8cff"
           subtitle={`avg ${(stats.avgAngSpeed || 0).toFixed(0)}°/s · peak ${(stats.peakAngSpeed || 0).toFixed(0)}°/s`}
+          benchmark={bench.headScanning}
         />
         <MetricCard
           label="Weapon In Hand"
@@ -116,6 +121,7 @@ export default function MovementTab({ session }) {
           unit=""
           color="#3fb950"
           subtitle={`${weaponPct}% of mission`}
+          benchmark={bench.weaponHeldPct}
         />
         <MetricCard
           label="Hand Travel"
@@ -123,10 +129,11 @@ export default function MovementTab({ session }) {
           unit=" m"
           color="#58a6ff"
           subtitle={`L ${(stats.leftHandDistance || 0).toFixed(1)} m · R ${(stats.rightHandDistance || 0).toFixed(1)} m`}
+          benchmark={bench.handTravel}
         />
       </div>
 
-      <ReactionSection track={track} />
+      <ReactionSection track={track} bench={bench} />
 
       <PathMap samples={samples} layout={session.layout} />
 
@@ -189,6 +196,39 @@ export default function MovementTab({ session }) {
           </ResponsiveContainer>
         </ChartCard>
       </div>
+
+      <BenchmarkSources bench={bench} />
+    </div>
+  )
+}
+
+/** Lists only the citations actually backing a benchmark shown above. */
+function BenchmarkSources({ bench }) {
+  const usedIds = new Set()
+  Object.values(bench).forEach(entry => (entry.citationIds || []).forEach(id => usedIds.add(id)))
+  if (!usedIds.size) return null
+
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>Expert Benchmark Sources</h3>
+      <ul className={styles.sourceList}>
+        {[...usedIds].map(id => {
+          const c = CITATIONS[id]
+          if (!c) return null
+          return (
+            <li key={id} className={styles.sourceItem}>
+              <a href={c.url} target="_blank" rel="noopener noreferrer">
+                {c.authors}{c.year ? ` (${c.year})` : ''} — {c.title}
+              </a>
+              <p className={styles.sourceFinding}>{c.finding}</p>
+            </li>
+          )
+        })}
+      </ul>
+      <p className={styles.empty}>
+        A = direct empirical match · B = literature proxy · C = no quantified literature (shown unvalidated).
+        See MODULE4_MOVEMENT_VALIDATION_METHODOLOGY.md for the full derivation of every range.
+      </p>
     </div>
   )
 }
@@ -211,7 +251,33 @@ const CHANNEL_LABELS = {
  * shot at / engaged); its height is how long the trainee took to respond and
  * its color shows which body channel responded first.
  */
-function ReactionSection({ track }) {
+const STIMULUS_LABELS = {
+  PlayerSeen: 'Spotted by enemy',
+  GunshotHeard: 'Gunshot heard',
+  TargetConfirmed: 'Target confirmed',
+}
+
+function ReactionTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const p = payload[0].payload
+  return (
+    <div className={styles.reactionTooltip}>
+      <div className={styles.reactionTooltipEvent}>{STIMULUS_LABELS[p.stimulus] || p.stimulus}</div>
+      <div>{p.actor} · at {formatTime(p.t)}</div>
+      <div>reacted in {p.rt.toFixed(2)} s ({CHANNEL_LABELS[p.channel] || p.channel})</div>
+      {typeof p.angle === 'number' && <div>gaze offset {Math.round(p.angle)}°</div>}
+    </div>
+  )
+}
+
+const CHANNEL_BENCH_KEY = {
+  head: 'reactionHead',
+  hands: 'reactionHands',
+  movement: 'reactionMovement',
+  trigger: 'reactionTrigger',
+}
+
+function ReactionSection({ track, bench }) {
   const reactions = track?.reactions || []
   const rs = track?.reactionStats || {}
 
@@ -232,7 +298,7 @@ function ReactionSection({ track }) {
     channel: ch,
     data: responded
       .filter(r => r.channel === ch)
-      .map(r => ({ t: r.t, rt: r.reactionTime, stimulus: r.stimulus, actor: r.actor, angle: r.angleToThreat })),
+      .map(r => ({ t: r.t, rt: r.reactionTime, stimulus: r.stimulus, actor: r.actor, angle: r.angleToThreat, channel: r.channel })),
   })).filter(g => g.data.length > 0)
 
   const channelCounts = [
@@ -252,6 +318,7 @@ function ReactionSection({ track }) {
           unit=" s"
           color="var(--accent)"
           subtitle={`median ${(rs.medianReactionTime || 0).toFixed(2)} s`}
+          benchmark={bench?.reactionOverall}
         />
         <MetricCard
           label="Best Reaction"
@@ -266,6 +333,7 @@ function ReactionSection({ track }) {
           unit=""
           color={rs.missedCount > 0 ? '#d29922' : '#3fb950'}
           subtitle={`${rs.missedCount || 0} missed · avg gaze offset ${Math.round(rs.avgAngleToThreat || 0)}°`}
+          benchmark={bench?.threatsResponded}
         />
         <MetricCard
           label="Primary Response"
@@ -275,6 +343,8 @@ function ReactionSection({ track }) {
           subtitle={channelCounts.map(([l, n]) => `${l} ${n}`).join(' · ')}
         />
       </div>
+
+      {bench && <ChannelBenchmarkStrip byChannel={byChannel} bench={bench} />}
 
       <div className={styles.card}>
         <h3 className={styles.cardTitle}>
@@ -301,9 +371,8 @@ function ReactionSection({ track }) {
                                label={{ value: 'avg', fill: chartTheme.label, fontSize: 10, position: 'right' }} />
               )}
               <Tooltip
-                {...tooltipProps}
                 cursor={{ strokeDasharray: '3 3' }}
-                formatter={(v, name) => name === 'reaction' ? [`${v.toFixed(2)} s`, 'reaction'] : [formatTime(v), 'at']}
+                content={<ReactionTooltip />}
               />
               {byChannel.map(g => (
                 <Scatter key={g.channel} name={CHANNEL_LABELS[g.channel]}
@@ -314,6 +383,40 @@ function ReactionSection({ track }) {
         </div>
       </div>
     </>
+  )
+}
+
+/** Per-channel reaction time vs. its literature-derived expert band. */
+function ChannelBenchmarkStrip({ byChannel, bench }) {
+  const rows = byChannel
+    .map(g => {
+      const key = CHANNEL_BENCH_KEY[g.channel]
+      const b = bench[key]
+      if (!b || b.severity === 'unvalidated') return null
+      const avg = g.data.reduce((sum, d) => sum + d.rt, 0) / g.data.length
+      return { channel: g.channel, avg, b }
+    })
+    .filter(Boolean)
+
+  if (!rows.length) return null
+
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>Reaction Time by Channel vs. Expert Benchmark</h3>
+      <div className={styles.benchRowGrid}>
+        {rows.map(({ channel, avg, b }) => (
+          <div key={channel} className={styles.benchRow}>
+            <span className={styles.benchRowLabel}>
+              <i style={{ background: CHANNEL_COLORS[channel] }} /> {CHANNEL_LABELS[channel]}
+            </span>
+            <span className={styles.benchRowValue}>{avg.toFixed(2)} s</span>
+            <span className={`${styles.benchRowVerdict} ${styles[b.severity === 'good' ? 'benchmarkWithin' : 'benchmarkOff']}`}>
+              expert {b.rangeText} · {b.verdict}<sup>{b.tier}</sup>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

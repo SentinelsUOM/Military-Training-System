@@ -9,6 +9,7 @@ import {
   SIM_TLX_DIMENSIONS, SIM_TLX_COMPOSITES, SIM_TLX_SCALE_MAX,
   SIM_TLX_COLORS, workloadColor
 } from '@/lib/simTlx'
+import { evaluateWorkloadReasoning, CITATIONS } from '@/lib/workloadReasoning'
 
 export default function SimTlxTab({ session }) {
   const simTlx = session.simTlx
@@ -41,6 +42,8 @@ export default function SimTlxTab({ session }) {
     fill: dimColor[d.key] || '#8b949e'
   }))
 
+  const reasoning = evaluateWorkloadReasoning(session)
+
   return (
     <div className={styles.wrap}>
       <div className={styles.compositeGrid}>
@@ -69,6 +72,9 @@ export default function SimTlxTab({ session }) {
           </div>
         </div>
       </div>
+
+      {reasoning && <WorkloadReasoningCard reasoning={reasoning} />}
+      {reasoning && <PredictionCard reasoning={reasoning} />}
 
       <div className={styles.card}>
         <div className={styles.cardHeader}>
@@ -151,6 +157,100 @@ export default function SimTlxTab({ session }) {
           </table>
         </div>
       </div>
+
+      {reasoning && <WorkloadSources reasoning={reasoning} />}
+    </div>
+  )
+}
+
+const COMPOSITE_META = Object.fromEntries(SIM_TLX_COMPOSITES.map(c => [c.key, c]))
+
+const ZONE_SEVERITY_CLASS = {
+  'under-aroused': 'benchmarkOff',
+  'optimal': 'benchmarkWithin',
+  'overload-risk': 'benchmarkOff',
+}
+
+/** Session-specific "why" factors per composite, from lib/workloadReasoning.js. */
+function WorkloadReasoningCard({ reasoning }) {
+  const entries = Object.entries(reasoning.perComposite)
+  if (!entries.some(([, factors]) => factors.length > 0)) return null
+
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>Why This Session&apos;s Workload</h3>
+      <div className={styles.reasonGrid}>
+        {entries.map(([key, factors]) => {
+          if (!factors.length) return null
+          const meta = COMPOSITE_META[key]
+          return (
+            <div key={key} className={styles.reasonGroup}>
+              <div className={styles.reasonGroupLabel} style={{ color: meta.color }}>{meta.label}</div>
+              <ul className={styles.reasonList}>
+                {factors.map((f, i) => (
+                  <li key={i} className={styles.reasonItem}>
+                    {f.text}
+                    {f.citationIds.length > 0 && (
+                      <span className={styles.reasonCite}>
+                        {' '}({f.citationIds.map(id => `${CITATIONS[id].authors.split(/[, ]/)[0]} ${CITATIONS[id].year}`).join('; ')})
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Predicted performance zone from overall workload, checked against this session's own outcome. */
+function PredictionCard({ reasoning }) {
+  const { prediction, predictionCheck } = reasoning
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>Predicted Performance Zone</h3>
+      <div className={`${styles.predictionZone} ${styles[ZONE_SEVERITY_CLASS[prediction.zone]]}`}>
+        {prediction.label}
+      </div>
+      <p className={styles.predictionRationale}>{prediction.rationale}</p>
+      <p className={`${styles.predictionCheck} ${predictionCheck.matched ? styles.checkGood : styles.checkUnclear}`}>
+        {predictionCheck.note}
+      </p>
+    </div>
+  )
+}
+
+/** Lists only the citations actually backing a factor/prediction shown above. */
+function WorkloadSources({ reasoning }) {
+  const usedIds = new Set()
+  Object.values(reasoning.perComposite).forEach(factors =>
+    factors.forEach(f => f.citationIds.forEach(id => usedIds.add(id))))
+  reasoning.prediction.citationIds.forEach(id => usedIds.add(id))
+  if (!usedIds.size) return null
+
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.cardTitle}>Workload Research Sources</h3>
+      <ul className={styles.sourceList}>
+        {[...usedIds].map(id => {
+          const c = CITATIONS[id]
+          if (!c) return null
+          return (
+            <li key={id} className={styles.sourceItem}>
+              <a href={c.url} target="_blank" rel="noopener noreferrer">
+                {c.authors} ({c.year}) — {c.title}
+              </a>
+              <p className={styles.sourceFinding}>{c.finding}</p>
+            </li>
+          )
+        })}
+      </ul>
+      <p className={styles.emptySub}>
+        See MODULE4_WORKLOAD_REASONING_METHODOLOGY.md for the full derivation of every rule and threshold.
+      </p>
     </div>
   )
 }

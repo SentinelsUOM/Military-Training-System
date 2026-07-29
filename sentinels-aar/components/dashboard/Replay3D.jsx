@@ -20,7 +20,10 @@ const STATE_COLORS = {
   Engage: '#f85149', Panic: '#f85149', Alert: '#d29922', Fearful: '#d29922',
   Suspicious: '#58a6ff', TakeCover: '#bc8cff', Calm: '#3fb950', Follow: '#3fb950',
   Held: '#d29922', Down: '#6e7681', Idle: '#8b949e', Unknown: '#8b949e',
-  Freeze: '#30363d', Neutralized: '#21262d',
+  // Indigo, not near-black: Freeze is tonic immobility, a hostage response research
+  // ranks more severe than Panic (see HostageTab.jsx STATE_INFO) — it must not tint
+  // as "calm/inactive" in the 3D replay.
+  Freeze: '#818cf8', Neutralized: '#21262d',
 }
 const sane = (v) => Number.isFinite(v) && Math.abs(v) < 5000
 const prettyType = (t) => (t || 'Room').replace(/([a-z])([A-Z])/g, '$1 $2')

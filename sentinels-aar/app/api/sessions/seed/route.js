@@ -299,7 +299,7 @@ export async function POST() {
           { hostageId:'hostage_01', timestamp:0,  state:'Calm',   triggerEvent:'SessionStart',  distressScore:0 },
           { hostageId:'hostage_01', timestamp:11, state:'Fearful',triggerEvent:'GunshotHeard',  distressScore:0.33 },
           { hostageId:'hostage_01', timestamp:27, state:'Panic',  triggerEvent:'NearbyGunfire', distressScore:0.66 },
-          { hostageId:'hostage_01', timestamp:44, state:'Freeze', triggerEvent:'Overwhelmed',   distressScore:0.5 },
+          { hostageId:'hostage_01', timestamp:44, state:'Freeze', triggerEvent:'Overwhelmed',   distressScore:0.72 },
           { hostageId:'hostage_02', timestamp:0,  state:'Calm',   triggerEvent:'SessionStart',  distressScore:0 },
           { hostageId:'hostage_02', timestamp:11, state:'Fearful',triggerEvent:'GunshotHeard',  distressScore:0.33 },
           { hostageId:'hostage_02', timestamp:27, state:'Panic',  triggerEvent:'FriendlyFire',  distressScore:0.66 }
