@@ -321,7 +321,7 @@ namespace TeamSentinels.Module4.Export
         {
             using (var ms = new MemoryStream())
             {
-                using (var gz = new GZipStream(ms, CompressionLevel.Optimal, leaveOpen: true))
+                using (var gz = new GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
                     gz.Write(data, 0, data.Length);
                 return ms.ToArray();
             }
