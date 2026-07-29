@@ -50,7 +50,10 @@ export const stateColor = (state) => {
     TakeCover:    '#bc8cff',
     Calm:         '#3fb950',
     Follow:       '#3fb950',
-    Freeze:       '#30363d',
+    // Indigo, not the near-black used for inactive/neutralized — Freeze here is tonic
+    // immobility, a severe hostage response research shows outranks Panic in distress
+    // (see HostageTab.jsx STATE_INFO), so it must not read as "calm/off" on this map.
+    Freeze:       '#818cf8',
     Held:         '#d29922',   // captivity — amber
     Threatened:   '#f0883e',   // captor's verbal threat — orange
     Wounded:      '#da3633',   // shot but alive — crimson

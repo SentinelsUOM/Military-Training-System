@@ -121,3 +121,130 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
+
+/* Hint that journey segments, legend pills, and the Distress column are hoverable for the
+   research justification behind their score. */
+.hoverable {
+  cursor: help;
+}
+
+.segment.hoverable {
+  cursor: help;
+}
+
+/* Floating research-justification tooltip (journey bar / legend / trigger table) */
+.hoverTip {
+  position: fixed;
+  z-index: 60;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hoverTipTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.hoverTipPct {
+  margin-left: auto;
+  font-family: monospace;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.hoverTipDesc {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.hoverTipWhy {
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.hoverTipWhy strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.hoverTipSource {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-style: italic;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  margin-top: 4px;
+}
+
+/* Distress-over-time chart tooltip (recharts custom content) */
+.chartTip {
+  max-width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.chartTipTime {
+  font-family: monospace;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.chartTipRow {
+  padding: 4px 0;
+}
+
+.chartTipRow + .chartTipRow {
+  border-top: 1px solid var(--border);
+}
+
+.chartTipHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.chartTipDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chartTipId {
+  color: var(--muted);
+}
+
+.chartTipPct {
+  margin-left: auto;
+  font-family: monospace;
+  color: var(--muted);
+}
+
+.chartTipWhy {
+  color: var(--text);
+  margin: 2px 0;
+}
+
+.chartTipSource {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-style: italic;
+}

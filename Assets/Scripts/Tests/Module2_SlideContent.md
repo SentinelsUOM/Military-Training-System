@@ -16,7 +16,7 @@ This reflects what the code ACTUALLY does as of 2026-06-11.
 
 - **Runtime event system** — central EventManager with broadcast/targeted routing, derived events (ShotFired → GunshotHeard → StressSpike on 3+/2s)
 - **Terrorist FSM (full)** — Idle / Suspicious / Alert / TakeCover / Engage / **Retreat** / Down with investigation walk, rotation scan, cover-taking, low-health fallback (retreat once per life), death animation
-- **Hostage FSM (full)** — Calm / Fearful / Panic / Freeze / Follow / Freed with sustained-threat freeze, NavMesh follow, regression detection
+- **Hostage FSM (full)** — Calm / Fearful / Freeze / Panic / Follow / Freed with sustained-threat freeze, NavMesh follow, regression detection
 - **3-ring alert propagation** — Ring 1 squad broadcast (0.3s) · Ring 2 proximity + LOS (1.0s, 15m) · Ring 3 isolated
 - **Multi-factor responder selection** — distance + role + state + **perception (LOS)** scoring; weights are tunable for evaluation
 - **Leader-bias coordination** — Leader-role NPCs broadcast directives to their squad: **Converge** on Alert, **Flank** on Engage (members split to the threat's sides while the Leader holds the front); Hold also supported

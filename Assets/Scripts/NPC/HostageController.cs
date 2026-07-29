@@ -105,14 +105,17 @@ public class HostageController : MonoBehaviour, INPCResponder
     public Vector3 Position         => transform.position;
     public float   LastResponseTime => _lastResponseTime;
 
-    /// State readiness 0.0–1.0 (Calm = most available).
+    /// State readiness 0.0–1.0 (Calm = most available). Freeze ranks at the bottom, below
+    /// Panic: research on tonic immobility (the sustained-threat "Freeze" here) shows it is
+    /// the more severe/incapacitating response, so it should be least available to react to
+    /// a new stimulus — not more available than an actively fleeing (Panic) hostage.
     public float StateScore => currentState switch
     {
         HostageState.Calm    => 1.0f,
         HostageState.Fearful => 0.8f,
         HostageState.Follow  => 0.5f,
-        HostageState.Freeze  => 0.2f,
-        HostageState.Panic   => 0.0f,
+        HostageState.Panic   => 0.2f,
+        HostageState.Freeze  => 0.0f,
         HostageState.Freed   => 0.0f,
         _                    => 0.0f,
     };
