@@ -1092,6 +1092,27 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
         // Kick off the correct initial idle behaviour.
         StartIdleBehaviour();
+
+        // Forward the shooter's read-only fire/hit telemetry onto the event bus so the
+        // dashboard can measure enemy hit-rate per AI level. Pure telemetry — no AI logic
+        // consumes EnemyShotFired/EnemyHitPlayer, so this changes no behaviour.
+        if (shooter != null)
+        {
+            shooter.OnShotFired += HandleEnemyShotFired;
+            shooter.OnPlayerHit += HandleEnemyHitPlayer;
+        }
+    }
+
+    void HandleEnemyShotFired()
+    {
+        EventManager.Instance?.Raise(new ScenarioEvent(
+            ScenarioEventType.EnemyShotFired, transform.position, gameObject));
+    }
+
+    void HandleEnemyHitPlayer()
+    {
+        EventManager.Instance?.Raise(new ScenarioEvent(
+            ScenarioEventType.EnemyHitPlayer, transform.position, gameObject));
     }
 
     void StartIdleBehaviour()
@@ -1130,6 +1151,12 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
         _claimedCover?.Release();
         _claimedCover = null;
+
+        if (shooter != null)
+        {
+            shooter.OnShotFired -= HandleEnemyShotFired;
+            shooter.OnPlayerHit -= HandleEnemyHitPlayer;
+        }
 
         if (_lookAnchor != null) Destroy(_lookAnchor.gameObject);
     }

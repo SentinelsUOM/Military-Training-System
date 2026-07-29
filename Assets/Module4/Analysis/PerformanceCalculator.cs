@@ -22,21 +22,49 @@ namespace TeamSentinels.Module4.Analysis
         /// <param name="hostageHistory">All hostage emotional-state entries.</param>
         /// <param name="missionDuration">Total session time in seconds.</param>
         /// <param name="hostagesTotal">Number of unique hostages in the scenario.</param>
+        /// <param name="npcStateChanges">Optional — used to count distinct terrorists for the
+        /// scenario-normalized speed target. Null/empty falls back to the flat 300 s target.</param>
+        /// <param name="layout">Optional — used to count rooms for the same purpose.</param>
+        /// <param name="npcLevel">Optional enemy-AI tier ("dumb"|"medium"|"full") used as the
+        /// difficulty term — see EvaluationContext.NpcLevel.</param>
         public static PerformanceSummary Calculate(
             List<MissionEvent>      events,
             List<HostageStateEntry> hostageHistory,
             float                   missionDuration,
-            int                     hostagesTotal)
+            int                     hostagesTotal,
+            List<NPCStateChange>    npcStateChanges = null,
+            LayoutSnapshot          layout = null,
+            string                  npcLevel = null)
         {
             events         ??= new List<MissionEvent>();
             hostageHistory ??= new List<HostageStateEntry>();
+            npcStateChanges ??= new List<NPCStateChange>();
 
-            // ── Shot accuracy ────────────────────────────────────────────────
+            // ── Shot accuracy — distance-aware ──────────────────────────────
+            // Raw hits/shots implicitly treats 100% as the target, but real officers under
+            // stress hit ~50% at under 3 m and ~10-15% at 3-7 m (NYPD SOP-9). Scoring against
+            // that curve means a "low" raw number at real range can still be expert-level.
             int totalShots = events.Count(e => e.eventType == "ShotFired");
             int hits       = events.Count(e => e.eventType == "TerroristHit");
             int misses     = totalShots - hits;
 
-            float accuracyScore = Mathf.Clamp01(hits / (float)Mathf.Max(totalShots, 1));
+            float hitRate = totalShots > 0 ? hits / (float)totalShots : 0f;
+
+            var hitDistances = events
+                .Where(e => e.eventType == "TerroristHit" && e.distance >= 0f)
+                .Select(e => e.distance)
+                .ToList();
+            float avgEngagementDistance = hitDistances.Count > 0 ? hitDistances.Average() : -1f;
+
+            float accuracyExpertRate = ExpectedHitRate(avgEngagementDistance);
+            float accuracyScore = totalShots > 0
+                ? Mathf.Clamp01(hitRate / accuracyExpertRate)
+                : 0f;
+
+            // ── Enemy fire (Module-2 evaluation) ─────────────────────────────
+            // Objective measure of how well the terrorist AI shot the trainee.
+            int enemyShots = events.Count(e => e.eventType == "EnemyShotFired");
+            int enemyHits  = events.Count(e => e.eventType == "EnemyHitPlayer");
 
             // ── Hostage safety ───────────────────────────────────────────────
             int hostagesSaved = CountHostagesSaved(hostageHistory);
@@ -44,10 +72,14 @@ namespace TeamSentinels.Module4.Analysis
 
             float safetyScore = (float)hostagesSaved / hostagesTotal;
 
-            // Friendly fire penalty: -0.2 per incident
+            // Friendly-fire penalty — SATURATING, not linear. The Expert Value Table (Piece C)
+            // endorses a steep first-incident penalty with diminishing returns: 39 % / 63 % / 78 %
+            // for 1/2/3 incidents, which fits 1 − 0.61ⁿ. Backed by fratricide research (modern
+            // trained units <2 %, so any incident is a serious red flag). See MODULE4_EVALUATION.md.
             int friendlyFire = events.Count(e =>
                 e.tags != null && e.tags.Contains("friendly_fire"));
-            safetyScore -= friendlyFire * 0.2f;
+            if (friendlyFire > 0)
+                safetyScore *= Mathf.Pow(0.61f, friendlyFire);   // 1→×0.61, 2→×0.372, 3→×0.227
             safetyScore  = Mathf.Clamp01(safetyScore);
 
             // ── Mission success ──────────────────────────────────────────────
@@ -71,9 +103,46 @@ namespace TeamSentinels.Module4.Analysis
 
             bool missionSuccess = hostagesSaved >= 1 && !endedInFailure;
 
-            // ── Speed ────────────────────────────────────────────────────────
-            // Benchmark: 300 s. Anything longer scores 0.
-            float speedScore = 1f - Mathf.Clamp01(missionDuration / 300f);
+            // ── Speed — scenario-normalized target, not a flat 300 s for every mission. ─
+            // Shape follows GOMS/KLM (total task time ≈ sum of subtask times + fixed
+            // overhead) — that model shape is research-backed, the four coefficients below
+            // are NOT independently sourced; they are this project's design defaults (same
+            // status as the earlier operator-safety weights). See MODULE4_EVALUATION.md.
+            //
+            // The terrorist term is deliberately LINEAR, not log-scaled. Hick's Law describes
+            // reaction time for ONE decision among N SIMULTANEOUS options (worth tens–hundreds
+            // of ms) — it does not describe the cumulative time cost of N threats encountered
+            // sequentially over a multi-minute mission. Applying it here would misuse the law
+            // to justify an unrelated coefficient, so it is not used for this term.
+            int roomCount = layout?.rooms?.Count ?? 0;
+            int terroristCount = npcStateChanges
+                .Where(c => c.actorType == "Terrorist")
+                .Select(c => c.actorId)
+                .Distinct()
+                .Count();
+
+            float targetTime;
+            if (roomCount > 0 || terroristCount > 0)
+            {
+                float difficultyBonus = npcLevel switch
+                {
+                    "medium" => SPEED_DIFFICULTY_STEP,
+                    "full"   => SPEED_DIFFICULTY_STEP * 2f,
+                    _        => 0f,   // "dumb", null, or unrecognised
+                };
+                targetTime = SPEED_BASE_SECONDS
+                           + SPEED_PER_ROOM * roomCount
+                           + SPEED_PER_TERRORIST * terroristCount
+                           + difficultyBonus;
+            }
+            else
+            {
+                // No scenario metadata available (old session, ad-hoc test) — keep the
+                // previous flat behaviour instead of dividing by a near-zero target.
+                targetTime = SPEED_FALLBACK_TARGET;
+            }
+
+            float speedScore = 1f - Mathf.Clamp01(missionDuration / (2f * targetTime));
 
             // ── Overall ──────────────────────────────────────────────────────
             float overall = safetyScore   * 0.4f
@@ -90,11 +159,18 @@ namespace TeamSentinels.Module4.Analysis
                 totalShots       = totalShots,
                 hits             = hits,
                 misses           = misses,
+                enemyShots       = enemyShots,
+                enemyHits        = enemyHits,
                 hostagesSaved    = hostagesSaved,
                 hostagesTotal    = hostagesTotal,
                 missionDuration  = missionDuration,
                 friendlyFireCount = friendlyFire,
-                overallScore     = overall
+                overallScore     = overall,
+                avgEngagementDistance = avgEngagementDistance,
+                accuracyExpertRate    = accuracyExpertRate,
+                speedTargetTime = targetTime,
+                speedRoomCount  = roomCount,
+                speedTerroristCount = terroristCount
             };
         }
 
@@ -136,9 +212,22 @@ namespace TeamSentinels.Module4.Analysis
                     exposureControl = Mathf.Clamp01(exposureControl - 0.1f * (maxConcurrent - 1));
             }
 
-            // ── Weapon discipline — friendly fire is the measurable failure. ───
+            // ── Weapon discipline — friendly fire AND negligent discharge. ─────
+            // Friendly fire: same saturating penalty as hostage safety (Piece C): 1 − 0.61ⁿ.
             int friendlyFire = events.Count(e => e.tags != null && e.tags.Contains("friendly_fire"));
-            float weaponDiscipline = Mathf.Clamp01(1f - 0.5f * friendlyFire);
+            float friendlyFireFactor = Mathf.Clamp01(Mathf.Pow(0.61f, friendlyFire)); // 0→1, 1→0.61, 2→0.372
+
+            // Negligent discharge: rounds fired with no terrorist visible at all (tagged by
+            // GunFireDetector). Benchmark: expert ≈17%, novice ≈61% (qualification-failure
+            // studies) — so 17% still scores full marks, not 0%.
+            int totalShots = events.Count(e => e.eventType == "ShotFired");
+            int negligentDischarges = events.Count(e =>
+                e.eventType == "ShotFired" && e.tags != null && e.tags.Contains("no_target_in_los"));
+            float negligentDischargeRate = totalShots > 0 ? negligentDischarges / (float)totalShots : 0f;
+            float negligentDischargeFactor = Mathf.Clamp01(
+                1f - (negligentDischargeRate - OP_EXPERT_ND_RATE) / (OP_NOVICE_ND_RATE - OP_EXPERT_ND_RATE));
+
+            float weaponDiscipline = Mathf.Clamp01(friendlyFireFactor * negligentDischargeFactor);
 
             // ── Threat response — faster = safer; neutral 0.5 if no RT data. ───
             float threatResponse = avgReactionTime <= 0f
@@ -159,6 +248,24 @@ namespace TeamSentinels.Module4.Analysis
             perf.opThreatResponse    = threatResponse;
             perf.opExposedSeconds    = exposed;
             perf.opFinalHealth       = finalHealth;
+            perf.opNegligentDischarges     = negligentDischarges;
+            perf.opNegligentDischargeRate  = negligentDischargeRate;
+        }
+
+        /// <summary>
+        /// NYPD SOP-9 expected hit rate at the given engagement distance (metres). Banded, not
+        /// a fitted curve — the source data itself is bucketed field statistics, so a smooth
+        /// curve would imply precision the five bands don't have. -1 (no distance data) falls
+        /// back to the close-range band, matching the dashboard's expectedHitRate().
+        /// </summary>
+        public static float ExpectedHitRate(float distanceM)
+        {
+            if (distanceM < 0f)  return 0.50f;
+            if (distanceM < 3f)  return 0.50f;
+            if (distanceM < 7f)  return 0.125f;
+            if (distanceM < 15f) return 0.06f;
+            if (distanceM < 25f) return 0.045f;
+            return 0.03f;
         }
 
         #endregion
@@ -167,9 +274,19 @@ namespace TeamSentinels.Module4.Analysis
 
         // Operator-safety tunable references (design defaults; see PLAYER_SAFETY_SCORE.md §4.6).
         private const float OP_TARGET_EXPOSURE_FRACTION = 0.5f;  // seen ≤ half the engaged time = full marks
-        private const float OP_FAST_RT = 0.3f;                   // s — expert-fast reaction (RT literature)
-        private const float OP_SLOW_RT = 1.5f;                   // s — slow reaction
+        private const float OP_FAST_RT = 0.3f;                   // s — expert reaction (Hick's Law 1–2 choice ≈ 0.26–0.33 s)
+        private const float OP_SLOW_RT = 0.7f;                   // s — slow (even 8-choice ≈ 0.46 s, so 0.7 s is clearly slow)
         private const float OP_DIED_CAP = 0.20f;                 // can't be "safe" if killed
+        private const float OP_EXPERT_ND_RATE = 0.17f;            // negligent-discharge rate, expert (qualification-failure studies)
+        private const float OP_NOVICE_ND_RATE = 0.61f;            // negligent-discharge rate, novice
+
+        // Speed target-time coefficients — design defaults, NOT independently sourced (the
+        // GOMS/KLM shape is; these numbers are not). See PerformanceCalculator.Calculate().
+        private const float SPEED_BASE_SECONDS    = 30f;
+        private const float SPEED_PER_ROOM        = 5f;
+        private const float SPEED_PER_TERRORIST   = 20f;
+        private const float SPEED_DIFFICULTY_STEP = 30f;   // per NpcLevel tier above "dumb"
+        private const float SPEED_FALLBACK_TARGET = 300f;  // used when no scenario metadata is available
 
         /// <summary>
         /// Seconds the trainee spent inside at least one enemy's line of sight, from paired

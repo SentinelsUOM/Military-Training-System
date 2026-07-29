@@ -34,6 +34,11 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("tags")]
         public List<string> tags = new List<string>();
 
+        /// World-space distance relevant to this event (e.g. shooter↔target range at the
+        /// moment of a hit). -1 means "not captured". Used for distance-aware accuracy.
+        [JsonProperty("distance")]
+        public float distance = -1f;
+
         #endregion
 
         #region Public API
@@ -42,7 +47,7 @@ namespace TeamSentinels.Module4.Data
         public static MissionEvent Create(string eventType, float timestamp,
             string sourceActorId = null, string targetActorId = null,
             string roomId = null, Vector3Serializable position = default,
-            List<string> tags = null)
+            List<string> tags = null, float distance = -1f)
         {
             return new MissionEvent
             {
@@ -52,7 +57,8 @@ namespace TeamSentinels.Module4.Data
                 targetActorId = targetActorId,
                 roomId        = roomId,
                 position      = position,
-                tags          = tags ?? new List<string>()
+                tags          = tags ?? new List<string>(),
+                distance      = distance
             };
         }
 

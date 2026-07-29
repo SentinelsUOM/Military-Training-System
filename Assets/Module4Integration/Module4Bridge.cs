@@ -83,6 +83,13 @@ public class Module4Bridge : MonoBehaviour
             ? new List<string> { "friendly_fire" }
             : null;
 
+        // Merge in any detector-supplied tags (e.g. GunFireDetector's "no_target_in_los").
+        if (e.Tags != null && e.Tags.Count > 0)
+        {
+            tags ??= new List<string>();
+            tags.AddRange(e.Tags);
+        }
+
         var record = MissionEvent.Create(
             eventType,
             elapsed,
@@ -90,7 +97,8 @@ public class Module4Bridge : MonoBehaviour
             targetId,
             roomId,
             e.Origin,
-            tags
+            tags,
+            e.Distance
         );
 
         SessionLogger.Instance.LogEvent(record);

@@ -1,10 +1,25 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { analyzeMeasure } from '@/lib/stats'
 import styles from './EvaluationClient.module.css'
 
 const LEVELS = ['basic', 'intermediate', 'advanced']
 const LEVEL_LABEL = { basic: 'Basic', intermediate: 'Intermediate', advanced: 'Advanced' }
+
+// Measures the significance tests run on: the three believability claims plus two
+// key objective metrics. `source` = which sub-object the value lives in per play.
+const STAT_MEASURES = [
+  { key: 'perceivedIntelligence', label: 'Perceived Intelligence', source: 'aiEval' },
+  { key: 'animacy',               label: 'Animacy (life-like)',    source: 'aiEval' },
+  { key: 'realism',               label: 'Tactical realism',       source: 'aiEval' },
+  { key: 'enemyAccuracy',         label: 'Enemy hit-rate (NPC)',   source: 'metrics' },
+  { key: 'reactionTime',          label: 'Reaction time',          source: 'metrics' },
+  { key: 'overallScore',          label: 'Overall score',          source: 'metrics' },
+]
+
+const fmtP = (p) => (p == null ? '—' : p < 0.001 ? '< 0.001' : p.toFixed(3))
+const round2 = (n) => (n == null ? '—' : Math.round(n * 100) / 100)
 
 // Display order + labels. `better` = which direction is "good" (for the arrow hint).
 const SURVEY_ROWS = [
@@ -15,10 +30,11 @@ const SURVEY_ROWS = [
   { key: 'ueqHedonic',            label: 'UEQ — Hedonic',          unit: '/7', better: 'up' },
 ]
 const METRIC_ROWS = [
-  { key: 'reactionTime', label: 'Avg reaction time', unit: 's',  better: 'down' },
-  { key: 'accuracy',     label: 'Enemy accuracy',    unit: '%',  better: null   },
-  { key: 'duration',     label: 'Mission duration',  unit: 's',  better: null   },
-  { key: 'overallScore', label: 'Overall score',     unit: '',   better: null   },
+  { key: 'reactionTime',  label: 'Avg reaction time',    unit: 's', better: 'down' },
+  { key: 'accuracy',      label: 'Shooting accuracy (you)', unit: '%', better: null },
+  { key: 'enemyAccuracy', label: 'Enemy hit-rate (NPC)', unit: '%', better: 'up'   },
+  { key: 'duration',      label: 'Mission duration',     unit: 's', better: null   },
+  { key: 'overallScore',  label: 'Overall score',        unit: '',  better: null   },
 ]
 
 const fmt = (v, unit = '') => (v == null ? '—' : `${v}${unit}`)
@@ -114,10 +130,17 @@ export default function EvaluationClient() {
               <AveragesTable averages={data.averages} />
             </section>
 
+            {/* ── Statistical significance ──────────────────────────── */}
+            <section className={styles.section}>
+              <h2 className={styles.h2}>Statistical significance</h2>
+              <StatsPanel players={data.players} />
+            </section>
+
             <p className={styles.note}>
               Survey scores are participant ratings after each play (higher = better for the AI).
-              Objective metrics come from the game telemetry. Use the CSV for statistical tests
-              (e.g. Friedman / Wilcoxon across the three levels).
+              Objective metrics come from the game telemetry. The significance section runs a
+              Friedman test (any difference across the three levels?) and Wilcoxon signed-rank
+              post-hoc tests (which pairs differ?) on complete-case participants.
             </p>
           </>
         )}
@@ -188,5 +211,83 @@ function AveragesTable({ averages }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+// Build one series per level for a measure, aligned by participant index so the
+// tests only use participants who have a value at every level (complete cases).
+function buildSeries(players, measure) {
+  return LEVELS.map(lvl => ({
+    label: LEVEL_LABEL[lvl],
+    values: players.map(p => {
+      const play = p.levels[lvl]
+      const v = play ? (measure.source === 'aiEval' ? play.aiEval?.[measure.key] : play.metrics?.[measure.key]) : undefined
+      return typeof v === 'number' ? v : NaN
+    }),
+  }))
+}
+
+function StatsPanel({ players }) {
+  const results = useMemo(
+    () => STAT_MEASURES.map(m => ({ m, ...analyzeMeasure(buildSeries(players, m)) })),
+    [players]
+  )
+
+  const maxN = results.reduce((mx, r) => Math.max(mx, r.n), 0)
+  if (maxN < 3) {
+    return (
+      <div className={styles.msg}>
+        Need at least <strong>3 participants</strong> who played <strong>all three</strong> levels
+        (Basic, Intermediate, Advanced) to run the tests — currently {maxN}. Collect more study
+        runs and this fills in automatically.
+      </div>
+    )
+  }
+
+  return (
+    <div className={styles.stats}>
+      <p className={styles.statsIntro}>
+        Repeated-measures, non-parametric. <strong>Friedman</strong> asks whether the AI level
+        changed the measure at all; <strong>Wilcoxon</strong> signed-rank post-hoc asks which pair
+        differs (α is Bonferroni-corrected for the 3 pairs). A result is significant when p &lt; α.
+      </p>
+      {results.map(({ m, n, friedman: fr, pairs, alpha }) => (
+        <div key={m.key} className={styles.statBlock}>
+          <div className={styles.statHead}>
+            <span className={styles.statTitle}>{m.label}</span>
+            <span className={styles.statMeta}>n = {n} complete</span>
+          </div>
+          {n < 3 || !fr ? (
+            <div className={styles.ns}>Not enough complete data for this measure (n = {n}).</div>
+          ) : (
+            <>
+              <div className={styles.friedman}>
+                Friedman χ²({fr.df}) = {round2(fr.chi2)}, p = {fmtP(fr.p)}, Kendall&apos;s W = {round2(fr.kendallW)}{' '}
+                {fr.p < 0.05
+                  ? <span className={styles.sig}>significant</span>
+                  : <span className={styles.ns}>n.s.</span>}
+              </div>
+              <table className={styles.pairTable}>
+                <tbody>
+                  {pairs.map(pr => (
+                    <tr key={`${pr.i}-${pr.j}`}>
+                      <td className={styles.rowLabel}>{pr.labelA} vs {pr.labelB}</td>
+                      <td className={styles.num}>p = {fmtP(pr.p)}</td>
+                      <td className={styles.num}>r = {round2(pr.r)}</td>
+                      <td className={styles.num}>
+                        {pr.p < alpha
+                          ? <span className={styles.sig}>✓ sig</span>
+                          : <span className={styles.ns}>n.s.</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className={styles.alphaNote}>Post-hoc α = {round2(alpha)} (Bonferroni · 3 pairs) · r = effect size.</div>
+            </>
+          )}
+        </div>
+      ))}
+    </div>
   )
 }

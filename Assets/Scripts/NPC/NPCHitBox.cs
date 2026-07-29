@@ -37,13 +37,20 @@ public class NPCHitBox : MonoBehaviour, IDamageable, IImpactType
         if (damager != null && damager.GetComponentInParent<TerroristController>() != null) return;
         _controller.TakeHit(damage * damageMultiplier);
 
-        // Module 4 integration hook (additive — fires per bullet impact for accuracy metrics)
+        // Module 4 integration hook (additive — fires per bullet impact for accuracy metrics).
+        // Distance is measured trainee↔target at the moment of the hit, so accuracy can be
+        // scored against the real-world hit-rate-by-range curve (NYPD SOP-9), not a flat ratio.
+        float distance = Camera.main != null
+            ? Vector3.Distance(Camera.main.transform.position, transform.position)
+            : -1f;
+
         EventManager.Instance?.Raise(new ScenarioEvent(
             ScenarioEventType.TerroristHit,
             transform.position,
             damager,
             roomId: null,
-            targetActorId: _controller.NPCId
+            targetActorId: _controller.NPCId,
+            distance: distance
         ));
     }
 
