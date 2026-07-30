@@ -1,56 +1,65 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { analyzeMeasure } from '@/lib/stats'
+import { analyzeMeasure, oneSampleWilcoxon, oneWayAnova } from '@/lib/stats'
 import { benchmarkPos } from '@/lib/expertBenchmarks'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import styles from './EvaluationClient.module.css'
 
 const LEVELS = ['basic', 'intermediate', 'advanced']
 const LEVEL_LABEL = { basic: 'Basic', intermediate: 'Intermediate', advanced: 'Advanced' }
+const pctFmt = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`)
 
-// Measures the significance tests run on, tagged by WHICH MODULE actually owns the
-// underlying data (see MODULE4_EVALUATION.md's ownership table) — Perceived Intelligence/
-// Animacy/Realism/Enemy hit-rate are Module 2 (AI believability/behaviour); Reaction Time
-// is Module 3 (CognitiveTracking), just displayed here; the five Module 4 rows are
-// Module 4's own scores (Overall/Hostage Safety/Accuracy/Speed/Operator Safety).
+// Measures the tier-by-tier significance test runs on — Module 2 ONLY. Module 2's whole
+// research question IS whether AI difficulty (Basic/Intermediate/Advanced) changes the
+// measure, so it's the one module that needs a per-tier comparison. Module 3 and Module 4
+// don't have an AI-difficulty independent variable — see MODULE3_MEASURES/MODULE4_MEASURES
+// below, which combine a player's sessions across ALL tiers instead.
 const STAT_MEASURES = [
   { key: 'perceivedIntelligence', label: 'Perceived Intelligence', source: 'aiEval',   group: 'Module 2 — AI Believability' },
   { key: 'animacy',               label: 'Animacy (life-like)',    source: 'aiEval',   group: 'Module 2 — AI Believability' },
   { key: 'realism',               label: 'Tactical realism',       source: 'aiEval',   group: 'Module 2 — AI Believability' },
   { key: 'enemyAccuracy',         label: 'Enemy hit-rate (NPC)',   source: 'metrics',  group: 'Module 2 — AI Believability' },
-  { key: 'reactionTime',          label: 'Reaction time',          source: 'metrics',  group: 'Module 3 — Cognitive' },
-  { key: 'overallScore',          label: 'Overall score',          source: 'metrics',  group: 'Module 4 — Score Validity' },
-  { key: 'safetyScore',           label: 'Hostage Safety',         source: 'metrics',  group: 'Module 4 — Score Validity' },
-  { key: 'accuracy',              label: 'Accuracy (you)',         source: 'metrics',  group: 'Module 4 — Score Validity' },
-  { key: 'speedScore',            label: 'Speed',                  source: 'metrics',  group: 'Module 4 — Score Validity' },
-  { key: 'operatorSafetyScore',   label: 'Operator Safety',        source: 'metrics',  group: 'Module 4 — Score Validity' },
 ]
 
-// Module 4's own 5 scores, for the repeated-trial reliability and expert-benchmark
-// sections. `accuracy` is stored 0-100 in `metrics` (see route.js) so it needs /100
-// to line up with the other four, which are already 0-1.
+// Module 3's only measure here (reaction time) — combined across all AI tiers per player,
+// then compared to Hick's Law's expert-reaction benchmark. Module 3's full cognitive
+// evaluation (movement, workload, stability/attention) lives in the per-session tabs.
+const MODULE3_MEASURES = [
+  {
+    key: 'reactionTime', label: 'Reaction time', fmt: (v) => (v == null ? '—' : `${v.toFixed(2)} s`),
+    bench: {
+      higherIsBetter: false, expert: 0.30, novice: 0.50,
+      fmt: (v) => `${v.toFixed(2)} s`, source: "Hick's Law — choice reaction time",
+    },
+  },
+]
+
+// Module 4's own 5 scores, combined across all AI tiers per player, then compared to a
+// published benchmark where one exists. Only Hostage Safety and Accuracy have an
+// independent published benchmark (see MODULE4_EVALUATION.md) — Speed and Operator
+// Safety's composite have none, and Overall is an internal weighted composite, not
+// itself a literature value. `accuracyScore` is Unity's real distance-normalized score
+// (hitRate ÷ expected rate at range) — NOT the raw hit-percentage `accuracy` field, which
+// belongs to Module 2's own objective-telemetry table above.
 const MODULE4_SCORES = [
-  { key: 'overallScore',         label: 'Overall',         pctScale: false },
-  { key: 'safetyScore',          label: 'Hostage Safety',  pctScale: false },
-  { key: 'accuracy',             label: 'Accuracy',        pctScale: true  },
-  { key: 'speedScore',           label: 'Speed',           pctScale: false },
-  { key: 'operatorSafetyScore',  label: 'Operator Safety', pctScale: false },
+  { key: 'overallScore',         label: 'Overall' },
+  { key: 'safetyScore',          label: 'Hostage Safety' },
+  { key: 'accuracyScore',        label: 'Accuracy' },
+  { key: 'speedScore',           label: 'Speed' },
+  { key: 'operatorSafetyScore',  label: 'Operator Safety' },
 ]
-
-// Only two of the five have an independent published benchmark to compare against
-// (see MODULE4_EVALUATION.md) — Speed and Operator Safety's composite have none, and
-// Overall is an internal weighted composite, not itself a literature value.
 const MODULE4_BENCH = {
   safetyScore: {
     higherIsBetter: true, expert: 0.85, novice: 0.40,
-    fmt: (v) => `${Math.round(v * 100)}%`, source: 'RAND hostage-rescue outcomes',
+    fmt: pctFmt, source: 'RAND hostage-rescue outcomes',
   },
-  accuracy: {
+  accuracyScore: {
     higherIsBetter: true, expert: 1.0, novice: 0.35,
-    fmt: (v) => `${Math.round(v * 100)}%`, source: "NYPD SOP-9, normalized to this session's engagement range",
+    fmt: pctFmt, source: "NYPD SOP-9, normalized to this session's engagement range",
   },
 }
+const MODULE4_MEASURES = MODULE4_SCORES.map(s => ({ ...s, fmt: pctFmt, bench: MODULE4_BENCH[s.key] || null }))
 
 const fmtP = (p) => (p == null ? '—' : p < 0.001 ? '< 0.001' : p.toFixed(3))
 const round2 = (n) => (n == null ? '—' : Math.round(n * 100) / 100)
@@ -182,46 +191,92 @@ export default function EvaluationClient() {
                 <div key={t.key} className={bodyClass}>
                   <h2 className={styles.printOnlyHeading}>{t.label}</h2>
 
-                  {/* ── Per-player comparison ─────────────────────────── */}
-                  <section className={styles.section}>
-                    <div className={styles.sectionHead}>
-                      <h2 className={styles.h2}>Per-player comparison</h2>
-                      <label className={styles.selectWrap}>
-                        Player&nbsp;
-                        <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
-                          {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
-                        </select>
-                      </label>
-                    </div>
-                    {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
-                  </section>
-
-                  {/* ── Overall averages ──────────────────────────────── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Overall averages (all players)</h2>
-                    <AveragesTable averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
-                  </section>
-
-                  {/* ── Statistical significance ──────────────────────── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Statistical significance</h2>
-                    <StatsPanel players={data.players} measures={measures} />
-                  </section>
-
                   {t.key === 'module2' && (
-                    <p className={styles.note}>
-                      Survey scores are participant ratings after each play (higher = better for the AI).
-                      Enemy hit-rate is an objective telemetry measure of the same thing (how competently
-                      the AI fought). The significance section runs a Friedman test (any difference across
-                      the three levels?) and Wilcoxon signed-rank post-hoc tests (which pairs differ?) on
-                      complete-case participants.
-                    </p>
+                    <>
+                      {/* ── Per-player comparison, by AI tier — Module 2's own question ── */}
+                      <section className={styles.section}>
+                        <div className={styles.sectionHead}>
+                          <h2 className={styles.h2}>Per-player comparison</h2>
+                          <label className={styles.selectWrap}>
+                            Player&nbsp;
+                            <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
+                              {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                        {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
+                      </section>
+
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Overall averages (all players)</h2>
+                        <AveragesTable averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
+                      </section>
+
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Statistical significance</h2>
+                        <StatsPanel players={data.players} measures={measures} />
+                      </section>
+
+                      <p className={styles.note}>
+                        Survey scores are participant ratings after each play (higher = better for the AI).
+                        Enemy hit-rate is an objective telemetry measure of the same thing (how competently
+                        the AI fought). The significance section runs a Friedman test (any difference across
+                        the three levels?) and Wilcoxon signed-rank post-hoc tests (which pairs differ?) on
+                        complete-case participants — because AI difficulty IS Module 2's research question.
+                      </p>
+                    </>
+                  )}
+
+                  {(t.key === 'module3' || t.key === 'module4') && (
+                    <>
+                      {/* ── Combined per-player average — no AI-tier split ──────
+                          Module 3/4 don't have an AI-difficulty independent variable (that's
+                          Module 2's own question, above) — so a player's sessions are combined
+                          across ALL tiers into one average, then compared to the expert value. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Per-player average (all AI levels combined)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          {t.key === 'module3'
+                            ? "Reaction time doesn't depend on which AI tier was played, so each player's sessions are averaged together regardless of level."
+                            : "Module 4's five scores aren't about AI difficulty, so each player's sessions are averaged together across whichever levels they played."}
+                        </p>
+                        <CombinedPlayerTable players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                      </section>
+
+                      {/* ── Pooled vs expert — one-sample test ──────────────────
+                          Is the trainee population's average different from the published expert
+                          value? Pools every individual session (any player, any tier). ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>vs Expert Value (all sessions pooled)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          One-sample Wilcoxon signed-rank test: does the pooled set of every recorded
+                          session's value differ significantly from the published expert benchmark?
+                          Only measures with an independent published benchmark are testable this way.
+                        </p>
+                        <PooledVsExpertPanel pooledValues={data.pooledValues} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                      </section>
+
+                      {/* ── ANOVA Table — a genuinely different question from the one above:
+                          does the measure vary BETWEEN players, given the spread WITHIN each
+                          player's own sessions? Standard one-way ANOVA terminology throughout. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>ANOVA Table (between players)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          One-way analysis of variance, with each PLAYER as a group and their own
+                          sessions as that group&apos;s replicates: does the mean differ between
+                          players by more than their own session-to-session variability would explain?
+                          Source / SS (sum of squares) / df (degrees of freedom) / MS (mean square) / F
+                          (F-statistic) / p — standard ANOVA-table columns.
+                        </p>
+                        <AnovaPanel players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                      </section>
+                    </>
                   )}
 
                   {t.key === 'module3' && (
                     <p className={styles.note}>
-                      This page only surfaces reaction time as it relates to the Module 2 AI-difficulty
-                      ablation study. Module 3&apos;s full cognitive evaluation (movement telemetry, workload
+                      This page only surfaces reaction time as it relates to the trainee population.
+                      Module 3&apos;s full cognitive evaluation (movement telemetry, workload
                       reasoning, stability/attention) lives in each session&apos;s own Movement and Workload
                       tabs on the dashboard, not here.
                     </p>
@@ -229,27 +284,27 @@ export default function EvaluationClient() {
 
                   {t.key === 'module4' && (
                     <>
-                      {/* ── Repeated-trial reliability ──────────────────── */}
+                      {/* ── Repeated-play reliability ──────────────────── */}
                       <section className={styles.section}>
-                        <h2 className={styles.h2}>Repeated-Trial Reliability</h2>
+                        <h2 className={styles.h2}>Repeated-Play Reliability</h2>
                         <p className={styles.note} style={{ marginTop: 0 }}>
-                          Is Module 4&apos;s score consistent when the SAME person plays the SAME scenario/AI
-                          level more than once? Shown per trial, with mean and standard deviation across
-                          trials — tight clustering (low SD) means the score is reliable, not noisy.
+                          Is Module 4&apos;s score consistent when the SAME person plays more than once?
+                          Shown per session, with mean and standard deviation across sessions — tight
+                          clustering (low SD) means the score is reliable, not noisy.
                         </p>
-                        <ReliabilityPanel retests={data.retests} />
+                        <ReliabilityPanel players={data.players} />
                       </section>
 
-                      {/* ── Expert-benchmark comparison, averaged across trials ── */}
+                      {/* ── Expert-benchmark comparison, averaged across a player's sessions ── */}
                       <section className={styles.section}>
-                        <h2 className={styles.h2}>vs Expert Benchmarks (averaged across trials)</h2>
+                        <h2 className={styles.h2}>vs Expert Benchmarks (averaged per player)</h2>
                         <p className={styles.note} style={{ marginTop: 0 }}>
-                          Each person&apos;s repeated-trial scores are averaged first (to smooth out
-                          single-session noise), then compared to published expert/novice values where one
-                          exists. Speed and Operator Safety have no independent published benchmark — shown
+                          Each person&apos;s sessions are averaged first (to smooth out single-session
+                          noise), then compared to published expert/novice values where one exists.
+                          Speed and Operator Safety have no independent published benchmark — shown
                           as-is, not scored against a source that doesn&apos;t exist.
                         </p>
-                        <BenchmarkPanel retests={data.retests} />
+                        <BenchmarkPanel players={data.players} />
                       </section>
                     </>
                   )}
@@ -410,28 +465,227 @@ function StatsPanel({ players, measures }) {
   )
 }
 
+// ── Combined per-player average (no AI-tier split) — Module 3 & 4 ──────────
+// `measures`: [{ key, label, fmt, bench }]. `bench` is optional — a verdict chip only
+// shows for measures that have one (see MODULE4_EVALUATION.md for which do and don't).
+// The Expert/Novice reference values are shown as their own rows at the top, pinned above
+// the player rows, so the benchmark a player is being judged against is always visible
+// right there — not just implied by a colour.
+function CombinedPlayerTable({ players, measures }) {
+  const withData = players.filter(p => p.combined?.n > 0)
+  const hasAnyBench = measures.some(m => m.bench)
+
+  return (
+    <table className={styles.table}>
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th className={styles.num}>Sessions</th>
+          {measures.map(m => <th key={m.key} className={styles.num}>{m.label}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {hasAnyBench && (
+          <>
+            <tr className={styles.groupRow}><td colSpan={2 + measures.length}>Published reference values</td></tr>
+            <tr>
+              <td className={styles.rowLabel}><strong>Expert</strong></td>
+              <td className={styles.num}>—</td>
+              {measures.map(m => (
+                <td key={m.key} className={styles.num} style={{ color: '#34d399', fontWeight: 700 }}>
+                  {m.bench ? m.bench.fmt(m.bench.expert) : '—'}
+                </td>
+              ))}
+            </tr>
+            <tr>
+              <td className={styles.rowLabel}>Novice</td>
+              <td className={styles.num}>—</td>
+              {measures.map(m => (
+                <td key={m.key} className={styles.num} style={{ color: '#f87171' }}>
+                  {m.bench ? m.bench.fmt(m.bench.novice) : '—'}
+                </td>
+              ))}
+            </tr>
+            <tr className={styles.groupRow}><td colSpan={2 + measures.length}>Trainees</td></tr>
+          </>
+        )}
+        {!withData.length ? (
+          <tr><td colSpan={2 + measures.length} className={styles.rowLabel}>No sessions recorded yet.</td></tr>
+        ) : withData.map(p => (
+          <tr key={p.playerId}>
+            <td className={styles.rowLabel}>{p.playerId}</td>
+            <td className={styles.num}>{p.combined.n}</td>
+            {measures.map(m => {
+              const v = p.combined.metrics[m.key]
+              const pos = m.bench && v != null ? benchmarkPos(v, m.bench) : null
+              return (
+                <td key={m.key} className={styles.num} style={pos ? { color: pos.color, fontWeight: 700 } : undefined}>
+                  {v == null ? '—' : m.fmt(v)}
+                  {pos && <span style={{ fontSize: 9.5, marginLeft: 5, opacity: 0.85 }}>{pos.verdict}</span>}
+                </td>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+// ── ANOVA Table — one-way analysis of variance, PLAYER as the grouping factor ──
+// A correctly-computed one-way ANOVA (not the pooled one-sample test above, which is a
+// different question): does the measure differ BETWEEN players, given the variability
+// WITHIN each player's own sessions? Each player's sessions are that player's replicates.
+// Reported with standard ANOVA-table terminology (Source / SS / df / MS / F / p) so it
+// reads the way a stats textbook or a reviewer expects, not a relabeled different test.
+function AnovaPanel({ players, measures }) {
+  const testable = measures // ANOVA doesn't need a bench — it compares players to each other
+  return (
+    <div className={styles.stats}>
+      {testable.map(m => {
+        const groups = players
+          .map(p => ({ label: p.playerId, values: (p.allTrials || []).map(t => t.metrics?.[m.key]).filter(v => typeof v === 'number') }))
+          .filter(g => g.values.length > 0)
+        const result = groups.length >= 2 ? oneWayAnova(groups) : null
+
+        return (
+          <div key={m.key} className={styles.statBlock}>
+            <div className={styles.statHead}>
+              <span className={styles.statTitle}>{m.label}</span>
+              <span className={styles.statMeta}>k = {groups.length} players</span>
+            </div>
+            {!result || result.dfWithin <= 0 ? (
+              <div className={styles.ns}>
+                Need at least 2 players, with at least one having 2+ sessions, to estimate within-player
+                variance (currently k = {groups.length}).
+              </div>
+            ) : (
+              <>
+                <table className={styles.pairTable}>
+                  <thead>
+                    <tr>
+                      <td className={styles.rowLabel}>Source</td>
+                      <td className={styles.num}>SS</td>
+                      <td className={styles.num}>df</td>
+                      <td className={styles.num}>MS</td>
+                      <td className={styles.num}>F</td>
+                      <td className={styles.num}>p</td>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className={styles.rowLabel}>Between players</td>
+                      <td className={styles.num}>{round2(result.ssBetween)}</td>
+                      <td className={styles.num}>{result.dfBetween}</td>
+                      <td className={styles.num}>{round2(result.msBetween)}</td>
+                      <td className={styles.num}>{round2(result.F)}</td>
+                      <td className={styles.num}>
+                        {fmtP(result.p)}{' '}
+                        {result.p != null && result.p < 0.05
+                          ? <span className={styles.sig}>sig.</span>
+                          : <span className={styles.ns}>n.s.</span>}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className={styles.rowLabel}>Within players</td>
+                      <td className={styles.num}>{round2(result.ssWithin)}</td>
+                      <td className={styles.num}>{result.dfWithin}</td>
+                      <td className={styles.num}>{round2(result.msWithin)}</td>
+                      <td className={styles.num}>—</td>
+                      <td className={styles.num}>—</td>
+                    </tr>
+                    <tr>
+                      <td className={styles.rowLabel}>Total</td>
+                      <td className={styles.num}>{round2(result.ssTotal)}</td>
+                      <td className={styles.num}>{result.dfBetween + result.dfWithin}</td>
+                      <td className={styles.num}>—</td>
+                      <td className={styles.num}>—</td>
+                      <td className={styles.num}>—</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div className={styles.alphaNote}>
+                  Grand mean {m.fmt ? m.fmt(result.grandMean) : round2(result.grandMean)} across N = {result.N} sessions.
+                  {' '}F({result.dfBetween}, {result.dfWithin}) = {round2(result.F)}, p {result.p < 0.001 ? '< 0.001' : `= ${fmtP(result.p)}`}
+                  {' '}— {result.p < 0.05 ? 'players differ significantly from each other' : 'no significant difference between players'} on {m.label.toLowerCase()}.
+                  {m.bench && ` For reference, the published expert value is ${m.bench.fmt(m.bench.expert)} (${m.bench.source}).`}
+                </div>
+              </>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Pooled vs expert — one-sample Wilcoxon test ─────────────────────────────
+// Pools every individual session's value (any player, any tier) for a measure and asks:
+// does this population differ significantly from the published expert constant?
+function PooledVsExpertPanel({ pooledValues, measures }) {
+  const testable = measures.filter(m => m.bench)
+  if (!testable.length) {
+    return <div className={styles.msg}>No measure in this module has an independent published benchmark to test against.</div>
+  }
+  return (
+    <div className={styles.stats}>
+      {testable.map(m => {
+        const values = pooledValues?.[m.key] || []
+        const n = values.length
+        const meanV = n ? values.reduce((a, b) => a + b, 0) / n : null
+        const result = n >= 1 ? oneSampleWilcoxon(values, m.bench.expert) : null
+        return (
+          <div key={m.key} className={styles.statBlock}>
+            <div className={styles.statHead}>
+              <span className={styles.statTitle}>{m.label}</span>
+              <span className={styles.statMeta}>n = {n} sessions</span>
+            </div>
+            {n < 5 || !result ? (
+              <div className={styles.ns}>Need at least 5 recorded sessions for a meaningful test (n = {n}).</div>
+            ) : (
+              <>
+                <div className={styles.friedman}>
+                  Trainee mean {m.fmt(meanV)} vs expert {m.fmt(m.bench.expert)} ({m.bench.source}) —
+                  Wilcoxon p = {fmtP(result.p)}, r = {round2(result.r)}{' '}
+                  {result.p < 0.05
+                    ? <span className={styles.sig}>significantly different from expert</span>
+                    : <span className={styles.ns}>not significantly different from expert</span>}
+                </div>
+                <div className={styles.alphaNote}>
+                  One-sample Wilcoxon signed-rank, α = 0.05 · r = effect size (|z|/√n).
+                </div>
+              </>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Repeated-trial reliability ────────────────────────────────────────────
-// `retests` = groups of 2+ sessions sharing the same playerId + AI level, oldest→newest.
-function ReliabilityPanel({ retests }) {
-  if (!retests?.length) {
+// Any player with 2+ recorded sessions (ANY AI tier — Module 4 doesn't split by tier).
+function ReliabilityPanel({ players }) {
+  const withRepeats = players.filter(p => (p.allTrials?.length || 0) > 1)
+  if (!withRepeats.length) {
     return (
       <div className={styles.msg}>
-        No repeated-scenario trials yet. Have the same participant play the same AI level more
-        than once (same Player ID + Level on the mission form) and this fills in automatically.
+        No repeated plays yet. Have the same participant play more than once (same Player ID
+        on the mission form) and this fills in automatically.
       </div>
     )
   }
   return (
     <div className={styles.stats}>
-      {retests.map(g => <RetestBlock key={`${g.playerId}::${g.level}`} group={g} />)}
+      {withRepeats.map(p => <RetestBlock key={p.playerId} player={p} />)}
     </div>
   )
 }
 
-function scoreSeries(group, spec) {
-  return group.trials.map(t => {
+function scoreSeries(trials, spec) {
+  return trials.map(t => {
     const raw = t.metrics?.[spec.key]
-    return typeof raw === 'number' ? (spec.pctScale ? raw / 100 : raw) : null
+    return typeof raw === 'number' ? raw : null
   })
 }
 function meanOf(nums) { return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null }
@@ -442,9 +696,10 @@ function stdDevOf(nums, m) {
 }
 const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`)
 
-function RetestBlock({ group }) {
+function RetestBlock({ player }) {
+  const trials = player.allTrials
   const rows = MODULE4_SCORES.map(spec => {
-    const vals = scoreSeries(group, spec)
+    const vals = scoreSeries(trials, spec)
     const nums = vals.filter(v => typeof v === 'number')
     const m = meanOf(nums)
     const sd = stdDevOf(nums, m)
@@ -453,14 +708,14 @@ function RetestBlock({ group }) {
   return (
     <div className={styles.statBlock}>
       <div className={styles.statHead}>
-        <span className={styles.statTitle}>{group.playerId} — {LEVEL_LABEL[group.level]}</span>
-        <span className={styles.statMeta}>{group.trials.length} trials</span>
+        <span className={styles.statTitle}>{player.playerId}</span>
+        <span className={styles.statMeta}>{trials.length} sessions</span>
       </div>
       <table className={styles.table}>
         <thead>
           <tr>
             <th></th>
-            {group.trials.map((_, i) => <th key={i} className={styles.num}>Trial {i + 1}</th>)}
+            {trials.map((_, i) => <th key={i} className={styles.num}>Session {i + 1}</th>)}
             <th className={styles.num}>Mean</th>
             <th className={styles.num}>SD</th>
           </tr>
@@ -480,33 +735,35 @@ function RetestBlock({ group }) {
   )
 }
 
-// ── Module 4 vs expert benchmarks, averaged across repeated trials ─────────
-function BenchmarkPanel({ retests }) {
-  if (!retests?.length) {
+// ── Module 4 vs expert benchmarks, averaged across a player's sessions ─────
+function BenchmarkPanel({ players }) {
+  const withRepeats = players.filter(p => (p.allTrials?.length || 0) > 1)
+  if (!withRepeats.length) {
     return (
       <div className={styles.msg}>
-        No repeated-scenario trials yet — this section averages a participant&apos;s repeats before
+        No repeated plays yet — this section averages a participant&apos;s sessions before
         comparing to a benchmark, to reduce single-session noise.
       </div>
     )
   }
   return (
     <div className={styles.stats}>
-      {retests.map(g => <BenchmarkBlock key={`${g.playerId}::${g.level}`} group={g} />)}
+      {withRepeats.map(p => <BenchmarkBlock key={p.playerId} player={p} />)}
     </div>
   )
 }
 
-function BenchmarkBlock({ group }) {
+function BenchmarkBlock({ player }) {
+  const trials = player.allTrials
   return (
     <div className={styles.statBlock}>
       <div className={styles.statHead}>
-        <span className={styles.statTitle}>{group.playerId} — {LEVEL_LABEL[group.level]}</span>
-        <span className={styles.statMeta}>avg of {group.trials.length} trials</span>
+        <span className={styles.statTitle}>{player.playerId}</span>
+        <span className={styles.statMeta}>avg of {trials.length} sessions</span>
       </div>
       <div className={styles.benchGrid}>
         {MODULE4_SCORES.map(spec => {
-          const nums = scoreSeries(group, spec).filter(v => typeof v === 'number')
+          const nums = scoreSeries(trials, spec).filter(v => typeof v === 'number')
           if (!nums.length) return null
           const m = meanOf(nums)
           const b = MODULE4_BENCH[spec.key]

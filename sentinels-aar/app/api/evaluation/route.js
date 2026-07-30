@@ -20,9 +20,15 @@ const SURVEY_KEYS = ['perceivedIntelligence', 'animacy', 'realism', 'ueqPragmati
 // before them belongs to Module 2/3 (AI behaviour, cognitive telemetry). See METRIC_KEYS
 // vs MODULE4_SCORE_KEYS below.
 const METRIC_KEYS = ['reactionTime', 'accuracy', 'enemyAccuracy', 'duration', 'overallScore', 'safetyScore', 'speedScore', 'operatorSafetyScore']
-// Module 4's own 5 scores specifically (subset of METRIC_KEYS) — used to build the
-// "Module 4 Score Validity" panel and the repeated-trial / expert-benchmark sections.
-const MODULE4_SCORE_KEYS = ['overallScore', 'safetyScore', 'accuracy', 'speedScore', 'operatorSafetyScore']
+// Module 4's own 5 scores specifically — used to build the combined per-player table, the
+// pooled vs-expert test, and the repeated-trial / expert-benchmark sections. Uses
+// `accuracyScore` (Unity's distance-normalized 0-1 score), NOT `accuracy` (the raw
+// hit/shots % above, which is a Module-2-style objective-telemetry number, not what Module
+// 4's own accuracy score actually is — the two were conflated earlier and are now split).
+const MODULE4_SCORE_KEYS = ['overallScore', 'safetyScore', 'accuracyScore', 'speedScore', 'operatorSafetyScore']
+// Module 3's only measure here (reaction time — the rest of Module 3's evaluation lives
+// in the per-session Movement/Workload tabs, not this page).
+const MODULE3_SCORE_KEYS = ['reactionTime']
 
 const round3 = (n) => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n)
 
@@ -40,8 +46,11 @@ function metricsOf(s) {
     overallScore: round3(p.overallScore) ?? null,
     missionSuccess: p.missionSuccess ?? null,
     friendlyFire: p.friendlyFireCount ?? null,
-    // Module 4's own scores (0-1 scale, unlike the percentage-formatted accuracy above).
+    // Module 4's own scores (0-1 scale, unlike the percentage-formatted `accuracy` above).
+    // accuracyScore is the real distance-normalized score (hitRate ÷ expected rate at
+    // range) — a different number from the raw `accuracy` hit percentage above.
     safetyScore:         round3(p.safetyScore) ?? null,
+    accuracyScore:       round3(p.accuracyScore) ?? null,
     speedScore:          round3(p.speedScore) ?? null,
     operatorSafetyScore: round3(p.operatorSafetyScore) ?? null
   }
@@ -75,8 +84,8 @@ export async function GET() {
 
     // ── Group by player, keep the most-recent session per level ────────────
     const byPlayer = {}
-    const perLevel = { basic: [], intermediate: [], advanced: [] } // for averages
-    const byPlayerLevel = {} // ALL sessions per player+level, for the repeated-trial section
+    const perLevel = { basic: [], intermediate: [], advanced: [] } // for averages — Module 2 ONLY
+    const byPlayerAll = {} // ALL sessions per player, ANY level — Module 3 & 4 (no tier concept)
 
     for (const s of sessions) {
       let lvl = String(s.npcLevel).toLowerCase()
@@ -95,12 +104,38 @@ export async function GET() {
       byPlayer[s.playerId] = byPlayer[s.playerId] || { playerId: s.playerId, levels: {} }
       if (!byPlayer[s.playerId].levels[lvl]) byPlayer[s.playerId].levels[lvl] = play // newest first
 
-      const key = `${s.playerId}::${lvl}`
-      byPlayerLevel[key] = byPlayerLevel[key] || { playerId: s.playerId, level: lvl, trials: [] }
-      byPlayerLevel[key].trials.push(play)
+      byPlayerAll[s.playerId] = byPlayerAll[s.playerId] || []
+      byPlayerAll[s.playerId].push(play)
     }
 
     const players = Object.values(byPlayer).sort((a, b) => a.playerId.localeCompare(b.playerId))
+
+    // ── Module 3 & 4 don't have an AI-difficulty independent variable — that's Module
+    // 2's own question. So instead of splitting Basic/Intermediate/Advanced, pool ALL of
+    // a player's sessions (any level) into one combined average per player, for a
+    // per-player "your average vs expert" comparison. `pooledValues` also collects every
+    // individual session value across ALL players for the same measures, so a one-sample
+    // test (client-side, lib/stats.js oneSampleWilcoxon) can ask "does the trainee
+    // population's average differ from the expert benchmark?" rather than "does level
+    // change the score?" (that second question stays Module 2-only, §averages/retests above).
+    const combinedKeys = [...new Set([...MODULE3_SCORE_KEYS, ...MODULE4_SCORE_KEYS])]
+    for (const p of players) {
+      const plays = [...(byPlayerAll[p.playerId] || [])].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      const combinedMetrics = {}
+      for (const k of combinedKeys) combinedMetrics[k] = mean(plays.map(pl => pl.metrics?.[k]))
+      p.combined = { n: plays.length, metrics: combinedMetrics }
+      // Every session this player played, ANY tier, oldest→newest — used by Module 4's
+      // reliability/benchmark sections instead of the old same-tier-only grouping, since
+      // Module 3/4 don't split by AI level at all (that distinction is Module 2-only).
+      p.allTrials = plays
+    }
+
+    const pooledValues = {}
+    for (const k of combinedKeys) {
+      pooledValues[k] = sessions
+        .map(s => metricsOf(s)[k])
+        .filter(v => typeof v === 'number' && !Number.isNaN(v))
+    }
 
     // ── Per-level averages across all study sessions ───────────────────────
     const averages = {}
@@ -113,19 +148,12 @@ export async function GET() {
       averages[lvl] = { n: plays.length, survey, metrics, workload: mean(plays.map(p => p.workload)) }
     }
 
-    // ── Repeated trials: same player + same level, played more than once ───
-    // Sorted oldest→newest (trial 1, 2, 3…) since that's the natural reading order.
-    // No filtering beyond "played the same level more than once" — an earlier attempt to
-    // filter by "has a completed survey" turned out not to reliably separate real study
-    // plays from leftover dev-test sessions (some dev sessions DO have a survey attached
-    // from earlier UI testing), so this shows exactly what the data says, honestly.
-    const retests = Object.values(byPlayerLevel)
-      .filter(g => g.trials.length > 1)
-      .map(g => ({ ...g, trials: [...g.trials].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)) }))
-      .sort((a, b) => a.playerId.localeCompare(b.playerId) || a.level.localeCompare(b.level))
-
     return NextResponse.json(
-      { players, averages, retests, surveyKeys: SURVEY_KEYS, metricKeys: METRIC_KEYS, module4ScoreKeys: MODULE4_SCORE_KEYS },
+      {
+        players, averages, pooledValues,
+        surveyKeys: SURVEY_KEYS, metricKeys: METRIC_KEYS,
+        module3ScoreKeys: MODULE3_SCORE_KEYS, module4ScoreKeys: MODULE4_SCORE_KEYS
+      },
       { headers: corsHeaders }
     )
   } catch (err) {

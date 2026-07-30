@@ -111,6 +111,112 @@ export function wilcoxonSignedRank(a, b) {
   return { n, wPlus, p: Math.min(1, p), z, r }
 }
 
+// ── One-way ANOVA (F-test) ──────────────────────────────────────────────────
+// Standard parametric between-groups test: does the mean differ across groups (e.g.
+// players), given the variability WITHIN each group? Needs the regularized incomplete
+// beta function to get an exact F-distribution p-value — implemented below via the
+// standard continued-fraction method (Numerical Recipes §6.4), not approximated.
+
+function logGamma(x) {
+  const cof = [76.18009172947146, -86.50532032941677, 24.01409824083091,
+    -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5]
+  let y = x, tmp = x + 5.5
+  tmp -= (x + 0.5) * Math.log(tmp)
+  let ser = 1.000000000190015
+  for (let j = 0; j < 6; j++) { y += 1; ser += cof[j] / y }
+  return -tmp + Math.log(2.5066282746310005 * ser / x)
+}
+
+// Continued fraction for the incomplete beta function (Numerical Recipes betacf).
+function betacf(x, a, b) {
+  const MAXIT = 200, EPS = 3e-9, FPMIN = 1e-30
+  const qab = a + b, qap = a + 1, qam = a - 1
+  let c = 1, d = 1 - qab * x / qap
+  if (Math.abs(d) < FPMIN) d = FPMIN
+  d = 1 / d
+  let h = d
+  for (let m = 1; m <= MAXIT; m++) {
+    const m2 = 2 * m
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN
+    d = 1 / d
+    h *= d * c
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN
+    d = 1 / d
+    const del = d * c
+    h *= del
+    if (Math.abs(del - 1) < EPS) break
+  }
+  return h
+}
+
+// Regularized incomplete beta function I_x(a, b).
+function betai(a, b, x) {
+  if (x <= 0) return 0
+  if (x >= 1) return 1
+  const bt = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x))
+  return x < (a + 1) / (a + b + 2)
+    ? bt * betacf(x, a, b) / a
+    : 1 - bt * betacf(1 - x, b, a) / b
+}
+
+// F-distribution survival function P(X > F) for df1, df2 degrees of freedom.
+function fDistSf(F, df1, df2) {
+  if (F <= 0) return 1
+  const x = df2 / (df2 + df1 * F)
+  return betai(df2 / 2, df1 / 2, x)
+}
+
+// One-way ANOVA. groups: [{ label, values: number[] }] — e.g. one group per player, each
+// player's sessions as that group's replicates. Returns the full ANOVA-table breakdown
+// (Between/Within/Total: SS, df, MS), the F-statistic, its exact p-value, and each
+// group's own n/mean — or null if fewer than 2 groups have data.
+export function oneWayAnova(groups) {
+  const valid = groups
+    .map(g => ({ label: g.label, values: (g.values || []).filter(v => typeof v === 'number' && !Number.isNaN(v)) }))
+    .filter(g => g.values.length > 0)
+  const k = valid.length
+  const N = valid.reduce((s, g) => s + g.values.length, 0)
+  if (k < 2) return null
+
+  const grandMean = valid.flatMap(g => g.values).reduce((a, b) => a + b, 0) / N
+
+  let ssBetween = 0, ssWithin = 0
+  const groupStats = valid.map(g => {
+    const n = g.values.length
+    const mean = g.values.reduce((a, b) => a + b, 0) / n
+    ssBetween += n * (mean - grandMean) ** 2
+    ssWithin += g.values.reduce((s, v) => s + (v - mean) ** 2, 0)
+    return { label: g.label, n, mean }
+  })
+
+  const dfBetween = k - 1
+  const dfWithin = N - k
+  const msBetween = ssBetween / dfBetween
+  const msWithin = dfWithin > 0 ? ssWithin / dfWithin : null
+  const F = msWithin != null && msWithin > 0 ? msBetween / msWithin : null
+  const p = F != null && dfWithin > 0 ? fDistSf(F, dfBetween, dfWithin) : null
+
+  return {
+    k, N, grandMean, groupStats,
+    ssBetween, ssWithin, ssTotal: ssBetween + ssWithin,
+    dfBetween, dfWithin, msBetween, msWithin, F, p,
+  }
+}
+
+// ── One-sample Wilcoxon signed-rank test ───────────────────────────────────
+// Is this sample of values systematically different from a fixed constant (e.g. a
+// published expert benchmark)? Reuses the paired test above by pairing every value
+// against an array filled with the constant — the paired-difference machinery is
+// identical, it's a one-sample test in disguise. Returns { n, wPlus, p, z, r }.
+export function oneSampleWilcoxon(values, constant) {
+  const nums = values.filter(v => typeof v === 'number' && !Number.isNaN(v))
+  return wilcoxonSignedRank(nums, nums.map(() => constant))
+}
+
 // ── convenience: run Friedman + all pairwise Wilcoxon for one measure ───────
 // series: array of { label, values: number[] } in condition order (length k).
 // Only participants with a value in EVERY condition are used (complete cases).
