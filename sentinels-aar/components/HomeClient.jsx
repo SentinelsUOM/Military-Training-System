@@ -198,6 +198,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
               <thead>
                 <tr>
                   <th>Session ID</th>
+                  <th>Player ID</th>
                   <th>Date</th>
                   <th>Duration</th>
                   <th>Overall</th>
@@ -215,6 +216,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
                     onClick={() => router.push(`/session/${s.sessionId}`)}
                   >
                     <td className={styles.sessionId}>{s.sessionId}</td>
+                    <td>{s.playerId || <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                     <td>{formatDate(s.timestamp || s.createdAt)}</td>
                     <td>{formatTime(s.performance?.missionDuration)}</td>
                     <td>

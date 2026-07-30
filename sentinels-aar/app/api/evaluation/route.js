@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { connectDB } from '@/lib/mongodb'
 import Session from '@/lib/models/Session'
+import { evaluateMovementAgainstExperts } from '@/lib/movementBenchmarks'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,9 +27,18 @@ const METRIC_KEYS = ['reactionTime', 'accuracy', 'enemyAccuracy', 'duration', 'o
 // hit/shots % above, which is a Module-2-style objective-telemetry number, not what Module
 // 4's own accuracy score actually is — the two were conflated earlier and are now split).
 const MODULE4_SCORE_KEYS = ['overallScore', 'safetyScore', 'accuracyScore', 'speedScore', 'operatorSafetyScore']
-// Module 3's only measure here (reaction time — the rest of Module 3's evaluation lives
-// in the per-session Movement/Workload tabs, not this page).
-const MODULE3_SCORE_KEYS = ['reactionTime']
+// Module 3's measures here: reaction time (from cognitiveSummary) plus body-movement and
+// per-channel reaction metrics (from movementTrack, via the same literature bands used by
+// the per-session Movement tab — see lib/movementBenchmarks.js). Workload reasoning and
+// stability/attention proxies still live only in the per-session tabs, not this page.
+// reactionHead is deliberately excluded: no session has ever recorded a head-channel
+// reaction (Unity's ReactionTimeTracker never tags one in practice), so it's always null —
+// including it would just render an empty column/row everywhere.
+const MODULE3_SCORE_KEYS = [
+  'reactionTime',
+  'avgSpeed', 'maxSpeed', 'timeCrouched', 'headScanning', 'weaponHeldPct', 'handTravel',
+  'reactionHands', 'reactionMovement', 'reactionTrigger', 'threatsResponded',
+]
 
 const round3 = (n) => (typeof n === 'number' ? Math.round(n * 1000) / 1000 : n)
 
@@ -38,6 +48,11 @@ function metricsOf(s) {
   const accuracy      = p.totalShots > 0 ? Math.round((p.hits / p.totalShots) * 1000) / 10 : null
   // Enemy hit-rate: how well the terrorist AI shot the trainee (objective ablation measure).
   const enemyAccuracy = p.enemyShots > 0 ? Math.round((p.enemyHits / p.enemyShots) * 1000) / 10 : null
+  // Same literature-band evaluator the per-session Movement tab uses — reused here so the
+  // pooled/per-player numbers are guaranteed to match what a trainee sees on their own
+  // session page. Only .traineeValue (the raw metric) is used; verdicts are re-derived
+  // client-side from the aggregated (multi-session) value instead of averaging verdicts.
+  const mv = evaluateMovementAgainstExperts(s)
   return {
     reactionTime: c.averageReactionTime ?? null,
     accuracy,
@@ -52,7 +67,18 @@ function metricsOf(s) {
     safetyScore:         round3(p.safetyScore) ?? null,
     accuracyScore:       round3(p.accuracyScore) ?? null,
     speedScore:          round3(p.speedScore) ?? null,
-    operatorSafetyScore: round3(p.operatorSafetyScore) ?? null
+    operatorSafetyScore: round3(p.operatorSafetyScore) ?? null,
+    // Module 3 body-movement & reaction-channel metrics (movementTrack.stats / .reactions).
+    avgSpeed:         mv.avgSpeed.traineeValue,
+    maxSpeed:         mv.maxSpeed.traineeValue,
+    timeCrouched:     mv.timeCrouched.traineeValue,
+    headScanning:     mv.headScanning.traineeValue,
+    weaponHeldPct:    mv.weaponHeldPct.traineeValue,
+    handTravel:       mv.handTravel.traineeValue,
+    reactionHands:    mv.reactionHands.traineeValue,
+    reactionMovement: mv.reactionMovement.traineeValue,
+    reactionTrigger:  mv.reactionTrigger.traineeValue,
+    threatsResponded: mv.threatsResponded.traineeValue,
   }
 }
 
@@ -78,7 +104,7 @@ export async function GET() {
       playerId: { $nin: [null, ''] },
       npcLevel: { $nin: [null, ''] }
     })
-      .select('sessionId playerId npcLevel performance cognitiveSummary aiEval.derived simTlx.derived createdAt trialIndex')
+      .select('sessionId playerId npcLevel performance cognitiveSummary aiEval.derived simTlx.derived createdAt trialIndex movementTrack.stats movementTrack.reactionStats movementTrack.reactions.channel movementTrack.reactions.reactionTime')
       .sort({ createdAt: -1 })
       .lean()
 

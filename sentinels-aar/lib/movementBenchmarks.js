@@ -210,7 +210,11 @@ export const BENCHMARKS = {
   },
 }
 
-function evalMetric(key, value) {
+// Exported so callers that only have a raw aggregated value (e.g. a player's
+// multi-session average, computed server-side) can get the same tiered verdict
+// without needing a full session object — see evaluateMovementAgainstExperts()
+// below, which is the per-session version of the same logic.
+export function evalMetric(key, value) {
   const def = BENCHMARKS[key]
   const verdict = def.range ? clampVerdict(value, def.range) : 'unvalidated'
   return {
