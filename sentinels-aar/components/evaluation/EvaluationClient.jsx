@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { analyzeMeasure, oneSampleWilcoxon, oneWayAnova } from '@/lib/stats'
 import { benchmarkPos } from '@/lib/expertBenchmarks'
+import { BENCHMARKS as MOVEMENT_BENCHMARKS, CITATIONS as MOVEMENT_CITATIONS, evalMetric as evalMovementMetric } from '@/lib/movementBenchmarks'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import styles from './EvaluationClient.module.css'
 
@@ -34,6 +35,29 @@ const MODULE3_MEASURES = [
     },
   },
 ]
+
+// Module 3's body-movement & reaction-channel measures — the SAME literature bands the
+// per-session Movement tab evaluates each session against (lib/movementBenchmarks.js),
+// applied here to each player's combined (all-tiers) average instead of a single session.
+// Unlike MODULE3_MEASURES above, these don't have a single expert/novice constant — they're
+// bands (min–max) — so they use evalMovementMetric()'s tiered verdict (good/watch/
+// unvalidated) rather than benchmarkPos()'s novice→expert percentile placement.
+// `reactionOverall` is intentionally omitted: it's the same reaction-time figure as
+// MODULE3_MEASURES' `reactionTime` above (different aggregation source — movementTrack vs
+// cognitiveSummary — showing both would just be a confusing near-duplicate). `reactionHead`
+// is also omitted: no session has ever recorded a head-channel reaction, so it's always
+// empty — showing it would just be a permanently blank column/row.
+const MOVEMENT_MEASURE_KEYS = [
+  'avgSpeed', 'maxSpeed', 'timeCrouched', 'headScanning', 'weaponHeldPct', 'handTravel',
+  'reactionHands', 'reactionMovement', 'reactionTrigger', 'threatsResponded',
+]
+const MOVEMENT_MEASURES = MOVEMENT_MEASURE_KEYS.map(key => {
+  const def = MOVEMENT_BENCHMARKS[key]
+  return {
+    key, label: def.label, unit: def.unit, tier: def.tier,
+    fmt: (v) => (v == null ? '—' : `${Math.round(v * 100) / 100}${def.unit}`),
+  }
+})
 
 // Module 4's own 5 scores, combined across all AI tiers per player, then compared to a
 // published benchmark where one exists. Only Hostage Safety and Accuracy have an
@@ -274,12 +298,42 @@ export default function EvaluationClient() {
                   )}
 
                   {t.key === 'module3' && (
-                    <p className={styles.note}>
-                      This page only surfaces reaction time as it relates to the trainee population.
-                      Module 3&apos;s full cognitive evaluation (movement telemetry, workload
-                      reasoning, stability/attention) lives in each session&apos;s own Movement and Workload
-                      tabs on the dashboard, not here.
-                    </p>
+                    <>
+                      {/* ── Body-movement & reaction-channel metrics vs literature bands ──
+                          Same evalMetric() verdict logic as the per-session Movement tab
+                          (lib/movementBenchmarks.js), applied to each player's combined
+                          (all-tiers) average instead of a single session. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Body movement & reaction-channel metrics (per player vs literature)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Each player&apos;s sessions are averaged together (all AI tiers combined), then
+                          compared against the same literature-derived bands the per-session Movement tab
+                          uses. Tier A = direct empirical match, B = literature proxy, C = no quantified
+                          source (shown with no verdict rather than a fabricated one).
+                        </p>
+                        <MovementBenchmarkTable players={data.players} measures={MOVEMENT_MEASURES} />
+                        <MovementBenchmarkSources measures={MOVEMENT_MEASURES} />
+                      </section>
+
+                      {/* ── ANOVA — same one-way, between-player test as reaction time above,
+                          applied to each movement/reaction-channel metric. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>ANOVA Table — movement metrics (between players)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Does each movement/reaction-channel metric differ between players by more than
+                          their own session-to-session variability would explain? Same one-way ANOVA as the
+                          reaction-time table above (Source / SS / df / MS / F / p), one player = one group,
+                          that player&apos;s sessions = that group&apos;s replicates.
+                        </p>
+                        <AnovaPanel players={data.players} measures={MOVEMENT_MEASURES} />
+                      </section>
+
+                      <p className={styles.note}>
+                        Workload reasoning and the stability/attention proxy scores still live only in each
+                        session&apos;s own Movement and Workload tabs on the dashboard, not here — those are
+                        per-session diagnostics, not population-level measures with a literature benchmark.
+                      </p>
+                    </>
                   )}
 
                   {t.key === 'module4' && (
@@ -529,6 +583,81 @@ function CombinedPlayerTable({ players, measures }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+// ── Movement/reaction-channel metrics vs literature bands, per player ──────────────
+// Unlike CombinedPlayerTable's benchmarkPos() (novice→expert percentile placement,
+// used for measures with a single expert constant), these metrics only have a band
+// (min–max), so verdicts come from evalMovementMetric()'s tiered good/watch/unvalidated
+// logic — the same one the per-session Movement tab uses (lib/movementBenchmarks.js).
+const MOVEMENT_SEVERITY_COLOR = { good: '#3fb950', watch: '#d29922' }
+const MOVEMENT_SEVERITY_LABEL = { good: 'OK', watch: 'WATCH' }
+
+function MovementBenchmarkTable({ players, measures }) {
+  const withData = players.filter(p => p.combined?.n > 0)
+  return (
+    <table className={styles.table}>
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th className={styles.num}>Sessions</th>
+          {measures.map(m => <th key={m.key} className={styles.num}>{m.label}<sup style={{ marginLeft: 3, opacity: .6 }}>{m.tier}</sup></th>)}
+        </tr>
+      </thead>
+      <tbody>
+        <tr className={styles.groupRow}><td colSpan={2 + measures.length}>Literature band (expert range)</td></tr>
+        <tr>
+          <td className={styles.rowLabel}><strong>Expert range</strong></td>
+          <td className={styles.num}>—</td>
+          {measures.map(m => {
+            const range = MOVEMENT_BENCHMARKS[m.key]?.range
+            return (
+              <td key={m.key} className={styles.num} style={{ color: '#34d399', fontWeight: 700 }}>
+                {range ? `${range.min}–${range.max}${m.unit}` : 'no source (C)'}
+              </td>
+            )
+          })}
+        </tr>
+        <tr className={styles.groupRow}><td colSpan={2 + measures.length}>Trainees</td></tr>
+        {!withData.length ? (
+          <tr><td colSpan={2 + measures.length} className={styles.rowLabel}>No sessions recorded yet.</td></tr>
+        ) : withData.map(p => (
+          <tr key={p.playerId}>
+            <td className={styles.rowLabel}>{p.playerId}</td>
+            <td className={styles.num}>{p.combined.n}</td>
+            {measures.map(m => {
+              const v = p.combined.metrics[m.key]
+              const verdict = v != null ? evalMovementMetric(m.key, v) : null
+              const color = verdict && verdict.severity !== 'unvalidated' ? MOVEMENT_SEVERITY_COLOR[verdict.severity] : undefined
+              return (
+                <td key={m.key} className={styles.num} style={color ? { color, fontWeight: 700 } : undefined}>
+                  {m.fmt(v)}
+                  {color && <span style={{ fontSize: 9.5, marginLeft: 5, opacity: 0.85 }}>{MOVEMENT_SEVERITY_LABEL[verdict.severity]}</span>}
+                </td>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+// Dedupes and lists only the citations actually backing the metrics shown above.
+function MovementBenchmarkSources({ measures }) {
+  const ids = [...new Set(measures.flatMap(m => MOVEMENT_BENCHMARKS[m.key]?.citationIds || []))]
+  const cites = ids.map(id => MOVEMENT_CITATIONS[id]).filter(Boolean)
+  if (!cites.length) return null
+  return (
+    <div className={styles.note} style={{ marginTop: '.75rem' }}>
+      <strong>Sources: </strong>
+      {cites.map((c, i) => (
+        <span key={i}>
+          {c.authors}{c.year ? ` (${c.year})` : ''} — {c.title}{i < cites.length - 1 ? '; ' : ''}
+        </span>
+      ))}
+    </div>
   )
 }
 
