@@ -1,0 +1,47 @@
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim, var(--muted));
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 0.42rem 0.85rem 0.42rem 0.65rem;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+  white-space: nowrap;
+}
+
+.toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.toggle:active {
+  transform: scale(0.96);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+}
+
+.icon.hidden {
+  display: none;
+}
+
+.label {
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 640px) {
+  .label { display: none; }
+  .toggle { padding: 0.42rem 0.6rem; }
+}

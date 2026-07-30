@@ -85,10 +85,29 @@ export const getMissionPhase = (events, currentTime) => {
   return 'Infiltration'
 }
 
-export const chartTheme = {
-  grid:    '#30363d',
-  label:   '#8b949e',
-  accent:  '#1f6feb',
-  tooltip: '#161b22',
-  colors:  ['#1f6feb', '#3fb950', '#d29922', '#f85149', '#bc8cff', '#58a6ff'],
+// Chart chrome (grid lines, axis labels, tooltip background) tracks the page
+// theme — a dark grid line is invisible on a white chart and vice versa. The
+// categorical/series colors stay constant across themes (status/identity colors
+// read fine on both a dark and a light surface; only structural chrome needs to flip).
+const CHART_THEMES = {
+  dark: {
+    grid:    '#30363d',
+    label:   '#8b949e',
+    accent:  '#1f6feb',
+    tooltip: '#161b22',
+    colors:  ['#1f6feb', '#3fb950', '#d29922', '#f85149', '#bc8cff', '#58a6ff'],
+  },
+  light: {
+    grid:    '#d0d7de',
+    label:   '#59636e',
+    accent:  '#0969da',
+    tooltip: '#ffffff',
+    colors:  ['#0969da', '#1a7f37', '#9a6700', '#cf222e', '#8250df', '#218bff'],
+  },
 }
+
+export const getChartTheme = (theme) => CHART_THEMES[theme] || CHART_THEMES.dark
+
+// Backward-compatible static default (dark) for any call site not yet using the
+// theme-aware hook — keeps existing imports working unchanged.
+export const chartTheme = CHART_THEMES.dark

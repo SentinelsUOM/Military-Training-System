@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import TabBar from '@/components/ui/TabBar'
+import ThemeToggle from '@/components/ui/ThemeToggle'
 import SummaryTab from './SummaryTab'
 import TimelineTab from './TimelineTab'
 import IncidentsTab from './IncidentsTab'
@@ -57,13 +58,16 @@ export default function SessionClient({ session }) {
             <span className={styles.sep}>/</span>
             <span className={styles.sessionId}>{s.sessionId}</span>
           </div>
-          <button
-            className={styles.deleteBtn}
-            onClick={handleDelete}
-            disabled={deleting}
-          >
-            {deleting ? 'Deleting…' : 'Delete'}
-          </button>
+          <div className={styles.headerRight}>
+            <ThemeToggle />
+            <button
+              className={styles.deleteBtn}
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
         </div>
 
         <div className={styles.meta}>

@@ -15,8 +15,9 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
   width: 100%;
-  max-width: 640px;
+  max-width: 680px;
   max-height: calc(100vh - 3rem);
   display: flex;
   flex-direction: column;
@@ -38,6 +39,12 @@
   margin: 0;
   color: var(--text);
   letter-spacing: 0.04em;
+}
+
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .closeBtn {

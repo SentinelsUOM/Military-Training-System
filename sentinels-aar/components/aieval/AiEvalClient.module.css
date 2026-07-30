@@ -12,9 +12,15 @@
   max-width: 780px;
   background: var(--surface, #161b22);
   border: 1px solid var(--border, #2a2f38);
-  border-radius: 14px;
+  border-radius: var(--radius-lg, 14px);
   padding: 2rem 2.25rem 2.5rem;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-raised, 0 10px 40px rgba(0, 0, 0, 0.35));
+}
+
+.themeRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
 }
 
 .header {

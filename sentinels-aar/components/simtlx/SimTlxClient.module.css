@@ -8,14 +8,21 @@
 
 .card {
   width: 100%;
-  max-width: 680px;
+  max-width: 760px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
   padding: 2rem;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.themeRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
 }
 
 .header {

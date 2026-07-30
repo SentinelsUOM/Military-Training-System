@@ -5,12 +5,13 @@ import {
 } from 'recharts'
 import dynamic from 'next/dynamic'
 import styles from './ReplayTab.module.css'
-import { formatTime, getActorStateAt, getMissionPhase, stateColor, chartTheme } from '@/lib/utils'
+import { formatTime, getActorStateAt, getMissionPhase, stateColor } from '@/lib/utils'
+import { useChartTheme } from '@/lib/useTheme'
 
 // three.js can't server-render (needs the DOM/WebGL), so load the 3D view client-only.
 const Replay3D = dynamic(() => import('./Replay3D'), {
   ssr: false,
-  loading: () => <div style={{ padding: 24, color: '#8b949e' }}>Loading 3D replay…</div>,
+  loading: () => <div style={{ padding: 24, color: 'var(--muted)' }}>Loading 3D replay…</div>,
 })
 
 const SPEEDS = [0.5, 1, 2]
@@ -23,6 +24,7 @@ const isTrainee  = (a) => (a?.actorId || '').toLowerCase().startsWith('trainee')
 const actorColor = (a) => (isTrainee(a) ? TRAINEE_COLOR : stateColor(a?.state))
 
 export default function ReplayTab({ session }) {
+  const chartTheme = useChartTheme()
   const duration    = session.performance?.missionDuration || 1
   const frames      = session.replayFrames    || []
   const npcChanges  = session.npcStateChanges || []

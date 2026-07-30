@@ -116,6 +116,83 @@ export function avgEngagementDistance(session) {
   return { avg: dists.reduce((a, b) => a + b, 0) / dists.length, samples: dists.length }
 }
 
+// ── Per-shot distance list (for the distance-band breakdown below) ──────────
+// Returns every individual hit's distance as a plain array, e.g. [2.1, 6.4, 6.9, 11.0].
+// Only HITS carry a recorded distance (a miss never touches NPCHitBox, so there is no
+// position to measure) — this is a real, honestly-stated limit: the breakdown below shows
+// WHERE a trainee's successful hits landed by range, not a true "hit rate per band" (that
+// would need the range of every miss too, which isn't captured). Prefers the exact per-hit
+// distance Unity now records (event.distance); falls back to reconstructing each hit's
+// distance from replay-frame positions for sessions recorded before that field existed.
+export function hitDistances(session) {
+  const exact = (session.events || [])
+    .filter(e => e.eventType === 'TerroristHit' && typeof e.distance === 'number' && e.distance >= 0)
+    .map(e => e.distance)
+  if (exact.length) return { distances: exact, exact: true }
+
+  const frames = session.replayFrames || []
+  const hits = (session.events || []).filter(e => e.eventType === 'TerroristHit' && e.targetActorId)
+  if (!hits.length || !frames.length) return { distances: [], exact: false }
+
+  const byId = new Map()
+  for (const f of frames) {
+    if (!byId.has(f.actorId)) byId.set(f.actorId, [])
+    byId.get(f.actorId).push(f)
+  }
+  for (const arr of byId.values()) arr.sort((a, b) => a.timestamp - b.timestamp)
+
+  const posAt = (id, t) => {
+    const arr = byId.get(id)
+    if (!arr || !arr.length) return null
+    let best = arr[0], bd = Math.abs(arr[0].timestamp - t)
+    for (const f of arr) { const d = Math.abs(f.timestamp - t); if (d < bd) { bd = d; best = f } }
+    return best.position
+  }
+
+  const traineeId = [...byId.keys()].find(k => (k || '').toLowerCase().startsWith('trainee'))
+  if (!traineeId) return { distances: [], exact: false }
+
+  const distances = []
+  for (const h of hits) {
+    const tp = posAt(traineeId, h.timestamp)
+    const ep = posAt(h.targetActorId, h.timestamp)
+    if (tp && ep && tp.x != null && ep.x != null) distances.push(Math.hypot(tp.x - ep.x, tp.z - ep.z))
+  }
+  return { distances, exact: false }
+}
+
+// The 5 NYPD SOP-9 distance bands, in order, with their boundaries and expert/novice
+// reference rates — used to bin hits and show WHERE a trainee's hits landed relative to
+// how hard each range actually is.
+export const DISTANCE_BANDS = [
+  { label: 'Under 3 m',  min: 0,  max: 3,        expert: 0.50,  novice: 0.18 },
+  { label: '3–7 m',      min: 3,  max: 7,        expert: 0.125, novice: 0.04 },
+  { label: '7–15 m',     min: 7,  max: 15,       expert: 0.06,  novice: 0.02 },
+  { label: '15–25 m',    min: 15, max: 25,       expert: 0.045, novice: 0.015 },
+  { label: '25 m+',      min: 25, max: Infinity, expert: 0.03,  novice: 0.01 },
+]
+
+// Bins every recorded hit distance into the 5 bands above. Returns only the bands that
+// actually have at least one hit, each with a count, % of this session's hits, and the
+// expert/novice reference rate for that range (context, not a rate computed from this
+// session — see hitDistances() for why a true per-band rate isn't derivable).
+export function hitsByDistanceBand(session) {
+  const { distances, exact } = hitDistances(session)
+  if (!distances.length) return { bands: [], exact, totalHits: 0 }
+
+  const counts = DISTANCE_BANDS.map(() => 0)
+  for (const d of distances) {
+    const i = DISTANCE_BANDS.findIndex(b => d >= b.min && d < b.max)
+    if (i >= 0) counts[i]++
+  }
+
+  const bands = DISTANCE_BANDS
+    .map((b, i) => ({ ...b, count: counts[i], pct: counts[i] / distances.length }))
+    .filter(b => b.count > 0)
+
+  return { bands, exact, totalHits: distances.length }
+}
+
 // Rescue-outcome context (binary per mission), from RAND hostage-rescue data.
 export const RESCUE_CONTEXT = {
   source: 'RAND — hostage rescue outcomes',

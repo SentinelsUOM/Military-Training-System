@@ -24,6 +24,13 @@ export async function GET() {
           averageOverallScore: { $avg: '$performance.overallScore' },
           averageSafetyScore:  { $avg: '$performance.safetyScore' },
           averageAccuracyScore:{ $avg: '$performance.accuracyScore' },
+          // Speed + Operator Safety are Module 4's other two composite scores (see
+          // PerformanceCalculator.cs) — computed per session already, just never
+          // surfaced as a dashboard-wide average until now. Operator Safety is only
+          // present on sessions recorded after that feature shipped; $avg silently
+          // ignores missing/null values, same as averageWorkload does for SIM-TLX.
+          averageSpeedScore:         { $avg: '$performance.speedScore' },
+          averageOperatorSafetyScore:{ $avg: '$performance.operatorSafetyScore' },
           successCount:        { $sum: { $cond: ['$performance.missionSuccess', 1, 0] } },
           averageReactionTime: { $avg: '$cognitiveSummary.averageReactionTime' },
           // SIM-TLX aggregates — $avg ignores sessions without a questionnaire
@@ -41,6 +48,10 @@ export async function GET() {
           averageOverallScore: { $round: ['$averageOverallScore',  3] },
           averageSafetyScore:  { $round: ['$averageSafetyScore',   3] },
           averageAccuracyScore:{ $round: ['$averageAccuracyScore', 3] },
+          averageSpeedScore:   { $round: ['$averageSpeedScore', 3] },
+          averageOperatorSafetyScore: {
+            $cond: [{ $eq: ['$averageOperatorSafetyScore', null] }, null, { $round: ['$averageOperatorSafetyScore', 3] }]
+          },
           missionSuccessRate:  {
             $cond: [
               { $eq: ['$totalSessions', 0] },
@@ -63,6 +74,8 @@ export async function GET() {
       averageOverallScore: 0,
       averageSafetyScore: 0,
       averageAccuracyScore: 0,
+      averageSpeedScore: 0,
+      averageOperatorSafetyScore: null,
       missionSuccessRate: 0,
       averageReactionTime: 0,
       simTlxCount: 0,
