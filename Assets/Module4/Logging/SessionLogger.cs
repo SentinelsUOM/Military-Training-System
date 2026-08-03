@@ -161,12 +161,17 @@ namespace TeamSentinels.Module4.Logging
             _npcStateChanges.Add(change);
         }
 
-        /// <summary>Logs a hostage emotional-state transition and computes distress score.</summary>
+        /// <summary>
+        /// Logs a hostage emotional-state transition and computes distress score.
+        /// <paramref name="hostageProfile"/> is the hostage's personality profile
+        /// ("Weak"/"Normal"/"Brave"); pass null for sessions without profiles.
+        /// </summary>
         public void LogHostageStateChange(string hostageId, string newState,
-            string triggerEvent, float timestamp)
+            string triggerEvent, float timestamp, string hostageProfile = null)
         {
             if (!_sessionActive) return;
-            _hostageHistory.Add(HostageStateEntry.Create(hostageId, timestamp, newState, triggerEvent));
+            _hostageHistory.Add(HostageStateEntry.Create(
+                hostageId, timestamp, newState, triggerEvent, hostageProfile));
         }
 
         /// <summary>

@@ -234,7 +234,7 @@ export default function EvaluationClient() {
                           Module 2's own question, above) — so a player's sessions are combined
                           across ALL tiers into one average, then compared to the expert value. ── */}
                       <section className={styles.section}>
-                        <h2 className={styles.h2}>Per-player average (all AI levels combined)</h2>
+                        <h2 className={styles.h2}>Per-player average </h2>
                         <p className={styles.note} style={{ marginTop: 0 }}>
                           {t.key === 'module3'
                             ? "Reaction time doesn't depend on which AI tier was played, so each player's sessions are averaged together regardless of level."
