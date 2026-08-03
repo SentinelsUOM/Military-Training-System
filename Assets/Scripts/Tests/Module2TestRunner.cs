@@ -193,6 +193,21 @@ public class Module2TestRunner : MonoBehaviour
         go.transform.position = pos;
         var h = go.AddComponent<HostageController>();
         h.responseCooldown = 0f;
+
+        // Pin the personality profile so these DISTANCE-threshold tests stay deterministic.
+        //
+        // Hostages now default to a research-weighted RANDOM profile (see HostageProfile.cs),
+        // and profiles differ in how reliably a non-threat is recognised. A Weak hostage can
+        // legitimately read a FAR gunshot as point-blank and go to Panic instead of Fearful —
+        // which would make "Fearful → Freeze on very-close gunshot" fail ~10% of runs for a
+        // reason that is correct behaviour, not a bug.
+        //
+        // Brave = discrimination 1.0 = never misreads = the pre-profile behaviour these two
+        // tests were written against, so they keep testing the distance thresholds only.
+        // Profile behaviour itself is covered separately by HostageProfileTestRunner.
+        h.assignRandomProfile = false;
+        h.profile = HostageProfile.Brave;
+
         return h;
     }
 

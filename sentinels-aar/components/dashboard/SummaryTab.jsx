@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
@@ -200,6 +201,18 @@ export default function SummaryTab({ session }) {
             ))}
             {Object.keys(cfg).length === 0 && (
               <span className={styles.cfgEmpty}>No scenario config recorded.</span>
+            )}
+          </div>
+
+          <div className={styles.cfgActions}>
+            {session.aiEval?.completedAt ? (
+              <Link href={`/aieval/${session.sessionId}`} className={styles.aiEvalViewLink}>
+                <span className={styles.aiEvalDoneBadge}>✓</span> Module 2 questionnaire completed — view responses →
+              </Link>
+            ) : (
+              <Link href={`/aieval/${session.sessionId}`} className={styles.aiEvalFillBtn}>
+                Complete Module 2 Questionnaire →
+              </Link>
             )}
           </div>
         </div>

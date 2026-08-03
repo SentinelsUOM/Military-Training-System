@@ -28,13 +28,26 @@ namespace TeamSentinels.Module4.Data
         [JsonProperty("distressScore")]
         public float distressScore;
 
+        /// <summary>
+        /// This hostage's personality profile — "Weak" | "Normal" | "Brave" — or null on
+        /// sessions recorded before profiles existed. Constant for a hostage across the whole
+        /// mission, so it is repeated on every entry purely for convenience: the dashboard can
+        /// read it off any single entry without a separate lookup, and it survives filtering.
+        ///
+        /// Stored as a plain string rather than the HostageProfile enum on purpose — that enum
+        /// lives in Assembly-CSharp, and the TeamSentinels.Module4 assembly has zero references
+        /// by design. See HostageProfile.cs / HOSTAGE_PROFILE_RESEARCH.md.
+        /// </summary>
+        [JsonProperty("hostageProfile")]
+        public string hostageProfile;
+
         #endregion
 
         #region Public API
 
         /// <summary>Creates an entry, computing distressScore from the state name.</summary>
         public static HostageStateEntry Create(string hostageId, float timestamp,
-            string state, string triggerEvent)
+            string state, string triggerEvent, string hostageProfile = null)
         {
             return new HostageStateEntry
             {
@@ -42,7 +55,8 @@ namespace TeamSentinels.Module4.Data
                 timestamp    = timestamp,
                 state        = state,
                 triggerEvent = triggerEvent,
-                distressScore = ComputeDistress(state)
+                distressScore = ComputeDistress(state),
+                hostageProfile = hostageProfile
             };
         }
 

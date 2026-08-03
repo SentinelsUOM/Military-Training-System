@@ -81,8 +81,38 @@ public class HostageController : MonoBehaviour, INPCResponder
              "still shows for the trainee's rounds).")]
     public GameObject bloodEffectPrefab;
 
+    [Header("Personality Profile")]
+    [Tooltip("Trait-differentiated response profile. All three profiles share the SAME distance " +
+             "thresholds above — they differ only in how reliably they tell a real threat from a " +
+             "harmless one (see HostageProfile.cs for why distance is deliberately not the " +
+             "differentiator). Normal reproduces the original single behaviour exactly.\n\n" +
+             "Leave 'assignRandomProfile' on for training variety; turn it OFF and set this " +
+             "explicitly for a controlled evaluation run.")]
+    public HostageProfile profile = HostageProfile.Normal;
+
+    [Tooltip("On Awake, replace 'profile' with a research-weighted random pick " +
+             "(~68% Brave / 21% Normal / 11% Weak — published trauma-trajectory prevalence). " +
+             "Turn OFF to force the profile set above, which is what evaluation runs do.")]
+    public bool assignRandomProfile = true;
+
     [Header("Debug — read-only in Play mode")]
     public HostageState currentState = HostageState.Calm;
+
+    /// <summary>
+    /// How reliably this hostage tells a real threat from a harmless one (0..1), derived from
+    /// <see cref="profile"/>. Higher = the reaction scales properly with the actual danger.
+    ///
+    /// Computed on read rather than cached in Awake — deliberately. Unity runs Awake the
+    /// instant AddComponent() is called, so any caller that does
+    /// <c>AddComponent&lt;HostageController&gt;()</c> and THEN assigns <c>profile</c> (every
+    /// test harness, and any runtime spawner) would be left with a discrimination value from
+    /// the wrong profile, silently. Recomputing is a switch statement — the cost is nil, and
+    /// it also lets the profile be changed live in the Inspector during play.
+    /// </summary>
+    public float ThreatDiscrimination => HostageProfiles.ThreatDiscrimination(profile);
+
+    /// <summary>The profile actually in force this session — what Module 4 logs for the AAR.</summary>
+    public HostageProfile ActiveProfile => profile;
 
     /// <summary>Raised exactly once when this hostage dies — whether by trainee
     /// friendly-fire (TakeHit) or a guardian execution (Execute). Module4SessionController
@@ -132,12 +162,28 @@ public class HostageController : MonoBehaviour, INPCResponder
 
         switch (e.Type)
         {
+            // Contact/freed events name the hostage they are for. Only respond to our OWN.
+            //
+            // Without this guard the event is routed by EventManager's *scored selection*
+            // (HostageContactStarted is not a broadcast type), and targetActorId is NOT used
+            // as a routing filter — so with two or more hostages, one hostage's contact event
+            // could be answered by a different hostage entirely.
+            //
+            // This became load-bearing with personality profiles: a hostage that misreads the
+            // rescuer now sits in Freeze, whose StateScore is 0.0 (the lowest of any state).
+            // Competing against a calmer hostage it would lose every subsequent selection and
+            // could never be re-contacted — turning "slower to extract" into "unrescuable".
+            // Filtering by target removes that starvation path entirely.
+            case ScenarioEventType.HostageContactStarted:
+            case ScenarioEventType.HostageFreed:
+                if (!string.IsNullOrEmpty(e.TargetActorId) && e.TargetActorId != NPCId)
+                    return false;
+                break;
+
             case ScenarioEventType.GunshotHeard:
             case ScenarioEventType.StressSpike:
             case ScenarioEventType.TerroristDown:
             case ScenarioEventType.TerroristEnteredRoom:
-            case ScenarioEventType.HostageContactStarted:
-            case ScenarioEventType.HostageFreed:
             case ScenarioEventType.RoomCleared:
                 break;
             default:
@@ -147,6 +193,25 @@ public class HostageController : MonoBehaviour, INPCResponder
         if (Time.time - _lastResponseTime < responseCooldown) return false;
         return true;
     }
+
+    /// <summary>
+    /// Did this hostage MISREAD a non-threatening stimulus as a maximum threat?
+    ///
+    /// This is the single behavioural difference between the three personality profiles, and
+    /// it implements the research finding directly: high trait reactivity FLATTENS the
+    /// intensity-response relationship — a distant shot feels the same as a point-blank one,
+    /// gunfire that is receding isn't recognised as leaving, and an approaching rescuer isn't
+    /// distinguished from an approaching captor.
+    ///
+    ///   Brave  (1.00) — never misreads; response always grades with the real danger
+    ///   Normal (0.85) — occasional lapses
+    ///   Weak   (0.35) — misreads most non-threats
+    ///
+    /// Deliberately stochastic rather than deterministic: it models within-person variability,
+    /// so repeated runs of the same profile differ. Evaluation averages across runs, which is
+    /// why the design calls for repeated plays rather than a single trial.
+    /// </summary>
+    private bool MisreadsNonThreat() => Random.value > ThreatDiscrimination;
 
     public void RespondTo(ScenarioEvent e)
     {
@@ -175,7 +240,13 @@ public class HostageController : MonoBehaviour, INPCResponder
                 }
                 else if (currentState == HostageState.Calm)
                 {
-                    TransitionTo(dist <= panicDistance
+                    // GATE 1 — a DISTANT shot is the non-threat here. A hostage who grades
+                    // intensity correctly is merely Fearful; one who cannot treats it as
+                    // though it were point-blank and goes straight to Panic.
+                    bool closeShot = dist <= panicDistance;
+                    if (!closeShot && MisreadsNonThreat()) closeShot = true;
+
+                    TransitionTo(closeShot
                         ? HostageState.Panic
                         : HostageState.Fearful, e);
                 }
@@ -196,8 +267,10 @@ public class HostageController : MonoBehaviour, INPCResponder
 
             // ── Threat eliminated ─────────────────────────────────────────────
             case ScenarioEventType.TerroristDown:
-                // Threat removed — panic may resolve, but do not override Freed
-                if (currentState == HostageState.Panic)
+                // Threat removed — panic may resolve, but do not override Freed.
+                // GATE 2 — "the danger is over" is the non-threat signal. A hostage who
+                // cannot read it stays in Panic instead of standing down.
+                if (currentState == HostageState.Panic && !MisreadsNonThreat())
                     TransitionTo(HostageState.Fearful, e);
                 break;
 
@@ -205,8 +278,11 @@ public class HostageController : MonoBehaviour, INPCResponder
                 // Calm the hostage — but NEVER cancel an active escort: RoomCleared
                 // arriving mid-walk silently dropped the hostage out of Follow and
                 // left them standing (one of the "hostage stops following" causes).
+                // GATE 3 — same de-escalation signal as above; a hostage who misreads it
+                // simply doesn't calm down.
                 if (currentState != HostageState.Freed &&
-                    currentState != HostageState.Follow)
+                    currentState != HostageState.Follow &&
+                    !MisreadsNonThreat())
                     TransitionTo(HostageState.Calm, e);
                 break;
 
@@ -215,6 +291,23 @@ public class HostageController : MonoBehaviour, INPCResponder
                 // The rescuer reached the hostage — follow from any non-terminal,
                 // non-already-following state (incl. Panic: the rescuer's arrival
                 // calms them enough to be led out).
+                //
+                // GATE 4 — the most consequential one. The APPROACHING RESCUER is a
+                // non-threat, and a hostage who cannot discriminate freezes at their own
+                // rescuer instead of following them out. This is what makes a Weak hostage
+                // genuinely slower to extract — and it is emergent, not scripted: nothing
+                // here sets "extraction takes N seconds longer", it just does, because the
+                // trainee has to make contact again.
+                if (MisreadsNonThreat())
+                {
+                    // Misread as a threat: freeze rather than follow. Only escalates —
+                    // never drags a Calm hostage backwards for no visible reason.
+                    if (currentState == HostageState.Fearful ||
+                        currentState == HostageState.Panic)
+                        TransitionTo(HostageState.Freeze, e);
+                    break;
+                }
+
                 if (currentState == HostageState.Calm ||
                     currentState == HostageState.Fearful ||
                     currentState == HostageState.Freeze ||
@@ -410,6 +503,12 @@ public class HostageController : MonoBehaviour, INPCResponder
         _animator = GetComponentInChildren<Animator>(); // optional — drives walk/idle blend
         _lastAnimPos = transform.position;
         _currentHealth = maxHealth;
+
+        // Personality profile — random by research-weighted prevalence for training variety,
+        // or forced (assignRandomProfile = false) for a controlled evaluation run.
+        // ThreatDiscrimination is derived on read from `profile`, so a caller that assigns
+        // `profile` after AddComponent() still gets the right behaviour (see the property).
+        if (assignRandomProfile) profile = HostageProfiles.RandomWeighted();
 
         // Movement comes from the NavMeshAgent, not the animation's root curve —
         // turn root motion off so the walk clip can't drag the hostage around.
