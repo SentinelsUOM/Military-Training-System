@@ -122,7 +122,8 @@ public class Module4Bridge : MonoBehaviour
                 rec.actorId,
                 rec.newState,
                 rec.triggerEventType,
-                elapsed
+                elapsed,
+                ResolveHostageProfile(rec.actorId)
             );
 
             if (echoToConsole)
@@ -144,6 +145,34 @@ public class Module4Bridge : MonoBehaviour
             if (echoToConsole)
                 Debug.Log($"[Module4Bridge] npc → {rec.actorId} ({rec.actorType}): {rec.previousState} → {rec.newState}");
         }
+    }
+
+    // Hostage personality profiles, resolved once per hostage and cached. Lives here rather
+    // than being threaded through TelemetryLogger because Module4Bridge sits in
+    // Assembly-CSharp and can see BOTH sides — HostageController (Assembly-CSharp) and
+    // SessionLogger (TeamSentinels.Module4) — which is the whole reason this bridge exists.
+    // Threading a profile parameter through Module 2's telemetry contract would have touched
+    // four files and coupled Module 2's logger to a Module 4 concern.
+    private readonly Dictionary<string, string> _hostageProfileCache = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Looks up a hostage's personality profile by actor id ("Weak"/"Normal"/"Brave"), or null
+    /// if no matching HostageController is in the scene. Cached because a profile is fixed for
+    /// the whole session, so the scene scan happens at most once per hostage.
+    /// </summary>
+    private string ResolveHostageProfile(string actorId)
+    {
+        if (string.IsNullOrEmpty(actorId)) return null;
+        if (_hostageProfileCache.TryGetValue(actorId, out string cached)) return cached;
+
+        string resolved = null;
+        foreach (var h in FindObjectsByType<HostageController>(FindObjectsSortMode.None))
+        {
+            if (h.NPCId == actorId) { resolved = h.ActiveProfile.ToString(); break; }
+        }
+
+        _hostageProfileCache[actorId] = resolved; // cache misses too — don't rescan every change
+        return resolved;
     }
 
     private Module4SessionController _cachedController;

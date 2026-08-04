@@ -70,12 +70,23 @@ public class AblationExperimentRunner : MonoBehaviour
         var npcs    = new List<TerroristController>();
         var spawned = new List<GameObject>();
 
+        // Round-robin through every non-terminal FSM state so StateScore actually varies
+        // across candidates. Without this every spawned NPC defaults to Idle (score 1.0)
+        // and the NoState ablation is inert by construction — it can never move the
+        // selection because every candidate loses the same constant amount.
+        var stateCycle = new[]
+        {
+            TerroristState.Idle, TerroristState.Suspicious, TerroristState.Alert,
+            TerroristState.TakeCover, TerroristState.Retreat,
+        };
+
         for (int i = 0; i < npcCount; i++)
         {
             float x = RandomFloat(rng, -arenaSize / 2f, arenaSize / 2f);
             float z = RandomFloat(rng, -arenaSize / 2f, arenaSize / 2f);
             var role = (NPCRole)(i % 3); // round-robin: Guard / Roamer / Leader
             var t = SpawnTerrorist($"AblationNPC_{i:D2}", new Vector3(x, 0f, z), role);
+            t.currentState = stateCycle[i % stateCycle.Length];
             npcs.Add(t);
             spawned.Add(t.gameObject);
         }
@@ -95,7 +106,7 @@ public class AblationExperimentRunner : MonoBehaviour
 
         // ── Run experiment ────────────────────────────────────────────────
         var csv = new StringBuilder();
-        csv.AppendLine("event_id,ablation_mode,event_x,event_z,selected_npc,selected_role,distance_m,had_los");
+        csv.AppendLine("event_id,ablation_mode,event_x,event_z,selected_npc,selected_role,distance_m,had_los,state_score");
 
         var ablations = new (string name, System.Action apply)[]
         {
@@ -103,6 +114,7 @@ public class AblationExperimentRunner : MonoBehaviour
             ("NoLOS",      () => NPCSelector.SetAblation(distance: true,  role: true,  state: true,  los: false)),
             ("NoDistance", () => NPCSelector.SetAblation(distance: false, role: true,  state: true,  los: true )),
             ("NoRole",     () => NPCSelector.SetAblation(distance: true,  role: false, state: true,  los: true )),
+            ("NoState",    () => NPCSelector.SetAblation(distance: true,  role: true,  state: false, los: true )),
         };
 
         var allCandidates = new List<INPCResponder>(npcs.Count);
@@ -125,7 +137,7 @@ public class AblationExperimentRunner : MonoBehaviour
                 var winner = NPCSelector.SelectBest(allCandidates, e, log: false);
                 if (winner == null)
                 {
-                    csv.AppendLine($"{ev},{ab.name},{ex:F2},{ez:F2},NONE,-,-,-");
+                    csv.AppendLine($"{ev},{ab.name},{ex:F2},{ez:F2},NONE,-,-,-,-");
                     continue;
                 }
 
@@ -137,7 +149,7 @@ public class AblationExperimentRunner : MonoBehaviour
                     NPCSelector.LosObstacleLayers,
                     QueryTriggerInteraction.Ignore);
 
-                csv.AppendLine($"{ev},{ab.name},{ex:F2},{ez:F2},{winner.NPCId},{winner.Role},{distance:F2},{(hasLos ? 1 : 0)}");
+                csv.AppendLine($"{ev},{ab.name},{ex:F2},{ez:F2},{winner.NPCId},{winner.Role},{distance:F2},{(hasLos ? 1 : 0)},{winner.StateScore:F2}");
 
                 // tally
                 string roleKey = winner.Role.ToString();

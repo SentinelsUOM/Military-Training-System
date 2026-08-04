@@ -118,3 +118,38 @@
   font-size: 13px;
   color: var(--muted);
 }
+
+.cfgActions {
+  margin-top: 0.9rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.aiEvalFillBtn {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 0.55rem 1.25rem;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.aiEvalFillBtn:hover { opacity: 0.85; }
+
+.aiEvalViewLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.aiEvalViewLink:hover { color: var(--text); }
+
+.aiEvalDoneBadge {
+  color: #34d399;
+  font-weight: 600;
+}

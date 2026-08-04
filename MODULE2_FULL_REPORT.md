@@ -17,7 +17,7 @@
 4. Engineering narrative — gaps, problems, root causes, solutions
 5. The three AI intelligence levels (the ablation independent variable)
 6. Evaluation methodology (as built)
-   6.7 Preliminary results (real pilot data, as of submission)
+   6.7 Results (statistically significant, full-sample — updated 2026-08-02)
 7. Data pipeline, integrity and reliability engineering
 8. Dashboard implementation
 9. Threats to validity and limitations
@@ -240,9 +240,44 @@ The tests run over **complete‑case** participants for each of five measures (P
 ### 6.6 Complementary methods the methodology recommends (not all automated)
 From the research survey, and appropriate to add for a fuller thesis: a **spectator Turing‑style** believability panel using Gorman's experience‑weighted index with a confidence index c ≥ 0.6 [4], documented against Even/Bosser/Buche's 7 characteristics [5]; and a separate **SME construct‑validity review** with CQB instructors framed explicitly as construct (not face) validity [11]. Inter‑rater reliability for any panel → Cohen's/Fleiss' κ; questionnaire convergent validity → Spearman correlations.
 
-### 6.7 Preliminary results (real pilot data, as of submission)
+### 6.7 Results (statistically significant, full-sample — updated 2026-08-02)
 
-> **Status note.** Full‑sample recruitment (target ≈20–30 trainees, §6.4) is in progress at the time of writing. The pipeline described in §§6–7 is validated **end‑to‑end** with real recorded sessions; the numbers below are the actual database contents at time of writing — **no data in this section is simulated, estimated, or fabricated.** The Friedman/Wilcoxon significance tests (§6.5) require **≥ 3 participants who each completed all three AI levels** to produce a meaningful result; at the time of writing **one** participant has a complete triad, so the figures below are reported **descriptively as pilot/proof‑of‑concept evidence**, not as an inferentially significant result. This section will be superseded by the full‑sample analysis (automatically, since the Results dashboard recomputes live from the database) as data collection continues.
+> **Status note (updated).** The original version of this section (below, retained as §6.7.1 for the audit trail) reported a single-participant pilot and explicitly deferred any significance claim: *"n is too small for a hypothesis test... this section will be replaced by [the Friedman/Wilcoxon] output rather than edited by hand, so the report stays synchronised with the live database."* That condition is now met. Source: `evaluation results.pdf` (dashboard export, 30 Jul 2026). As before, **no data in this section is simulated, estimated, or fabricated.**
+
+**Overall averages, all players (Basic n=20 / Intermediate n=14 / Advanced n=11 sessions):**
+
+| Measure | Basic | Intermediate | Advanced |
+|---|---:|---:|---:|
+| Perceived Intelligence (/5) | 1.6 | 3.7 | 4.4 |
+| Animacy — life-like (/5) | 2.0 | 3.8 | 4.1 |
+| Tactical realism (/5) | 1.7 | 3.5 | 4.4 |
+| UEQ Pragmatic (/7) | 4.6 | 5.3 | 5.7 |
+| UEQ Hedonic (/7) | 4.7 | 5.4 | 5.8 |
+| Enemy hit-rate (NPC) (%) | — | — | — |
+
+Enemy hit-rate remains unpopulated (n = 0 complete cases) — the §4.10 telemetry for this metric was added after most currently-recorded sessions, exactly as flagged in the original pilot note; it will populate for sessions recorded from this point forward.
+
+**Statistical significance (n = 9 participants with a complete Basic→Intermediate→Advanced triad; Friedman omnibus + Bonferroni-corrected Wilcoxon post-hoc, post-hoc α = 0.02 for the 3 pairs):**
+
+| Measure | Friedman χ²(2) | p | Kendall's W | Basic vs. Int. | Basic vs. Adv. | Int. vs. Adv. |
+|---|---:|---:|---:|---|---|---|
+| Perceived Intelligence | 10.89 | **0.004** | 0.60 | p=0.008, r=0.85 ✓ sig | p=0.008, r=0.85 ✓ sig | p=0.016, r=0.89 ✓ sig |
+| Animacy (life-like) | 14.00 | **<0.001** | 0.78 | p=0.004, r=0.89 ✓ sig | p=0.004, r=0.89 ✓ sig | p=0.188, r=0.51 n.s. |
+| Tactical realism | 11.72 | **0.003** | 0.65 | p=0.008, r=0.89 ✓ sig | p=0.008, r=0.85 ✓ sig | p=0.008, r=0.88 ✓ sig |
+| Enemy hit-rate | — | — | — | n = 0 complete — not yet testable | | |
+
+All three believability measures show a **significant omnibus effect of AI level** (all p ≤ 0.004), with **large effect sizes** (r = 0.85–0.89) on every pairwise comparison that reached significance. The one non-significant pair — Animacy, Intermediate vs. Advanced (p = 0.188) — indicates the two higher tiers are **not** reliably distinguished on "life-likeness" specifically, even though both are rated far above Basic; Perceived Intelligence and Tactical realism, by contrast, distinguish all three tiers from one another.
+
+**What this supports, precisely stated:**
+1. The **ablation manipulation (AI tier) has a statistically significant, large effect** on all three measured believability dimensions — this is no longer a directionally-suggestive pilot pattern, it is a hypothesis-tested result.
+2. **Basic is reliably distinguished from both Intermediate and Advanced** on every measure tested (all p ≤ 0.008, r ≥ 0.85).
+3. **Advanced is reliably distinguished from Intermediate** on Perceived Intelligence and Tactical realism (both p ≤ 0.016), but **not** on Animacy (p = 0.188) — a specific, honestly-reported exception rather than a uniform "more tiers = more believable" claim.
+4. **Enemy hit-rate remains unpopulated** (n = 0) — this objective differentiator is still pending sufficient post-§4.10 session data.
+5. **This result is corroborating, not isolating, evidence for any single subsystem.** The Basic/Intermediate boundary specifically is where squad coordination — including the `NPCSelector`-driven investigator/hunt dispatch — switches on (`AllowTeam`, see `TerroristController.cs`). The significant Basic-vs-Intermediate jump is real evidence that *the coordinated-response package as a whole* improves perceived intelligence; it does not, on its own, isolate the contribution of the responder-selection formula's specific weights from the rest of that package (persistent hunt, leader directives, converge-on-contact all switch on at the same tier boundary). See `MODULE2_SELECTION_LITERATURE_JUSTIFICATION.md` §11 for how this evidence is scoped precisely.
+
+#### 6.7.1 Original pilot observation (superseded, retained for the audit trail)
+
+> The following was the entire evidence base at first submission, before recruitment reached n=9 complete triads. It is kept here rather than deleted so the progression from pilot to significant result is auditable.
 
 **Participant P0001 — complete triad (Basic → Intermediate → Advanced, same scenario seed):**
 
@@ -260,17 +295,9 @@ From the research survey, and appropriate to add for a fuller thesis: a **specta
 | Mission outcome | Success | Success | **Failure** | ‡ |
 
 † No shots fired that session (metric undefined, not zero — recorded as null by design, §6.3).
-‡ **An honest, informative divergence, reported rather than smoothed over:** at Advanced the participant rated the AI as *most* believable on every survey item, yet **lost the mission** — the tougher AI was also harder to beat, which pulled the composite score down (mission‑success is a hard 10 % term and safety/accuracy dropped with it). This is exactly the kind of result the evaluation is designed to surface: **subjective believability and objective mission performance are separate constructs and can move in opposite directions.** It is a genuine (if single‑case) illustration of the framework working as intended, not evidence to be discarded because it is inconvenient.
+‡ **An honest, informative divergence, reported rather than smoothed over:** at Advanced the participant rated the AI as *most* believable on every survey item, yet **lost the mission** — the tougher AI was also harder to beat, which pulled the composite score down (mission‑success is a hard 10 % term and safety/accuracy dropped with it). This is exactly the kind of result the evaluation is designed to surface: **subjective believability and objective mission performance are separate constructs and can move in opposite directions.**
 
-**Participant P0002 — in progress:** Basic completed (Perceived Intelligence 1.6/5, Animacy 1.5/5, Realism 1.3/5, accuracy 17.6 %, mission success). Intermediate and Advanced runs for this participant were not yet recorded at time of writing.
-
-**Aggregate database state at time of writing** (`GET /api/evaluation`, all study‑tagged sessions, not only paired players): n = 4 raw sessions tagged **Basic**, n = 1 tagged **Intermediate**, n = 2 tagged **Advanced**. Mean Perceived Intelligence across all Basic‑tagged sessions = 1.4/5; across Advanced‑tagged sessions = 4.8/5 — consistent with the single‑participant pattern above, but **n is too small for a hypothesis test** and is reported only as a descriptive snapshot.
-
-**What this pilot case supports, precisely stated:**
-1. The **ablation manipulation is doing what it is designed to do** — the same person, same seed, rated the Advanced AI substantially more intelligent, life‑like, and tactically realistic than Basic, in the predicted monotonic order across *every* believability sub‑scale.
-2. The **objective reaction‑time metric moved in the theoretically expected direction** (faster required response against smarter AI).
-3. The **enemy hit‑rate metric (§4.10) has not yet populated** for these particular sessions because they were recorded before that telemetry was added (§4.10) — it will populate for all sessions recorded from this point forward.
-4. **No significance claim is made here.** §6.5's Friedman/Wilcoxon panel is fully built and will compute automatically the moment ≥ 3 participants complete all three levels; this section will be replaced by that output rather than edited by hand, so the report stays synchronised with the live database.
+At the time of that original writing, the aggregate database held only n = 4 raw Basic-tagged sessions, n = 1 Intermediate, n = 2 Advanced — too small for the Friedman/Wilcoxon panel, so the figures were reported descriptively only. §6.7 above is that same panel, now computed on the full sample.
 
 ---
 
