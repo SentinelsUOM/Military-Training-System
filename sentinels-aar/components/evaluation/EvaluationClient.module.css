@@ -96,6 +96,73 @@
 }
 .benchMeta { font-size: .72rem; color: var(--text-muted, #8b949e); margin-top: .3rem; }
 
+/* ── Module 1 (scenario-generation study) ────────────────────────────────
+   Module 1's evaluation is a batch study of the generator, not trainee sessions,
+   so it needs presentation the per-player tables don't: headline tiles, RQ cards,
+   effect-size tagging and caveat callouts. */
+.h3 { font-size: .85rem; color: var(--text-dim, #b9c2cc); margin: 0 0 .5rem; font-weight: 700; }
+
+/* Wide stat tables (level means × parameters) scroll inside their own box rather
+   than pushing the page sideways. */
+.scrollX { overflow-x: auto; }
+
+.tileRow { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; margin-top: 1rem; }
+.tile { border: 1px solid var(--border, #2a2f38); border-radius: 10px; padding: .8rem .9rem; background: var(--surface-2); }
+.tileValue { font-size: 1.5rem; font-weight: 700; color: var(--accent, #3987e5); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.tileLabel { font-size: .74rem; color: var(--text-muted, #8b949e); margin-top: .3rem; line-height: 1.4; }
+
+.rqGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .75rem; }
+.rqCard { border: 1px solid var(--border, #2a2f38); border-radius: 10px; padding: .85rem 1rem; background: var(--surface-2); display: flex; flex-direction: column; gap: .4rem; }
+.rqHead { display: flex; align-items: center; gap: .5rem; }
+.rqId { font-weight: 700; color: var(--accent, #3987e5); font-size: .9rem; }
+.rqQuestion { font-size: .82rem; color: var(--text, #e6edf3); font-weight: 600; line-height: 1.45; }
+.rqAnswer { font-size: .8rem; color: var(--text-dim, #b9c2cc); line-height: 1.55; }
+.rqEvidence { font-size: .72rem; color: var(--text-muted, #8b949e); margin-top: auto; padding-top: .3rem; }
+
+.primaryTag, .deterministicTag, .outOfRangeTag, .effectTag, .inlineNote {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  margin-left: .4rem; white-space: nowrap;
+}
+.primaryTag { color: var(--accent, #3987e5); border: 1px solid currentColor; border-radius: 4px; padding: 1px 5px; }
+.deterministicTag { color: var(--text-muted, #8b949e); font-weight: 600; letter-spacing: .04em; }
+.outOfRangeTag { color: var(--text-muted, #8b949e); font-weight: 500; text-transform: none; letter-spacing: 0; font-size: .68rem; }
+.effectTag { color: inherit; opacity: .7; font-size: .58rem; }
+.inlineNote { color: var(--text-muted, #8b949e); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: .7rem; }
+
+/* Pass-rate bar — a plain proportion, so a single accent fill rather than the
+   novice→expert gradient the benchmark bars use. */
+.rateBar { height: 7px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; }
+.rateBarFill { height: 100%; border-radius: 4px; background: var(--accent, #3987e5); }
+
+.splitCols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; margin-top: 1rem; }
+
+/* ── Published study figures ──────────────────────────────────────────────
+   These are matplotlib PNGs on a white canvas. Rather than filter or invert them
+   (which would falsify a citable artifact's colours), each sits on a white plate so
+   the light background reads as a deliberate figure mount on the dark page. */
+.figureBlock { display: flex; flex-direction: column; gap: 1.25rem; margin-top: 1.25rem; }
+.figure { margin: 0; }
+.figurePlate {
+  display: block; background: #fff; border: 1px solid var(--border, #2a2f38);
+  border-radius: 10px; padding: .75rem; transition: border-color .12s ease;
+}
+.figurePlate:hover { border-color: var(--accent, #3987e5); }
+.figureImg { display: block; width: 100%; height: auto; }
+.figureCaption { font-size: .78rem; color: var(--text-muted, #8b949e); line-height: 1.6; margin-top: .55rem; }
+.figureCaption strong { color: var(--text-dim, #b9c2cc); }
+.figureMissing {
+  font-size: .76rem; color: var(--text-muted, #8b949e); line-height: 1.6;
+  border: 1px dashed var(--border, #3a414c); border-radius: 8px; padding: .6rem .8rem;
+}
+.figureMissing strong { color: var(--text-dim, #b9c2cc); }
+
+/* Caveats that the study requires to appear beside the result they qualify —
+   styled to be read, not skimmed past. */
+.caveat { border-left: 3px solid var(--accent, #3987e5); background: rgba(57,135,229,.06); border-radius: 0 8px 8px 0; padding: .7rem .95rem; margin-top: 1rem; }
+.caveatTitle { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent, #3987e5); margin-bottom: .4rem; }
+.caveatList { margin: 0; padding-left: 1.1rem; color: var(--text-dim, #b9c2cc); font-size: .78rem; line-height: 1.6; }
+.caveatList li + li { margin-top: .4rem; }
+
 @media print {
   .page { background: #fff; color: #000; }
   .actions, .linkBtn, .btn { display: none !important; }
@@ -108,6 +175,23 @@
   .benchLabel, .benchValue { color: #000 !important; }
   .benchMeta { color: #333 !important; }
   .benchBarFill { box-shadow: 0 0 0 2px #fff; }
+
+  /* Module 1 sections — same treatment: readable on white, no clipped overflow. */
+  .tile, .rqCard, .caveat { background: #fff !important; border-color: #ccc; }
+  .caveat { border-left-color: #333; }
+  .h3, .tileValue, .rqId, .rqQuestion, .rqAnswer, .caveatList { color: #000 !important; }
+  .tileLabel, .rqEvidence, .caveatTitle, .inlineNote { color: #333 !important; }
+  .rateBar { background: #e5e5e5; }
+  .rateBarFill { background: #333; }
+  .scrollX { overflow-x: visible; }
+
+  /* Figures are the point of the printed copy — never split one across a page break,
+     and drop the screen-only plate chrome now that the page is white anyway. */
+  .figure { break-inside: avoid; page-break-inside: avoid; }
+  .figurePlate { border-color: #ccc; padding: 0; }
+  .figureCaption, .figureCaption strong { color: #000 !important; }
+  .figureMissing { border-color: #999; color: #333 !important; }
+  .figureMissing strong { color: #000 !important; }
 
   /* The whole point of print: show all three module sections in sequence, not just
      whichever tab happened to be active on screen. */
