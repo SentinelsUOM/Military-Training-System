@@ -208,6 +208,23 @@ public class Squad
         }
         if (searchers.Count == 0) return;
 
+        // The WITNESS (caller — the one who actually saw/lost the trainee) is dispatched
+        // STRAIGHT to the exact last-seen point, full priority, no lane offset, no "other
+        // things" first. Without this, the caller was just another name in the
+        // distance-sorted lane list below and could easily draw a side/rear lane instead of
+        // the direct line — which read as "he saw me, then went and searched somewhere
+        // else entirely" (up to a full 180° reversal via LaneAngle). Everyone else still
+        // fans out around that point below to cover the wider approach.
+        if (caller != null && searchers.Remove(caller))
+            caller.DispatchToInvestigate(SampleReachable(focus, focus));
+
+        if (searchers.Count == 0)
+        {
+            _searchWave++;
+            _nextFanOutAllowedAt = Time.time + FanOutCooldownSeconds;
+            return;
+        }
+
         // Prefer the squad-shared escape context (the freshest sighting) over a caller with no
         // heading of its own — otherwise a squadmate who only HEARD the shots would search blind.
         escapeDir.y = 0f;

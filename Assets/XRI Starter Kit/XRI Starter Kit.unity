@@ -114359,7 +114359,7 @@ MonoBehaviour:
   corridorFloorMaterial: {fileID: 0}
   addFurniture: 1
   furnitureMaterial: {fileID: 0}
-  useFurniturePrefabs: 0
+  useFurniturePrefabs: 1
   furniturePrefabs: []
   npcAiLevel: 2
   terroristPrefab: {fileID: 384703117076225491, guid: 43367c24b95a3b0459bc95476f492316, type: 3}

@@ -112,10 +112,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         public Material furnitureMaterial;
 
         [Tooltip("Use imported furniture models instead of shaped greyboxes. ON by " +
-                 "default: the bundled PandazoleHome pack's shared material has been " +
-                 "upgraded to URP/Lit, so its props render correctly under this " +
-                 "project's URP pipeline. Auto-discovery is editor-only — for device " +
-                 "builds map the prefabs explicitly below (greybox is the fallback).")]
+                 "default: the bundled 'Furniture Mega Pack - Free' pack ships its own " +
+                 "URP/Lit materials, so its props render correctly under this project's " +
+                 "URP pipeline with no conversion needed. Auto-discovery is editor-only " +
+                 "— for device builds map the prefabs explicitly below (greybox is the " +
+                 "fallback).")]
         public bool useFurniturePrefabs = true;
 
         [Tooltip("OPTIONAL override, honoured whether or not 'Use Furniture Prefabs' " +
@@ -1154,25 +1155,31 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         // Maps each furniture type to the prop-prefab name prefixes to pull from
         // the project's art packs, so real furniture appears with no manual wiring.
         // Every matching variant is used, chosen deterministically per item id.
+        //
+        // Source pack: "Furniture Mega Pack - Free" (dlgames), 50 URP-ready variants
+        // per category under Assets/Furniture Mega Pack/Prefabs/<Category>/. It ships
+        // Table, Chair, Bed, Sofa, Closet (wardrobe) and Drawer (chest of drawers)
+        // categories but no crates, barrels, open shelving or stools, so those five
+        // FurnitureTypes are intentionally left unmapped — Module 1's own shaped
+        // greybox (BuildFurnitureShape) already reads as the right object for them
+        // and is a better real-world match than forcing a wrong prop onto that slot.
         private const string FurniturePrefabFolder =
-            "Assets/XRI Starter Kit/Assets/PandazoleHome/Prefabs";
+            "Assets/Furniture Mega Pack/Prefabs";
 
         private static readonly Dictionary<FurnitureType, string[]> AutoPrefabPrefixes =
             new Dictionary<FurnitureType, string[]>
             {
-                { FurnitureType.Table,     new[] { "Prop_Table_" } },
-                { FurnitureType.Desk,      new[] { "Prop_Desk_" } },
-                { FurnitureType.Chair,     new[] { "Prop_Chair_", "Prop_KitchenChair_", "Prop_OfficeChair_" } },
-                { FurnitureType.Crate,     new[] { "Prop_SmallStorageBox_", "Prop_Storage_" } },
-                { FurnitureType.Barrel,    new[] { "Prop_TrashCan_" } },
-                { FurnitureType.Shelf,     new[] { "Prop_KitchenShelf_", "Prop_Shelve_" } },
-                { FurnitureType.Cabinet,   new[] { "Prop_Cabinet_" } },
-                { FurnitureType.Bookshelf, new[] { "Prop_Shelve_" } },
-                { FurnitureType.Bed,       new[] { "Prop_Bed_" } },   // prefix excludes Prop_BabyBed_
-                { FurnitureType.Sofa,      new[] { "Prop_Sofa_01", "Prop_Sofa_04" } }, // the one-piece sofas; 02/03/05/06 are modular sections
-                { FurnitureType.Locker,    new[] { "Prop_Wardrobe_" } },
-                { FurnitureType.SideTable, new[] { "Prop_Nightstand_" } },
-                { FurnitureType.Stool,     new[] { "Prop_Pouffes_" } },
+                { FurnitureType.Table,     new[] { "Table" } },
+                { FurnitureType.Desk,      new[] { "Table" } },   // no dedicated desk model; dining/office tables double as desks
+                { FurnitureType.Chair,     new[] { "Chair" } },
+                // Crate, Barrel: no matching prop in this pack — greybox fallback.
+                // Shelf, Bookshelf: no open-shelving prop in this pack — greybox fallback.
+                { FurnitureType.Cabinet,   new[] { "Closet" } },  // wardrobe unit read as a wall storage cabinet
+                { FurnitureType.Bed,       new[] { "Bed" } },
+                { FurnitureType.Sofa,      new[] { "Sofa" } },
+                { FurnitureType.Locker,    new[] { "Closet" } },  // wardrobe — the pack's closest real-world locker equivalent
+                { FurnitureType.SideTable, new[] { "Drawer" } },  // small chest of drawers, the common real-world nightstand shape
+                // Stool: no backless-seat prop in this pack — greybox fallback.
             };
 
         // Every prefab under the art folder, loaded and name-sorted once per build.
@@ -3626,6 +3633,16 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             // carving NavMeshObstacle that severs the navmesh across the doorway
             // only while closed/locked, and GeneratedDoor disables it when open.
             _navMeshSurface.collectObjects = CollectObjects.Children;
+
+            // Default voxel size (~agentRadius/3, ~0.167 m here) is coarser than the
+            // 0.08 m floor slabs (see FloorThickness in ScenePrefabBuilder), so Recast's
+            // voxeliser can fail to rasterise a walkable span on them at all — the debug
+            // triangulation still looks populated, but NavMeshAgents can never attach
+            // (isOnNavMesh stays false everywhere, even right on top of the floor).
+            // Force a voxel size comfortably smaller than the floor thickness so the
+            // thin slabs always get at least one solid voxel layer.
+            _navMeshSurface.overrideVoxelSize = true;
+            _navMeshSurface.voxelSize = 0.03f;
 
             // The safe zone now sits just INSIDE the entrance (see
             // ResolveInteriorSafeZonePosition), so the whole escort route — hostage
