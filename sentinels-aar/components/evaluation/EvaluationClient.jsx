@@ -5,6 +5,8 @@ import { analyzeMeasure, oneSampleWilcoxon, oneWayAnova } from '@/lib/stats'
 import { benchmarkPos } from '@/lib/expertBenchmarks'
 import { BENCHMARKS as MOVEMENT_BENCHMARKS, CITATIONS as MOVEMENT_CITATIONS, evalMetric as evalMovementMetric } from '@/lib/movementBenchmarks'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import Module1Panel from './Module1Panel'
+import { METRIC_GROUPS as M1_METRIC_GROUPS, METRIC_LABELS as M1_METRIC_LABELS } from '@/lib/module1Results'
 import styles from './EvaluationClient.module.css'
 
 const LEVELS = ['basic', 'intermediate', 'advanced']
@@ -89,10 +91,15 @@ const fmtP = (p) => (p == null ? '—' : p < 0.001 ? '< 0.001' : p.toFixed(3))
 const round2 = (n) => (n == null ? '—' : Math.round(n * 100) / 100)
 
 // Which module a row/tab belongs to — drives the tab bar below.
+// `sessionBased` marks the tabs whose data comes from trainee Sessions in MongoDB
+// (/api/evaluation). Module 1 is the exception: its evaluation is an offline batch
+// study of the scenario generator served by /api/module1-evaluation, so it renders
+// even when no missions have been played, and it survives a database outage.
 const MODULE_TABS = [
-  { key: 'module2', label: 'Module 2 — AI Believability' },
-  { key: 'module3', label: 'Module 3 — Cognitive' },
-  { key: 'module4', label: 'Module 4 — Score Validity' },
+  { key: 'module1', label: 'Module 1 — Scenario Generation', sessionBased: false },
+  { key: 'module2', label: 'Module 2 — AI Believability',    sessionBased: true },
+  { key: 'module3', label: 'Module 3 — Cognitive',           sessionBased: true },
+  { key: 'module4', label: 'Module 4 — Score Validity',      sessionBased: true },
 ]
 
 // Display order + labels. `better` = which direction is "good" (for the arrow hint).
@@ -123,7 +130,12 @@ export default function EvaluationClient() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [playerId, setPlayerId] = useState('')
-  const [activeTab, setActiveTab] = useState('module2')
+  const [activeTab, setActiveTab] = useState('module1')
+  // Module 1's study data is fetched separately and kept in its own state: it comes
+  // from the filesystem rather than MongoDB, so neither source should be able to
+  // blank out the other's tab.
+  const [m1, setM1] = useState(null)
+  const [m1Error, setM1Error] = useState(null)
 
   useEffect(() => {
     fetch('/api/evaluation')
@@ -132,7 +144,12 @@ export default function EvaluationClient() {
         setData(d)
         if (d.players?.length) setPlayerId(d.players[0].playerId)
       })
-      .catch(() => setError('Could not load evaluation data.'))
+      .catch(() => setError('Could not load session evaluation data.'))
+
+    fetch('/api/module1-evaluation')
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(setM1)
+      .catch(() => setM1Error('Could not load the Module 1 scenario-generation study.'))
   }, [])
 
   const player = useMemo(
@@ -140,7 +157,15 @@ export default function EvaluationClient() {
     [data, playerId]
   )
 
-  const downloadCsv = () => {
+  const saveCsv = (lines, fileName) => {
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = fileName; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadSessionCsv = () => {
     if (!data) return
     const cols = ['playerId', 'level', 'sessionId',
       ...SURVEY_ROWS.map(r => r.key), ...METRIC_ROWS.map(r => r.key), 'workload', 'missionSuccess']
@@ -156,217 +181,267 @@ export default function EvaluationClient() {
         lines.push(row.join(','))
       }
     }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = 'module2-evaluation.csv'; a.click()
-    URL.revokeObjectURL(url)
+    saveCsv(lines, 'module2-4-session-evaluation.csv')
   }
 
-  if (error) return <div className={styles.page}><div className={styles.msg}>{error}</div></div>
-  if (!data)  return <div className={styles.page}><div className={styles.msg}>Loading…</div></div>
+  // Module 1's export is a different shape entirely (per-scenario study aggregates,
+  // not per-player session rows), so the button exports whichever dataset the active
+  // tab is actually showing rather than silently handing over the other module's data.
+  const downloadModule1Csv = () => {
+    if (!m1?.available) return
+    const lines = ['experiment,section,group,metric,statistic,value']
+    const push = (exp, section, group, metric, statistic, value) =>
+      lines.push([exp, section, group, metric, statistic, value ?? ''].join(','))
 
-  const hasData = data.players?.length > 0
+    for (const g of M1_METRIC_GROUPS) {
+      for (const metric of g.metrics) {
+        for (const [exp, set] of [['A', m1.experimentA.medium], ['A2', m1.experimentA.high]]) {
+          const s = set[metric.key]
+          if (!s) continue
+          push(exp, 'variability', g.group, metric.key, 'mean', s.mean)
+          push(exp, 'variability', g.group, metric.key, 'sd', s.sd)
+          push(exp, 'variability', g.group, metric.key, 'cv_pct', s.cv)
+        }
+      }
+    }
+    for (const [exp, pairs] of [['A', m1.experimentA.pairsMedium], ['A2', m1.experimentA.pairsHigh]]) {
+      for (const [key, s] of Object.entries(pairs.measures)) {
+        for (const stat of ['mean', 'sd', 'min', 'max']) push(exp, 'pairwise_diversity', `${pairs.pairs} pairs`, key, stat, s[stat])
+      }
+    }
+    for (const param of m1.experimentB.parameters) {
+      for (const level of param.levels) {
+        for (const [key, s] of Object.entries(level.metrics)) push('B', 'traceability', `${param.parameter}=${level.value}`, key, 'mean', s.mean)
+      }
+    }
+    for (const [exp, block, label] of [['C', m1.experimentC, 'randomness'], ['D', m1.experimentD, 'difficulty']]) {
+      for (const g of block.groups) {
+        for (const [key, s] of Object.entries(g.metrics)) push(exp, label, `${label}=${g.value}`, key, 'mean', s.mean)
+      }
+    }
+    for (const s of m1.experimentE.scopes) {
+      for (const stat of ['n', 'pass', 'fail', 'passRate']) push('E', 'validation', `"${s.scope}"`, 'validation', stat, s[stat])
+    }
+    for (const f of m1.experimentE.failures) push('E', 'failures', 'all', f.category, 'count', f.count)
+
+    saveCsv(lines, 'module1-scenario-generation-study.csv')
+  }
+
+  const onModule1 = activeTab === 'module1'
+  const downloadCsv = onModule1 ? downloadModule1Csv : downloadSessionCsv
+  const hasSessionData = data?.players?.length > 0
+  // The CSV button only ever exports the active tab's dataset, so it's enabled on
+  // whichever of the two sources has actually loaded.
+  const canDownload = onModule1 ? !!m1?.available : hasSessionData
 
   return (
     <div className={styles.page}>
       <div className={styles.wrap}>
         <header className={styles.head}>
           <div>
-            <div className={styles.kicker}>Module 2 · Ablation Study</div>
-            <h1 className={styles.title}>Enemy-AI Evaluation Results</h1>
+            <div className={styles.kicker}>Team Sentinels · Module Evaluations</div>
+            <h1 className={styles.title}>Evaluation Results</h1>
           </div>
           <div className={styles.actions}>
             <ThemeToggle />
             <Link href="/" className={styles.linkBtn}>← Dashboard</Link>
-            <button className={styles.btn} onClick={downloadCsv} disabled={!hasData}>Download CSV</button>
-            <button className={styles.btn} onClick={() => window.print()} disabled={!hasData}>Print / Save PDF</button>
+            <button className={styles.btn} onClick={downloadCsv} disabled={!canDownload}>
+              Download CSV{onModule1 ? ' (Module 1)' : ''}
+            </button>
+            <button className={styles.btn} onClick={() => window.print()}>Print / Save PDF</button>
           </div>
         </header>
 
-        {!hasData ? (
-          <div className={styles.msg}>
-            No tagged sessions yet. Start missions from the mission form with a <strong>Player ID</strong>{' '}
-            and an <strong>NPC Level</strong> (Basic / Intermediate / Advanced), complete the surveys, and results
-            will appear here.
-          </div>
-        ) : (
-          <>
-            {/* ── Module tab bar (hidden in print — all tabs print sequentially) ── */}
-            <div className={styles.tabBar}>
-              {MODULE_TABS.map(t => (
-                <button
-                  key={t.key}
-                  className={activeTab === t.key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
-                  onClick={() => setActiveTab(t.key)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+        {/* ── Module tab bar (hidden in print — all tabs print sequentially) ── */}
+        <div className={styles.tabBar}>
+          {MODULE_TABS.map(t => (
+            <button
+              key={t.key}
+              className={activeTab === t.key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
+              onClick={() => setActiveTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-            {MODULE_TABS.map(t => {
-              const surveyRows = SURVEY_ROWS.filter(r => r.module === t.key)
-              const metricRows = METRIC_ROWS.filter(r => r.module === t.key)
-              const measures = STAT_MEASURES.filter(m => m.group === t.label)
-              const bodyClass = activeTab === t.key ? styles.tabBody : `${styles.tabBody} ${styles.tabBodyHidden}`
+        {MODULE_TABS.map(t => {
+          const surveyRows = SURVEY_ROWS.filter(r => r.module === t.key)
+          const metricRows = METRIC_ROWS.filter(r => r.module === t.key)
+          const measures = STAT_MEASURES.filter(m => m.group === t.label)
+          const bodyClass = activeTab === t.key ? styles.tabBody : `${styles.tabBody} ${styles.tabBodyHidden}`
 
-              return (
-                <div key={t.key} className={bodyClass}>
-                  <h2 className={styles.printOnlyHeading}>{t.label}</h2>
+          return (
+            <div key={t.key} className={bodyClass}>
+              <h2 className={styles.printOnlyHeading}>{t.label}</h2>
 
-                  {t.key === 'module2' && (
-                    <>
-                      {/* ── Per-player comparison, by AI tier — Module 2's own question ── */}
-                      <section className={styles.section}>
-                        <div className={styles.sectionHead}>
-                          <h2 className={styles.h2}>Per-player comparison</h2>
-                          <label className={styles.selectWrap}>
-                            Player&nbsp;
-                            <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
-                              {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
-                            </select>
-                          </label>
-                        </div>
-                        {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
-                      </section>
+              {t.key === 'module1' && <Module1Panel data={m1} error={m1Error} />}
 
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>Overall averages (all players)</h2>
-                        <AveragesTable averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
-                      </section>
-
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>Statistical significance</h2>
-                        <StatsPanel players={data.players} measures={measures} />
-                      </section>
-
-                      <p className={styles.note}>
-                        Survey scores are participant ratings after each play (higher = better for the AI).
-                        Enemy hit-rate is an objective telemetry measure of the same thing (how competently
-                        the AI fought). The significance section runs a Friedman test (any difference across
-                        the three levels?) and Wilcoxon signed-rank post-hoc tests (which pairs differ?) on
-                        complete-case participants — because AI difficulty IS Module 2's research question.
-                      </p>
-                    </>
-                  )}
-
-                  {(t.key === 'module3' || t.key === 'module4') && (
-                    <>
-                      {/* ── Combined per-player average — no AI-tier split ──────
-                          Module 3/4 don't have an AI-difficulty independent variable (that's
-                          Module 2's own question, above) — so a player's sessions are combined
-                          across ALL tiers into one average, then compared to the expert value. ── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>Per-player average </h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          {t.key === 'module3'
-                            ? "Reaction time doesn't depend on which AI tier was played, so each player's sessions are averaged together regardless of level."
-                            : "Module 4's five scores aren't about AI difficulty, so each player's sessions are averaged together across whichever levels they played."}
-                        </p>
-                        <CombinedPlayerTable players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
-                      </section>
-
-                      {/* ── Pooled vs expert — one-sample test ──────────────────
-                          Is the trainee population's average different from the published expert
-                          value? Pools every individual session (any player, any tier). ── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>vs Expert Value (all sessions pooled)</h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          One-sample Wilcoxon signed-rank test: does the pooled set of every recorded
-                          session's value differ significantly from the published expert benchmark?
-                          Only measures with an independent published benchmark are testable this way.
-                        </p>
-                        <PooledVsExpertPanel pooledValues={data.pooledValues} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
-                      </section>
-
-                      {/* ── ANOVA Table — a genuinely different question from the one above:
-                          does the measure vary BETWEEN players, given the spread WITHIN each
-                          player's own sessions? Standard one-way ANOVA terminology throughout. ── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>ANOVA Table (between players)</h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          One-way analysis of variance, with each PLAYER as a group and their own
-                          sessions as that group&apos;s replicates: does the mean differ between
-                          players by more than their own session-to-session variability would explain?
-                          Source / SS (sum of squares) / df (degrees of freedom) / MS (mean square) / F
-                          (F-statistic) / p — standard ANOVA-table columns.
-                        </p>
-                        <AnovaPanel players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
-                      </section>
-                    </>
-                  )}
-
-                  {t.key === 'module3' && (
-                    <>
-                      {/* ── Body-movement & reaction-channel metrics vs literature bands ──
-                          Same evalMetric() verdict logic as the per-session Movement tab
-                          (lib/movementBenchmarks.js), applied to each player's combined
-                          (all-tiers) average instead of a single session. ── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>Body movement & reaction-channel metrics (per player vs literature)</h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          Each player&apos;s sessions are averaged together (all AI tiers combined), then
-                          compared against the same literature-derived bands the per-session Movement tab
-                          uses. Tier A = direct empirical match, B = literature proxy, C = no quantified
-                          source (shown with no verdict rather than a fabricated one).
-                        </p>
-                        <MovementBenchmarkTable players={data.players} measures={MOVEMENT_MEASURES} />
-                        <MovementBenchmarkSources measures={MOVEMENT_MEASURES} />
-                      </section>
-
-                      {/* ── ANOVA — same one-way, between-player test as reaction time above,
-                          applied to each movement/reaction-channel metric. ── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>ANOVA Table — movement metrics (between players)</h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          Does each movement/reaction-channel metric differ between players by more than
-                          their own session-to-session variability would explain? Same one-way ANOVA as the
-                          reaction-time table above (Source / SS / df / MS / F / p), one player = one group,
-                          that player&apos;s sessions = that group&apos;s replicates.
-                        </p>
-                        <AnovaPanel players={data.players} measures={MOVEMENT_MEASURES} />
-                      </section>
-
-                      <p className={styles.note}>
-                        Workload reasoning and the stability/attention proxy scores still live only in each
-                        session&apos;s own Movement and Workload tabs on the dashboard, not here — those are
-                        per-session diagnostics, not population-level measures with a literature benchmark.
-                      </p>
-                    </>
-                  )}
-
-                  {t.key === 'module4' && (
-                    <>
-                      {/* ── Repeated-play reliability ──────────────────── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>Repeated-Play Reliability</h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          Is Module 4&apos;s score consistent when the SAME person plays more than once?
-                          Shown per session, with mean and standard deviation across sessions — tight
-                          clustering (low SD) means the score is reliable, not noisy.
-                        </p>
-                        <ReliabilityPanel players={data.players} />
-                      </section>
-
-                      {/* ── Expert-benchmark comparison, averaged across a player's sessions ── */}
-                      <section className={styles.section}>
-                        <h2 className={styles.h2}>vs Expert Benchmarks (averaged per player)</h2>
-                        <p className={styles.note} style={{ marginTop: 0 }}>
-                          Each person&apos;s sessions are averaged first (to smooth out single-session
-                          noise), then compared to published expert/novice values where one exists.
-                          Speed and Operator Safety have no independent published benchmark — shown
-                          as-is, not scored against a source that doesn&apos;t exist.
-                        </p>
-                        <BenchmarkPanel players={data.players} />
-                      </section>
-                    </>
-                  )}
+              {/* The session-driven tabs share one empty/loading/error state — kept
+                  per-tab rather than replacing the whole page, so a database problem
+                  or an unstarted study can't also hide Module 1's offline results. */}
+              {t.sessionBased && !hasSessionData && (
+                <div className={styles.msg}>
+                  {error ? error
+                    : !data ? 'Loading session data…'
+                    : <>
+                        No tagged sessions yet. Start missions from the mission form with a{' '}
+                        <strong>Player ID</strong> and an <strong>NPC Level</strong> (Basic /
+                        Intermediate / Advanced), complete the surveys, and results will appear here.
+                      </>}
                 </div>
-              )
-            })}
-          </>
-        )}
+              )}
+
+              {t.key === 'module2' && hasSessionData && (
+                <>
+                  {/* ── Per-player comparison, by AI tier — Module 2's own question ── */}
+                  <section className={styles.section}>
+                    <div className={styles.sectionHead}>
+                      <h2 className={styles.h2}>Per-player comparison</h2>
+                      <label className={styles.selectWrap}>
+                        Player&nbsp;
+                        <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
+                          {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
+                  </section>
+
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>Overall averages (all players)</h2>
+                    <AveragesTable averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
+                  </section>
+
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>Statistical significance</h2>
+                    <StatsPanel players={data.players} measures={measures} />
+                  </section>
+
+                  <p className={styles.note}>
+                    Survey scores are participant ratings after each play (higher = better for the AI).
+                    Enemy hit-rate is an objective telemetry measure of the same thing (how competently
+                    the AI fought). The significance section runs a Friedman test (any difference across
+                    the three levels?) and Wilcoxon signed-rank post-hoc tests (which pairs differ?) on
+                    complete-case participants — because AI difficulty IS Module 2's research question.
+                  </p>
+                </>
+              )}
+
+              {(t.key === 'module3' || t.key === 'module4') && hasSessionData && (
+                <>
+                  {/* ── Combined per-player average — no AI-tier split ──────
+                      Module 3/4 don't have an AI-difficulty independent variable (that's
+                      Module 2's own question, above) — so a player's sessions are combined
+                      across ALL tiers into one average, then compared to the expert value. ── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>Per-player average </h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      {t.key === 'module3'
+                        ? "Reaction time doesn't depend on which AI tier was played, so each player's sessions are averaged together regardless of level."
+                        : "Module 4's five scores aren't about AI difficulty, so each player's sessions are averaged together across whichever levels they played."}
+                    </p>
+                    <CombinedPlayerTable players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                  </section>
+
+                  {/* ── Pooled vs expert — one-sample test ──────────────────
+                      Is the trainee population's average different from the published expert
+                      value? Pools every individual session (any player, any tier). ── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>vs Expert Value (all sessions pooled)</h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      One-sample Wilcoxon signed-rank test: does the pooled set of every recorded
+                      session's value differ significantly from the published expert benchmark?
+                      Only measures with an independent published benchmark are testable this way.
+                    </p>
+                    <PooledVsExpertPanel pooledValues={data.pooledValues} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                  </section>
+
+                  {/* ── ANOVA Table — a genuinely different question from the one above:
+                      does the measure vary BETWEEN players, given the spread WITHIN each
+                      player's own sessions? Standard one-way ANOVA terminology throughout. ── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>ANOVA Table (between players)</h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      One-way analysis of variance, with each PLAYER as a group and their own
+                      sessions as that group&apos;s replicates: does the mean differ between
+                      players by more than their own session-to-session variability would explain?
+                      Source / SS (sum of squares) / df (degrees of freedom) / MS (mean square) / F
+                      (F-statistic) / p — standard ANOVA-table columns.
+                    </p>
+                    <AnovaPanel players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                  </section>
+                </>
+              )}
+
+              {t.key === 'module3' && hasSessionData && (
+                <>
+                  {/* ── Body-movement & reaction-channel metrics vs literature bands ──
+                      Same evalMetric() verdict logic as the per-session Movement tab
+                      (lib/movementBenchmarks.js), applied to each player's combined
+                      (all-tiers) average instead of a single session. ── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>Body movement & reaction-channel metrics (per player vs literature)</h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      Each player&apos;s sessions are averaged together (all AI tiers combined), then
+                      compared against the same literature-derived bands the per-session Movement tab
+                      uses. Tier A = direct empirical match, B = literature proxy, C = no quantified
+                      source (shown with no verdict rather than a fabricated one).
+                    </p>
+                    <MovementBenchmarkTable players={data.players} measures={MOVEMENT_MEASURES} />
+                    <MovementBenchmarkSources measures={MOVEMENT_MEASURES} />
+                  </section>
+
+                  {/* ── ANOVA — same one-way, between-player test as reaction time above,
+                      applied to each movement/reaction-channel metric. ── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>ANOVA Table — movement metrics (between players)</h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      Does each movement/reaction-channel metric differ between players by more than
+                      their own session-to-session variability would explain? Same one-way ANOVA as the
+                      reaction-time table above (Source / SS / df / MS / F / p), one player = one group,
+                      that player&apos;s sessions = that group&apos;s replicates.
+                    </p>
+                    <AnovaPanel players={data.players} measures={MOVEMENT_MEASURES} />
+                  </section>
+
+                  <p className={styles.note}>
+                    Workload reasoning and the stability/attention proxy scores still live only in each
+                    session&apos;s own Movement and Workload tabs on the dashboard, not here — those are
+                    per-session diagnostics, not population-level measures with a literature benchmark.
+                  </p>
+                </>
+              )}
+
+              {t.key === 'module4' && hasSessionData && (
+                <>
+                  {/* ── Repeated-play reliability ──────────────────── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>Repeated-Play Reliability</h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      Is Module 4&apos;s score consistent when the SAME person plays more than once?
+                      Shown per session, with mean and standard deviation across sessions — tight
+                      clustering (low SD) means the score is reliable, not noisy.
+                    </p>
+                    <ReliabilityPanel players={data.players} />
+                  </section>
+
+                  {/* ── Expert-benchmark comparison, averaged across a player's sessions ── */}
+                  <section className={styles.section}>
+                    <h2 className={styles.h2}>vs Expert Benchmarks (averaged per player)</h2>
+                    <p className={styles.note} style={{ marginTop: 0 }}>
+                      Each person&apos;s sessions are averaged first (to smooth out single-session
+                      noise), then compared to published expert/novice values where one exists.
+                      Speed and Operator Safety have no independent published benchmark — shown
+                      as-is, not scored against a source that doesn&apos;t exist.
+                    </p>
+                    <BenchmarkPanel players={data.players} />
+                  </section>
+                </>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
