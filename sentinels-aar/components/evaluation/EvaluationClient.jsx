@@ -10,6 +10,8 @@ import { benchmarkPos } from '@/lib/expertBenchmarks'
 import { BENCHMARKS as MOVEMENT_BENCHMARKS, CITATIONS as MOVEMENT_CITATIONS, evalMetric as evalMovementMetric } from '@/lib/movementBenchmarks'
 import { useChartTheme } from '@/lib/useTheme'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import Module1Panel from './Module1Panel'
+import { METRIC_GROUPS as M1_METRIC_GROUPS, METRIC_LABELS as M1_METRIC_LABELS } from '@/lib/module1Results'
 import styles from './EvaluationClient.module.css'
 
 const LEVELS = ['basic', 'intermediate', 'advanced']
@@ -94,10 +96,15 @@ const fmtP = (p) => (p == null ? '—' : p < 0.001 ? '< 0.001' : p.toFixed(3))
 const round2 = (n) => (n == null ? '—' : Math.round(n * 100) / 100)
 
 // Which module a row/tab belongs to — drives the tab bar below.
+// `sessionBased` marks the tabs whose data comes from trainee Sessions in MongoDB
+// (/api/evaluation). Module 1 is the exception: its evaluation is an offline batch
+// study of the scenario generator served by /api/module1-evaluation, so it renders
+// even when no missions have been played, and it survives a database outage.
 const MODULE_TABS = [
-  { key: 'module2', label: 'Module 2 — AI Believability' },
-  { key: 'module3', label: 'Module 3 — Cognitive' },
-  { key: 'module4', label: 'Module 4 — Score Validity' },
+  { key: 'module1', label: 'Module 1 — Scenario Generation', sessionBased: false },
+  { key: 'module2', label: 'Module 2 — AI Believability',    sessionBased: true },
+  { key: 'module3', label: 'Module 3 — Cognitive',           sessionBased: true },
+  { key: 'module4', label: 'Module 4 — Score Validity',      sessionBased: true },
 ]
 
 // Display order + labels. `better` = which direction is "good" (for the arrow hint).
@@ -128,7 +135,12 @@ export default function EvaluationClient() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [playerId, setPlayerId] = useState('')
-  const [activeTab, setActiveTab] = useState('module2')
+  const [activeTab, setActiveTab] = useState('module1')
+  // Module 1's study data is fetched separately and kept in its own state: it comes
+  // from the filesystem rather than MongoDB, so neither source should be able to
+  // blank out the other's tab.
+  const [m1, setM1] = useState(null)
+  const [m1Error, setM1Error] = useState(null)
 
   useEffect(() => {
     fetch('/api/evaluation')
@@ -137,7 +149,12 @@ export default function EvaluationClient() {
         setData(d)
         if (d.players?.length) setPlayerId(d.players[0].playerId)
       })
-      .catch(() => setError('Could not load evaluation data.'))
+      .catch(() => setError('Could not load session evaluation data.'))
+
+    fetch('/api/module1-evaluation')
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(setM1)
+      .catch(() => setM1Error('Could not load the Module 1 scenario-generation study.'))
   }, [])
 
   const player = useMemo(
@@ -145,7 +162,15 @@ export default function EvaluationClient() {
     [data, playerId]
   )
 
-  const downloadCsv = () => {
+  const saveCsv = (lines, fileName) => {
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = fileName; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadSessionCsv = () => {
     if (!data) return
     const cols = ['playerId', 'level', 'sessionId',
       ...SURVEY_ROWS.map(r => r.key), ...METRIC_ROWS.map(r => r.key), 'workload', 'missionSuccess']
@@ -161,66 +186,118 @@ export default function EvaluationClient() {
         lines.push(row.join(','))
       }
     }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = 'module2-evaluation.csv'; a.click()
-    URL.revokeObjectURL(url)
+    saveCsv(lines, 'module2-4-session-evaluation.csv')
   }
 
-  if (error) return <div className={styles.page}><div className={styles.msg}>{error}</div></div>
-  if (!data)  return <div className={styles.page}><div className={styles.msg}>Loading…</div></div>
+  // Module 1's export is a different shape entirely (per-scenario study aggregates,
+  // not per-player session rows), so the button exports whichever dataset the active
+  // tab is actually showing rather than silently handing over the other module's data.
+  const downloadModule1Csv = () => {
+    if (!m1?.available) return
+    const lines = ['experiment,section,group,metric,statistic,value']
+    const push = (exp, section, group, metric, statistic, value) =>
+      lines.push([exp, section, group, metric, statistic, value ?? ''].join(','))
 
-  const hasData = data.players?.length > 0
+    for (const g of M1_METRIC_GROUPS) {
+      for (const metric of g.metrics) {
+        for (const [exp, set] of [['A', m1.experimentA.medium], ['A2', m1.experimentA.high]]) {
+          const s = set[metric.key]
+          if (!s) continue
+          push(exp, 'variability', g.group, metric.key, 'mean', s.mean)
+          push(exp, 'variability', g.group, metric.key, 'sd', s.sd)
+          push(exp, 'variability', g.group, metric.key, 'cv_pct', s.cv)
+        }
+      }
+    }
+    for (const [exp, pairs] of [['A', m1.experimentA.pairsMedium], ['A2', m1.experimentA.pairsHigh]]) {
+      for (const [key, s] of Object.entries(pairs.measures)) {
+        for (const stat of ['mean', 'sd', 'min', 'max']) push(exp, 'pairwise_diversity', `${pairs.pairs} pairs`, key, stat, s[stat])
+      }
+    }
+    for (const param of m1.experimentB.parameters) {
+      for (const level of param.levels) {
+        for (const [key, s] of Object.entries(level.metrics)) push('B', 'traceability', `${param.parameter}=${level.value}`, key, 'mean', s.mean)
+      }
+    }
+    for (const [exp, block, label] of [['C', m1.experimentC, 'randomness'], ['D', m1.experimentD, 'difficulty']]) {
+      for (const g of block.groups) {
+        for (const [key, s] of Object.entries(g.metrics)) push(exp, label, `${label}=${g.value}`, key, 'mean', s.mean)
+      }
+    }
+    for (const s of m1.experimentE.scopes) {
+      for (const stat of ['n', 'pass', 'fail', 'passRate']) push('E', 'validation', `"${s.scope}"`, 'validation', stat, s[stat])
+    }
+    for (const f of m1.experimentE.failures) push('E', 'failures', 'all', f.category, 'count', f.count)
+
+    saveCsv(lines, 'module1-scenario-generation-study.csv')
+  }
+
+  const onModule1 = activeTab === 'module1'
+  const downloadCsv = onModule1 ? downloadModule1Csv : downloadSessionCsv
+  const hasSessionData = data?.players?.length > 0
+  // The CSV button only ever exports the active tab's dataset, so it's enabled on
+  // whichever of the two sources has actually loaded.
+  const canDownload = onModule1 ? !!m1?.available : hasSessionData
 
   return (
     <div className={styles.page}>
       <div className={styles.wrap}>
         <header className={styles.head}>
           <div>
-            <div className={styles.kicker}>Module 2 · Ablation Study</div>
-            <h1 className={styles.title}>Enemy-AI Evaluation Results</h1>
+            <div className={styles.kicker}>Team Sentinels · Module Evaluations</div>
+            <h1 className={styles.title}>Evaluation Results</h1>
           </div>
           <div className={styles.actions}>
             <ThemeToggle />
             <Link href="/" className={styles.linkBtn}>← Dashboard</Link>
-            <button className={styles.btn} onClick={downloadCsv} disabled={!hasData}>Download CSV</button>
-            <button className={styles.btn} onClick={() => window.print()} disabled={!hasData}>Print / Save PDF</button>
+            <button className={styles.btn} onClick={downloadCsv} disabled={!canDownload}>
+              Download CSV{onModule1 ? ' (Module 1)' : ''}
+            </button>
+            <button className={styles.btn} onClick={() => window.print()}>Print / Save PDF</button>
           </div>
         </header>
 
-        {!hasData ? (
-          <div className={styles.msg}>
-            No tagged sessions yet. Start missions from the mission form with a <strong>Player ID</strong>{' '}
-            and an <strong>NPC Level</strong> (Basic / Intermediate / Advanced), complete the surveys, and results
-            will appear here.
-          </div>
-        ) : (
-          <>
-            {/* ── Module tab bar (hidden in print — all tabs print sequentially) ── */}
-            <div className={styles.tabBar}>
-              {MODULE_TABS.map(t => (
-                <button
-                  key={t.key}
-                  className={activeTab === t.key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
-                  onClick={() => setActiveTab(t.key)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+        {/* ── Module tab bar (hidden in print — all tabs print sequentially) ── */}
+        <div className={styles.tabBar}>
+          {MODULE_TABS.map(t => (
+            <button
+              key={t.key}
+              className={activeTab === t.key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
+              onClick={() => setActiveTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-            {MODULE_TABS.map(t => {
-              const surveyRows = SURVEY_ROWS.filter(r => r.module === t.key)
-              const metricRows = METRIC_ROWS.filter(r => r.module === t.key)
-              const measures = STAT_MEASURES.filter(m => m.group === t.label)
-              const bodyClass = activeTab === t.key ? styles.tabBody : `${styles.tabBody} ${styles.tabBodyHidden}`
+        {MODULE_TABS.map(t => {
+          const surveyRows = SURVEY_ROWS.filter(r => r.module === t.key)
+          const metricRows = METRIC_ROWS.filter(r => r.module === t.key)
+          const measures = STAT_MEASURES.filter(m => m.group === t.label)
+          const bodyClass = activeTab === t.key ? styles.tabBody : `${styles.tabBody} ${styles.tabBodyHidden}`
 
-              return (
-                <div key={t.key} className={bodyClass}>
-                  <h2 className={styles.printOnlyHeading}>{t.label}</h2>
+          return (
+            <div key={t.key} className={bodyClass}>
+              <h2 className={styles.printOnlyHeading}>{t.label}</h2>
 
-                  {t.key === 'module2' && (
+              {t.key === 'module1' && <Module1Panel data={m1} error={m1Error} />}
+
+              {/* The session-driven tabs share one empty/loading/error state — kept
+                  per-tab rather than replacing the whole page, so a database problem
+                  or an unstarted study can't also hide Module 1's offline results. */}
+              {t.sessionBased && !hasSessionData && (
+                <div className={styles.msg}>
+                  {error ? error
+                    : !data ? 'Loading session data…'
+                    : <>
+                        No tagged sessions yet. Start missions from the mission form with a{' '}
+                        <strong>Player ID</strong> and an <strong>NPC Level</strong> (Basic /
+                        Intermediate / Advanced), complete the surveys, and results will appear here.
+                      </>}
+                </div>
+              )}
+
+                  {t.key === 'module2' && hasSessionData && (
                     <>
                       {/* ── Per-player comparison, by AI tier — Module 2's own question ── */}
                       <section className={styles.section}>
@@ -274,7 +351,7 @@ export default function EvaluationClient() {
                     </>
                   )}
 
-                  {(t.key === 'module3' || t.key === 'module4') && (
+                  {(t.key === 'module3' || t.key === 'module4') && hasSessionData && (
                     <>
                       {/* ── Combined per-player average — no AI-tier split ──────
                           Module 3/4 don't have an AI-difficulty independent variable (that's
@@ -321,7 +398,7 @@ export default function EvaluationClient() {
                     </>
                   )}
 
-                  {t.key === 'module3' && (
+                  {t.key === 'module3' && hasSessionData && (
                     <>
                       {/* ── Body-movement & reaction-channel metrics vs literature bands ──
                           Same evalMetric() verdict logic as the per-session Movement tab
@@ -360,7 +437,7 @@ export default function EvaluationClient() {
                     </>
                   )}
 
-                  {t.key === 'module4' && (
+                  {t.key === 'module4' && hasSessionData && (
                     <>
                       {/* ── Repeated-play reliability — one player at a time, picked below ── */}
                       <section className={styles.section}>
@@ -412,11 +489,9 @@ export default function EvaluationClient() {
                       </section>
                     </>
                   )}
-                </div>
-              )
-            })}
-          </>
-        )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
