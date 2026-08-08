@@ -7,10 +7,29 @@ import styles from './HostageTab.module.css'
 import { formatTime, stateColor } from '@/lib/utils'
 import { useChartTheme } from '@/lib/useTheme'
 
-// ── Research-grounded state model ───────────────────────────────────────────
-// Each state's `pct` (distress-index contribution) and `justification` are grounded in
-// the sound/emotion research review (see HOSTAGE_EMOTION_SOUND_RESEARCH.pdf). The scale
-// is NOT just "how scary does this look" — it follows specific findings:
+// ── Research-ordered state model ────────────────────────────────────────────
+//
+// Each state carries three display fields, rendered together by <StateExplainer>:
+//   • `desc`     — WHAT the state means in the mission, in plain language
+//   • `whyRank`  — WHY it sits at this point on the scale, relative to the others
+//   • `source`   — the basis for that RANKING (null where there isn't one; `unsourced: true`
+//                  marks a state whose ranking is our judgement, not a paper's)
+//   • `keyFinding: true` bolds the two counter-intuitive rankings worth an evaluator's
+//                  attention — Freeze > Panic, and Threatened > Panic.
+//
+// IMPORTANT — what the citations below do and do not support:
+//   • `whyRank` / `source` explain why a state RANKS where it does. That ordering IS
+//     research-derived (see HOSTAGE_EMOTION_SOUND_RESEARCH.pdf).
+//   • `pct` — the NUMBER — is the project's own calibration and is NOT a published value.
+//     SUDS is a self-report scale (a person rates their own distress 0-100); no paper maps
+//     a categorical state onto a number, so nothing says "Freeze = 72%". The Expert Value
+//     Table called 0/10/33/50/66 "a reasonable compressed version" of SUDS — plausibility,
+//     not derivation. Held/Threatened/Wounded/Down and the revised Freeze are entirely ours.
+//
+//   Do not let a source label sitting next to a percentage imply the paper produced that
+//   percentage. See MODULE4_EVALUATION.md section 1.
+//
+// The scale is NOT just "how scary does this look" — the ordering follows specific findings:
 //
 //   - Freeze (72%) is scored ABOVE Panic (66%). This is the one correction driven directly
 //     by research: Freeze here models tonic immobility (a reflexive shutdown under
@@ -19,74 +38,78 @@ import { useChartTheme } from '@/lib/useTheme'
 //     on a severity scale, even though physiologically it looks "calmer" (bradycardia).
 //   - Threatened (75%) > Panic (66%): a directed vocal threat is a sharper fear trigger than
 //     equally loud gunfire (scream/threat "roughness" hits the amygdala more directly).
-//   - `source` is a short citation label; hover any state (journey bar, legend, or the
-//     Distress column) to see the full justification.
+//   - Hover any state (chart point, journey bar, legend, or the Distress column) to see the
+//     same what/why/basis explainer — all four surfaces share <StateExplainer>, so the
+//     wording can never drift between them.
 const STATE_INFO = {
   Calm: {
     pct: 0,
-    desc: 'Composed — no immediate threat perceived.',
-    justification: 'Baseline. Below the arousal threshold at which sound-driven stress responses begin.',
-    source: 'WHO Environmental Noise Guidelines',
+    desc: 'No threat perceived.',
+    whyRank: 'Floor of the scale — nothing to be distressed about.',
+    source: null,
   },
   Fearful: {
     pct: 33,
-    desc: 'Frightened by nearby danger — gunfire or an approaching captor.',
-    justification: 'Fear-potentiated startle to a perceived but not-yet-imminent threat — audible danger the hostage cannot yet act on.',
-    source: 'Fear-potentiated startle review, PMC6162305',
+    desc: 'Frightened by danger nearby — gunfire, or a captor approaching.',
+    whyRank: 'Real fear, but the hostage can still think and act. Lower third of the scale.',
+    source: 'Fear-potentiated startle research (PMC6162305)',
   },
   Scared: {
     pct: 33,
-    desc: 'Frightened by nearby danger.',
-    justification: 'Fear-potentiated startle to a perceived but not-yet-imminent threat.',
-    source: 'Fear-potentiated startle review, PMC6162305',
+    desc: 'Frightened by danger nearby.',
+    whyRank: 'Real fear, but the hostage can still think and act. Lower third of the scale.',
+    source: 'Fear-potentiated startle research (PMC6162305)',
   },
   Held: {
     pct: 40,
-    desc: "Under a captor's direct control — held at gunpoint / used as a human shield.",
-    justification: 'A captivity stressor, not a sound-driven one: agency and escape options are physically removed rather than self-suppressed.',
-    source: 'Design classification (captor mechanic)',
+    desc: "Under a captor's direct control — at gunpoint, or used as a shield.",
+    whyRank: 'Above plain fear because escape is physically removed, not just frightening.',
+    source: 'Project classification — no published source for this state',
+    unsourced: true,
   },
   Panic: {
     pct: 66,
-    desc: 'Overwhelmed by extreme stress — actively fleeing.',
-    justification: 'Active flight response to a confirmed, escalating threat (e.g. rapid/repeated gunfire). Repeated exposure does not reliably calm a person down — it can compound distress instead of fading.',
-    source: 'Blast-exposed failure-to-habituate study, PMC6387566',
+    desc: 'Overwhelmed — actively trying to flee.',
+    whyRank: "Severe, active distress. Repeated gunfire doesn't calm people down; it compounds.",
+    source: 'Failure-to-habituate startle study (PMC6387566)',
   },
   Freeze: {
     pct: 72,
-    desc: 'Paralysed by fear, unable to move — tonic immobility.',
-    justification: 'A reflexive shutdown under sustained or inescapable threat. Scored ABOVE Panic deliberately: peritraumatic tonic immobility predicts WORSE psychological outcomes than active panic, despite looking outwardly "calmer".',
-    source: 'Tonic immobility predicts poorer PTSD recovery — ScienceDirect 2019 / Brazilian police officers study',
+    desc: 'Frozen — physically unable to move.',
+    whyRank: 'Deliberately ranked ABOVE Panic. Freezing looks calmer from the outside, but under inescapable threat it predicts worse long-term psychological harm than actively panicking.',
+    source: 'Tonic immobility & PTSD recovery (ScienceDirect 2019; Brazilian police officers study)',
+    keyFinding: true,
   },
   Threatened: {
     pct: 75,
     desc: 'The captor is threatening them directly — "get back or he dies".',
-    justification: 'A directed vocal threat. Scream/threat "roughness" (fast loudness modulation) is judged more frightening than an equally loud gunshot — it is a sharper fear trigger than ambient danger.',
-    source: 'Arnal et al. 2015, Current Biology',
+    whyRank: 'Above Panic — a threat aimed at you by a person is a sharper fear trigger than general danger like gunfire.',
+    source: 'Arnal et al. 2015, Current Biology (vocal "roughness")',
+    keyFinding: true,
   },
   Wounded: {
     pct: 95,
-    desc: 'Shot and bleeding — near-total distress.',
-    justification: 'Physical injury compounds fear with pain, crossing the injury threshold — near-maximal distress by any measure.',
-    source: 'Firearms/blast SPL & injury threshold, PMC9450760',
+    desc: 'Shot and bleeding.',
+    whyRank: 'Near the top — pain, fear, and a real chance of dying at once.',
+    source: 'Firearms/blast injury threshold (PMC9450760)',
   },
   Follow: {
     pct: 10,
-    desc: 'Trusting the trainee and moving toward safety.',
-    justification: 'Contact with a rescuer provides a visible escape route. Appraisal of an available escape sharply lowers arousal, even before the threat is fully gone.',
-    source: 'Bracha (2004) — appraisal-driven de-escalation',
+    desc: 'Moving to safety with the trainee.',
+    whyRank: "Just above calm — the danger isn't over, but having a rescuer and a visible way out sharply reduces fear.",
+    source: 'Bracha (2004) — escape appraisal lowers arousal',
   },
   Freed: {
     pct: 0,
-    desc: 'Safely extracted — the rescue objective is met.',
-    justification: 'Threat resolved; returns to baseline.',
-    source: '—',
+    desc: 'Safely extracted.',
+    whyRank: 'Threat resolved; back to baseline.',
+    source: null,
   },
   Down: {
     pct: 100,
     desc: 'The hostage was killed.',
-    justification: 'Terminal outcome — maximum distress by definition.',
-    source: '—',
+    whyRank: 'Maximum by definition — the worst possible outcome.',
+    source: null,
   },
 }
 const DISTRESS_MAP = Object.fromEntries(Object.entries(STATE_INFO).map(([k, v]) => [k, v.pct / 100]))
@@ -135,9 +158,44 @@ function whyText(entry) {
 }
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1)
 
+// ── Shared "what / why / basis" body, used by BOTH hover surfaces ──────────
+// Kept as one component so the chart tooltip and the floating tooltip (journey bar, legend,
+// trigger table) can never drift apart — an evaluator sees identical wording wherever they
+// hover. Structure is deliberate: WHAT the state means in the mission, then WHY it ranks
+// where it does, then the source — which backs the RANKING, not the percentage.
+function StateExplainer({ info, compact }) {
+  if (!info) return null
+  const labelStyle = {
+    fontSize: 9.5, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+    opacity: 0.65, display: 'block', marginBottom: 1,
+  }
+  return (
+    <>
+      {info.desc && (
+        <div className={styles.chartTipWhy} style={{ marginTop: compact ? 4 : 6 }}>
+          <span style={labelStyle}>What it means</span>
+          {info.desc}
+        </div>
+      )}
+      {info.whyRank && (
+        <div className={styles.chartTipWhy} style={{ marginTop: 6 }}>
+          <span style={labelStyle}>Why it ranks here</span>
+          {info.keyFinding
+            ? <strong style={{ fontWeight: 600 }}>{info.whyRank}</strong>
+            : info.whyRank}
+        </div>
+      )}
+      {info.source && (
+        <div className={styles.chartTipSource} style={{ marginTop: 6 }}>
+          {info.unsourced ? '⚠ ' : 'Basis: '}{info.source}
+        </div>
+      )}
+    </>
+  )
+}
+
 // ── Custom tooltip for the "Distress Index Over Time" chart ────────────────
-// Shows, per hostage, not just the % at that moment but the research justification for
-// why that state carries that distress weight.
+// Shows, per hostage, the % at that moment plus what the state means and why it ranks there.
 function DistressChartTooltip({ active, payload, label }) {
   if (!active || !payload || payload.length === 0) return null
   return (
@@ -154,8 +212,7 @@ function DistressChartTooltip({ active, payload, label }) {
               <strong style={{ color: hColor(state) }}>{state}</strong>
               <span className={styles.chartTipPct}>{p.value}%</span>
             </div>
-            {info?.justification && <div className={styles.chartTipWhy}>{info.justification}</div>}
-            {info?.source && <div className={styles.chartTipSource}>{info.source}</div>}
+            <StateExplainer info={info} compact />
           </div>
         )
       })}
@@ -178,9 +235,7 @@ export default function HostageTab({ session }) {
       x: e.clientX, y: e.clientY,
       title: title || state,
       pct: info.pct,
-      desc: info.desc,
-      justification: info.justification,
-      source: info.source,
+      info,                     // full record — rendered by the shared StateExplainer
       color: hColor(state),
     })
   }
@@ -240,9 +295,9 @@ export default function HostageTab({ session }) {
               state. It <strong>rises</strong> when something frightening happens — gunfire nearby, a captor
               threatening them — and <strong>falls</strong> when they are calmed, start following the trainee,
               or are freed. Each step in the line is a change of state. Hover any point, state pill, or the
-              Distress column below for the research basis behind that score — including why{' '}
-              <strong style={{ color: hColor('Freeze') }}>Freeze</strong> is now scored{' '}
-              <em>above</em> Panic.
+              Distress column below for the research basis behind each state&apos;s <em>ranking</em> — including
+              why <strong style={{ color: hColor('Freeze') }}>Freeze</strong> ranks{' '}
+              <em>above</em> Panic. See the note under the chart for how to read the percentages.
             </p>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={distressData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
@@ -255,6 +310,35 @@ export default function HostageTab({ session }) {
                 ))}
               </LineChart>
             </ResponsiveContainer>
+
+            {/* Methodological note — placed BELOW the chart so it reads as a footnote to the
+                figure rather than a disclaimer before it. Distinguishes what the research
+                fixes (the ordering) from what the project chose (the numbers). */}
+            <div style={{
+              marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
+              fontSize: 11.5, lineHeight: 1.55, color: 'var(--muted)',
+            }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase',
+                color: 'var(--muted)', display: 'block', marginBottom: 4,
+              }}>
+                How to read these percentages
+              </span>
+              The <strong>order</strong> of the states is research-derived, and the 0–100 scale follows the
+              clinical <strong>SUDS</strong> (Subjective Units of Distress) convention. The{' '}
+              <strong>specific percentages are assigned for readability</strong> — they space the states
+              legibly on one axis so the curve can be read at a glance. They are a calibration, not measured
+              values: SUDS is self-reported, so no study assigns a number to a state. Each cited source
+              justifies <em>where a state sits relative to the others</em> (for example, why{' '}
+              <strong style={{ color: hColor('Freeze') }}>Freeze</strong> ranks above{' '}
+              <strong style={{ color: hColor('Panic') }}>Panic</strong>) — not the figure itself.
+              <br />
+              <span style={{ opacity: 0.8 }}>
+                Planned validation: expert elicitation with CQB/clinical raters to replace the assigned
+                values with elicited ones, and a sensitivity check confirming the distress <em>ranking</em>
+                of a session is stable when the values are varied.
+              </span>
+            </div>
           </div>
 
           {hostageIds.map((id) => {
@@ -331,7 +415,9 @@ export default function HostageTab({ session }) {
         </>
       )}
 
-      {/* Floating research-justification tooltip, shared by the journey bar, legend, and table */}
+      {/* Floating explainer, shared by the journey bar, legend, and trigger table. Renders the
+          same what/why/basis body as the chart tooltip via StateExplainer, so the wording an
+          evaluator reads is identical on every hover surface. */}
       {hover && (
         <div className={styles.hoverTip} style={{ left: hover.x + 16, top: hover.y + 16 }}>
           <div className={styles.hoverTipTitle}>
@@ -339,11 +425,7 @@ export default function HostageTab({ session }) {
             {hover.title}
             {hover.pct != null ? <span className={styles.hoverTipPct}>{hover.pct}% distress</span> : null}
           </div>
-          {hover.desc && <div className={styles.hoverTipDesc}>{hover.desc}</div>}
-          {hover.justification && (
-            <div className={styles.hoverTipWhy}><strong>Why this score:</strong> {hover.justification}</div>
-          )}
-          {hover.source && hover.source !== '—' && <div className={styles.hoverTipSource}>{hover.source}</div>}
+          <StateExplainer info={hover.info} />
         </div>
       )}
     </div>

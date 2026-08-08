@@ -1,6 +1,6 @@
 # Module 2 — Evaluation Briefing
 
-**A living reference document — how to explain Module 2 (NPC behaviour & coordination) to your supervisor and evaluators, with the evidence behind every claim. Last updated 2026-08-04.**
+**A living reference document — how to explain Module 2 (NPC behaviour & coordination) to your supervisor and evaluators, with the evidence behind every claim. Last updated 2026-08-07.**
 
 This document consolidates everything established across the ablation study, the weight-sensitivity study, the literature grounding, the real human evaluation results, and the recent behaviour fixes — organised in the order you would actually present it, not the order it was discovered. Update this file as new findings come in; it is designed to grow with the project rather than be rewritten each time.
 
@@ -14,7 +14,7 @@ This framing matters because it tells an evaluator what standard to judge the wo
 
 ## The problem that motivated the redesign
 
-The starting point had a specific, concrete bug: a terrorist who saw the trainee and then lost sight of them would simply abandon the chase and return to its post — even if a squadmate was standing right there. Real react-to-contact doctrine says the opposite: a confirmed sighting should commit the whole squad to a coordinated pursuit, not a private memory that expires. That gap — and the U.S. Army doctrine that contradicts it — is the origin story for the whole squad-coordination architecture (see Section 3).
+The starting point had a specific, concrete bug: a terrorist who saw the trainee and then lost sight of them would simply abandon the chase and return to its post — even if a squadmate was standing right there. Real react-to-contact doctrine says the opposite: a confirmed sighting should commit the whole squad to a coordinated pursuit, not a private memory that expires. That gap — and the U.S. Army doctrine that contradicts it — is the origin story for the whole squad-coordination architecture (see Section 4).
 
 # 2. How It Is Built — conceptual architecture (no code)
 
@@ -22,15 +22,46 @@ The starting point had a specific, concrete bug: a terrorist who saw the trainee
 - Above the individual level, a squad layer holds SHARED knowledge — where the trainee was last seen, whether a hunt is currently active — so the group acts as a team instead of isolated agents with private memories.
 - When an event needs exactly one responder (e.g. "who investigates this gunshot?"), a selection formula (NPCSelector) scores every eligible NPC on four factors — distance, role, how ready they currently are, and whether they can actually see the event — and picks the highest scorer.
 
-That is the whole architecture in three sentences. Depth beyond this belongs in Q&A answers, not the opening pitch — see Section 8.
+That is the whole architecture in three sentences. Depth beyond this belongs in Q&A answers, not the opening pitch — see Section 9.
 
-# 3. Why It Is Built This Way — literature grounding, summarised
+# 3. Inputs, Processing & Outputs — the full pipeline
 
-The two-layer structure (individual behaviour under squad coordination) mirrors F.E.A.R.'s well-known enemy AI (Orkin, 2006). The react-to-contact and shared-sighting behaviour follows actual U.S. Army battle-drill doctrine (CALL Handbook 96-3; FM 3-21.71). The expanding-search-on-lost-contact model follows peer-reviewed wilderness search-and-rescue theory (Phillips et al., 2014) — anchor on the point last seen, grow the search radius with elapsed time. The responder-selection technique is standard utility-based AI (Mark, 2009; Dill, 2010/2011/2012), with two citations specifically about virtual characters for military training simulators — the same domain as this project. Full citations, verified working links, and what each source backs are in Section 9 (Bibliography).
+How data flows through Module 2, end to end — what it receives, how it turns that into a decision, and what it produces. Every step below cites the actual file and method it lives in.
 
-# 4. The Responder-Selection Formula — full justification
+## 3.1 Inputs — what Module 2 receives
 
-## 4.1 What it is
+- Scenario setup, from Module 1 — SceneBuilder.cs spawns each NPC with its role (Guard/Roamer/Leader), squad ID, AI level, and starting position, read from the generated scenario.
+- Live player state, every frame — the player's position/camera, used as the aim target and for line-of-sight checks.
+- World/physics data — wall/door raycasts (Physics.Raycast in PerceptionController.cs) and the baked NavMesh for pathing.
+- Events from other systems — ShotFired, DoorOpened, RoomBreached, HostageContactStarted and others, delivered through the shared event bus, EventManager.cs.
+- Tunable numbers — hearingRange, targetConfirmTime, preferredStandoffDistance, and the four NPCSelector scoring weights (NPCSelector.cs lines 51-60) — the dials the whole system runs on.
+
+## 3.2 Processing — how an input becomes a decision
+
+1. Perception turns raw world data into an event. PerceptionController.cs's PerceptionTick() runs every 0.2s per NPC: checks distance, field-of-view, then a line-of-sight raycast (CheckVisibility()). Newly visible -> PlayerSeen; sustained sight -> TargetConfirmed; sustained loss -> PlayerLost.
+2. Each NPC's own state machine reacts. TerroristController.cs's HandleDetection() and RespondTo() move the NPC through its states via TransitionTo(): Idle -> Suspicious -> Alert -> Engage -> TakeCover/Retreat -> Down.
+3. NPCSelector picks the one responder, when only one should act. EventManager.cs's RouteToNPCs() collects every eligible NPC (CanRespond() true) and hands them to NPCSelector.SelectBest(), which scores distance/role/readiness/LOS and returns the highest scorer.
+4. Squad coordination updates the shared blackboard. Squad.cs's ReportConfirmedContact() writes a confirmed sighting to shared state; BeginHunt() and FanOutSearch() dispatch squad members via each NPC's DispatchToInvestigate().
+5. Movement and combat execution turn the decision into physical action. NavMeshAgent.SetDestination() moves the body; CombatPositionRoutine() governs firing-line spacing; NpcShooterRaycast fires the weapon and resolves hit/miss.
+6. The hostage runs a parallel process. HostageController.cs listens to the same event bus and runs its own FSM, with MisreadsNonThreat() (driven by the personality's ThreatDiscrimination value) deciding whether a stimulus is read correctly at four separate decision points.
+
+## 3.3 Outputs — what Module 2 produces
+
+- Observable in-game behaviour — NPCs reacting, taking cover, converging, firing; hostages fleeing or following. The thing the trainee actually experiences.
+- Damage to the player — shots fired via NpcShooterRaycast connect to PlayerHealth.
+- Telemetry events, for Module 4 — TelemetryLogger.LogStateChange() on every FSM transition, LogDecision() on every NPCSelector pick, LogDirective() on every leader order. This is the raw material every evaluation (ablation charts, sensitivity charts, the significance tests) is built from.
+- Mission-outcome signals — hostage rescued/killed, terrorists down, mission success/fail — consumed downstream by Module 4's scoring.
+- Derived events fed back in — e.g. a terrorist opening fire raises a new GunshotHeard event that other terrorists and the hostage react to. Module 2 is not a straight pipeline; some of its own outputs become next-tick inputs.
+
+**The whole thing in one line: Input (player position + world geometry + scenario setup) -> Perception (raw data becomes an event) -> Individual FSM (one NPC decides its own state) -> Selector (picks the one best responder) -> Squad blackboard (shares knowledge, coordinates a search) -> Movement/combat (executes it physically) -> Output (visible behaviour + damage + a full telemetry trail Module 4 runs on).**
+
+# 4. Why It Is Built This Way — literature grounding, summarised
+
+The two-layer structure (individual behaviour under squad coordination) mirrors F.E.A.R.'s well-known enemy AI (Orkin, 2006). The react-to-contact and shared-sighting behaviour follows actual U.S. Army battle-drill doctrine (CALL Handbook 96-3; FM 3-21.71). The expanding-search-on-lost-contact model follows peer-reviewed wilderness search-and-rescue theory (Phillips et al., 2014) — anchor on the point last seen, grow the search radius with elapsed time. The responder-selection technique is standard utility-based AI (Mark, 2009; Dill, 2010/2011/2012), with two citations specifically about virtual characters for military training simulators — the same domain as this project. Full citations, verified working links, and what each source backs are in Section 10 (Bibliography).
+
+# 5. The Responder-Selection Formula — full justification
+
+## 5.1 What it is
 
 NPCSelector.SelectBest scores every eligible NPC on four weighted factors and picks the highest total:
 
@@ -42,9 +73,9 @@ NPCSelector.SelectBest scores every eligible NPC on four weighted factors and pi
 > Project defaults: DistanceWeight=2.0, RoleWeight=1.0, StateWeight=1.0, LosWeight=1.0
 > Role bonuses: Guard+RoomBreached=3.0, Roamer+GunshotHeard=2.0, Leader+AllyDownSeen=1.5
 
-No published source specifies this exact four-factor combination or these exact numbers — that combination is this project's own design. What IS well-grounded is the technique itself (weighted multi-factor scoring) and each individual factor, matched independently across three literatures: game-AI utility theory, multi-robot task allocation, and military/emergency dispatch operations research (Section 9, Group 4).
+No published source specifies this exact four-factor combination or these exact numbers — that combination is this project's own design. What IS well-grounded is the technique itself (weighted multi-factor scoring) and each individual factor, matched independently across three literatures: game-AI utility theory, multi-robot task allocation, and military/emergency dispatch operations research (Section 10, Group 4).
 
-## 4.2 Ablation study — does each factor actually matter?
+## 5.2 Ablation study — does each factor actually matter?
 
 Method: the real NPCSelector was run live inside Unity, switching each of the four factors fully OFF one at a time, across 250 real selection decisions (50 gunshot events x 5 modes: Full, NoDistance, NoRole, NoState, NoLOS), and comparing each ablated mode against the full formula on the same events.
 
@@ -72,7 +103,7 @@ Method: the real NPCSelector was run live inside Unity, switching each of the fo
 
 **What this proves: every one of the four factors has real, measurable influence on the outcome — none of them is dead weight in the formula. What this does NOT prove: that including a factor makes the decision "better" or "more correct" — only that the formula's output genuinely depends on it. Whether that dependency helps or hurts training realism would need an external ground truth (an expert's judgement of who SHOULD respond), which this study does not have.**
 
-## 4.3 Weight-sensitivity study — are the chosen numbers fragile or robust?
+## 5.3 Weight-sensitivity study — are the chosen numbers fragile or robust?
 
 Method: each factor's weight was swept across seven values (0, 0.5, 1, 1.5, 2, 3, 4) while holding the other three at their defaults, across 25,200 real selection decisions — 3 event types (the three rows of the role-bonus table) x 3 independent random NPC layouts x 4 weights x 7 values x 100 shared events per point.
 
@@ -92,13 +123,13 @@ Method: each factor's weight was swept across seven values (0, 0.5, 1, 1.5, 2, 3
 
 **What this proves: for three of the four factors (Distance always; Role and State once given any positive value), the current weights sit in a wide, forgiving zone — nearby values, even 2-4x larger or fully removed, produce nearly the same selections. The system does not depend on hitting these exact numbers. What this does NOT prove: that 2.0/1.0/1.0/1.0 are individually the "best" possible numbers — no experiment run here, or runnable without expert ground truth, can show that.**
 
-## 4.4 The honest, calibrated defense
+## 5.4 The honest, calibrated defense
 
 > "The specific combination of distance, role, state-readiness, and line-of-sight — and the exact weights used — is our own design; no single paper prescribes this formula. Each factor individually, and the overall technique of weighted multi-factor scoring, is well-established in three separate literatures. Since no source specifies the exact numbers for our specific combination, we validated them ourselves: an ablation study showing each factor genuinely changes the outcome (i.e. none is dead weight), and a sensitivity study showing the chosen weights are not fragile. Neither study proves the decisions are doctrinally correct — only that the formula behaves the way it is supposed to, structurally. Establishing correctness would need comparison against expert judgement, which we have not done and say so plainly."
 
 This is deliberately a narrower claim than "these are the best weights" — and that narrower, calibrated claim is what makes it defensible. Overclaiming optimality is the single easiest way to lose credibility with an evaluator who pushes back on this exact point.
 
-# 5. Human Evaluation Results
+# 6. Human Evaluation Results
 
 ## 5.1 What was tested
 
@@ -143,9 +174,9 @@ The exact formulas, and a hand-worked example that reproduces the numbers in you
 
 TerroristController.cs gates squad coordination behind AI tier: AllowTeam => aiLevel >= AILevel.Intermediate. This is the exact switch that determines whether NPCSelector's picks are ever acted on — at Basic tier, NPCSelector still runs and picks an investigator, but that NPC silently declines to act on it. So the Basic-vs-Intermediate jump above is real evidence that the coordinated-response package (of which NPCSelector's selection is one necessary ingredient) meaningfully improves perceived intelligence.
 
-**What this does NOT prove: AllowTeam gates the ENTIRE squad-coordination package at once — dispatch, persistent hunt, leader directives, converge-on-contact all switch on together. This evaluation cannot isolate NPCSelector's specific contribution from the rest of that package. It corroborates that the mechanism is worth having; it does not validate its specific weights — that remains the job of Section 4's ablation/sensitivity studies.**
+**What this does NOT prove: AllowTeam gates the ENTIRE squad-coordination package at once — dispatch, persistent hunt, leader directives, converge-on-contact all switch on together. This evaluation cannot isolate NPCSelector's specific contribution from the rest of that package. It corroborates that the mechanism is worth having; it does not validate its specific weights — that remains the job of Section 5's ablation/sensitivity studies.**
 
-# 6. Recent Behaviour Fixes (verified compiling; playtest still needed)
+# 7. Recent Behaviour Fixes (verified compiling; playtest still needed)
 
 Three concrete bugs were found and fixed while preparing for evaluation. Listed here because they are good evidence of iterative rigor if asked "what did you find and fix during testing?" — and as a reminder to actually playtest them before the evaluation.
 
@@ -155,17 +186,17 @@ Three concrete bugs were found and fixed while preparing for evaluation. Listed 
 
 **Status: all three changes compile cleanly (verified live in the Unity Editor via MCP). None have been confirmed with an actual VR playtest yet — do that before the evaluation, specifically: get spotted at close range and confirm the terrorist closes in; then break line of sight and confirm he goes to where you actually were, not somewhere else.**
 
-# 7. Presentation Structure — how to actually run the demo
+# 8. Presentation Structure — how to actually run the demo
 
 1. One-sentence framing (Section 1) — set the standard you want to be judged against before showing anything.
 2. The problem, in 20 seconds — the origin-story bug and the doctrine that contradicts it (Section 1).
 3. Live demo — show 3 things, not everything: (a) individual reaction to a threat, (b) squad coordination surviving broken contact — your strongest moment, it is literally the bug that motivated the redesign, (c) the hostage-guard escalation ladder.
 4. How it is built — 30 seconds, conceptual only, no code (Section 2).
-5. Why it is built this way — 30 seconds, name 2-3 sources (Section 3).
-6. How you know it works — do not rush this, it is your strongest material: the ablation numbers, the sensitivity numbers, and the real significance results (Sections 4 and 5).
-7. State one limitation, unprompted — e.g. "the specific weights are not from a published source; we validated them ourselves" (Section 4.4). Volunteering it reads as rigor, not weakness.
+5. Why it is built this way — 30 seconds, name 2-3 sources (Section 4).
+6. How you know it works — do not rush this, it is your strongest material: the ablation numbers, the sensitivity numbers, and the real significance results (Sections 5 and 6).
+7. State one limitation, unprompted — e.g. "the specific weights are not from a published source; we validated them ourselves" (Section 5.4). Volunteering it reads as rigor, not weakness.
 
-# 8. Anticipated Questions — quick answers
+# 9. Anticipated Questions — quick answers
 
 | If asked... | Say... |
 |---|---|
@@ -175,7 +206,7 @@ Three concrete bugs were found and fixed while preparing for evaluation. Listed 
 | How do you know the AI is more believable, not just harder? | Perceived Intelligence and Tactical Realism, not difficulty, were what was measured — and Basic was reliably distinguished from both higher tiers with large effect sizes. |
 | Are these weights proven to be the best possible? | No — and no capstone project could prove that without a full expert-comparison study, which is out of scope here. This is stated plainly rather than hidden. |
 
-# 9. Bibliography — every cited source, with working links
+# 10. Bibliography — every cited source, with working links
 
 Grouped by what each cluster of sources backs. Links verified by direct fetch, not guessed; where a link is genuinely dead or access-restricted, that is stated rather than invented.
 
@@ -221,12 +252,12 @@ Grouped by what each cluster of sources backs. Links verified by direct fetch, n
 
 Full 43-source bibliography with every group (statistics methodology, multi-robot task allocation, weapon-target assignment, etc.) is in MODULE2_MASTER_BIBLIOGRAPHY.md / .docx — this section covers only the sources most likely to come up in a live Q&A.
 
-# 10. Open Items — track before the evaluation
+# 11. Open Items — track before the evaluation
 
 - No SME (subject-matter expert) comparison has been run yet — this is the only thing that could establish ground-truth "correctness" for the selection formula, as opposed to robustness. Planned in MODULE2_EVALUATION_METHODOLOGY.md Part B5, not yet executed.
 - The 45-world "full" weight-sensitivity design (varying arena scale, not just event type and seed) was scoped but not run — the current sensitivity study still only tests one arena size (30m x 30m).
 - ATP 3-21.8 has no verified free authoritative link — only unofficial mirrors.
 - Two citation discrepancies flagged in the master bibliography (#12 DiVA thesis title/authors, #20 Almeida FPS-AI review authors) — re-check against original sources before citing in front of an evaluator.
-- The three behaviour fixes in Section 6 need an actual VR playtest confirmation — not yet done.
+- The three behaviour fixes in Section 7 need an actual VR playtest confirmation — not yet done.
 
 Add new findings to this section (or a new numbered section above it) as they come up — that is the point of this being a living document.

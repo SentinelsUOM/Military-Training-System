@@ -160,10 +160,13 @@ namespace TeamSentinels.ScenarioGeneration.Generators
                 },
                 // Chairs stay standalone ONLY here: loose chairs along the walls of
                 // a holding room read as hostage seating, which suits the scenario.
+                // No Bed: every generated building is an office/compound interior,
+                // never a residence, so a bed reads as scope-wrong set dressing no
+                // matter which room it lands in.
                 [RoomType.HostageRoom] = new[]
                 {
                     FurnitureType.Chair, FurnitureType.Chair, FurnitureType.Desk, FurnitureType.Table,
-                    FurnitureType.Cabinet, FurnitureType.Shelf, FurnitureType.Bed,
+                    FurnitureType.Cabinet, FurnitureType.Shelf, FurnitureType.Locker,
                     FurnitureType.Stool
                 },
             };

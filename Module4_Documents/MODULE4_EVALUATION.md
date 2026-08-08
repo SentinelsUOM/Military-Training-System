@@ -13,8 +13,12 @@
 
 - **Module 4 (code):** `HostageStateEntry.ComputeDistress` → Calm `0.00`, Follow `0.10`, Fearful `0.33`, Freeze `0.50`, Panic `0.66`.
 - **Expert table (Piece B):** maps these five states onto clinically-recognised trauma stages (Calm = ventral vagal, Follow = fawn, Fearful = sympathetic fight/flight, Freeze = dorsal-vagal shutdown, Panic = extreme dysregulation), confirms the **escalation order** *Calm → Follow → Fearful → Freeze → Panic* matches the research, and states the `0/10/33/50/66` values are *"a reasonable compressed version"* of the clinical **SUDS** 0–100 distress scale.
-- **Verdict:** ✅ **This is Module 4's most strongly validated component.** Both the *ordering* and the *values* are grounded in accepted distress research.
-- **Caveat:** the later additions (`Held 40`, `Threatened 75`, `Wounded 95`, `Down 100`) are **not** among the table's polyvagal five — they are reasonable interpolations but are *your own calibration*, so present them as such.
+- **Verdict:** ✅ **The *ordering* is Module 4's most strongly validated design element.** The escalation sequence, and specifically the two counter-intuitive rankings (Freeze above Panic; Threatened above Panic), are each traceable to a cited finding.
+- ⚠️ **The exact percentages are NOT research values — do not present them as such.** This is the single easiest overclaim to make here, so it is stated explicitly:
+  - **SUDS is a *self-report* instrument** — a person rates *their own* distress 0–100. No published table maps a categorical state onto a number, so there is no source that says "Freeze = 72 %". Assigning numbers to polyvagal categories is *interpretation*.
+  - The Expert Value Table called `0/10/33/50/66` *"a reasonable compressed version"* of SUDS. That is an endorsement of **plausibility**, not a derivation — it means "these numbers are not unreasonable", not "these numbers are the published values".
+  - `Held 40`, `Threatened 75`, `Wounded 95`, `Down 100`, and the revised `Freeze 72` are **entirely the project's own calibration**. The tonic-immobility research supports Freeze ranking *above* Panic; the value 72 was chosen to sit just above Panic's 66, and is not measured.
+- **The defensible claim, in one sentence:** *the distress model's **ordering** is research-derived and the **scale type** is modelled on the validated SUDS instrument; the **specific values** are the project's calibration, judged consistent with — not derived from — the source research.* Same standing as the Speed coefficients (§8) and the `threatDiscrimination` levels in `HOSTAGE_PROFILE_RESEARCH.md`.
 
 ## 2. Hostage rescue outcome — ✅ VALIDATED
 

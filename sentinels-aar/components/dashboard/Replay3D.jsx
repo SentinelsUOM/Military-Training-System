@@ -26,7 +26,17 @@ const STATE_COLORS = {
   Freeze: '#818cf8', Neutralized: '#21262d',
 }
 const sane = (v) => Number.isFinite(v) && Math.abs(v) < 5000
-const prettyType = (t) => (t || 'Room').replace(/([a-z])([A-Z])/g, '$1 $2')
+// Module 1's "Corridor" RoomType is an interior hallway room in the generated
+// BFS layout — a real, walled room, NOT the perimeter walkway outside the
+// building (that's SceneBuilder's own invented corridor_seg_N geometry,
+// rendered floor-only with no label by RoomWalls). Displaying both as
+// "Corridor" reads as if we mislabeled a room, so this one shows as "Hallway"
+// and "Corridor" is reserved for the walkway.
+const prettyType = (t) => {
+  const s = t || 'Room'
+  if (s.toLowerCase() === 'corridor') return 'Hallway'
+  return s.replace(/([a-z])([A-Z])/g, '$1 $2')
+}
 
 function kindOf(actorId) {
   const id = (actorId || '').toLowerCase()
@@ -149,7 +159,25 @@ function RoomWalls({ room, doors }) {
   const h = sane(room.height) && room.height > 0 ? room.height : 3
   const T = 0.15, GAP = 0.75
   const type = (room.type || '').toLowerCase()
-  const floorColor = type.includes('corridor') ? '#20303f' : type.includes('hostage') ? '#2b2036' : type.includes('entry') ? '#1c2b22' : '#1b2230'
+  const floorColor = type.includes('corridor') ? '#2f4a63' : type.includes('hostage') ? '#2b2036' : type.includes('entry') ? '#1c2b22' : '#1b2230'
+
+  // The perimeter corridor is captured as several merged floor rectangles
+  // (SceneBuilder's own invented walkway geometry, id "corridor_seg_N" — see
+  // Module4SessionController.CaptureLayout). Each is a real room-shaped RoomBox,
+  // but they're segments of ONE continuous walkway, not separate walled rooms:
+  // drawing full walls (with door-width cutouts only) on every segment's own
+  // rectangle boundary puts a false partition wall wherever two segments happen
+  // to touch, chopping the corridor into a maze of boxes instead of one loop.
+  // Floor-only here so adjacent segments visually merge into a single path.
+  const isCorridorSegment = typeof room.id === 'string' && room.id.startsWith('corridor_seg_')
+  if (isCorridorSegment) {
+    return (
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, 0.01, cz]}>
+        <planeGeometry args={[w, d]} />
+        <meshStandardMaterial color={floorColor} transparent opacity={0.85} />
+      </mesh>
+    )
+  }
 
   const segs = []
   for (const z of [cz - d / 2, cz + d / 2]) {

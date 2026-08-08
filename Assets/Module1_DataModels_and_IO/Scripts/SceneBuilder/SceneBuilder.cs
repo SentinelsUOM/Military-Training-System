@@ -137,6 +137,11 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         [Tooltip("Terrorist prefab. Must have a TerroristController component.")]
         public GameObject terroristPrefab;
 
+        [Tooltip("Additional terrorist character variants (different Mixamo models, same " +
+                 "TerroristController/animator wiring) picked at random alongside terroristPrefab " +
+                 "purely for visual variety in the squad. Leave empty to always use terroristPrefab.")]
+        public List<GameObject> terroristPrefabVariants = new List<GameObject>();
+
         [Tooltip("Hostage prefab. Must have a HostageController component.")]
         public GameObject hostagePrefab;
 
@@ -372,6 +377,39 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// the per-build placement offset.</summary>
         private Vector3 World(Vector3 layoutPos) => layoutPos + _buildOffset;
 
+        /// <summary>
+        /// The resolved world offset applied to every room/door/NPC this build
+        /// (buildAnchor or buildOffset, further nudged by ResolveBaseMapClearance).
+        /// <see cref="ActiveScenario"/>'s raw <c>layout</c> positions are in
+        /// layout-local space — callers that need to match the actual instantiated
+        /// GameObjects (e.g. Module4's <c>LayoutSnapshot</c> capture) must add this,
+        /// same as <see cref="World"/> does internally.
+        /// </summary>
+        public Vector3 ResolvedBuildOffset => _buildOffset;
+
+        /// <summary>
+        /// One merged floor rectangle of the built perimeter corridor, already in
+        /// world space (see <see cref="PerimeterCorridorSegments"/>).
+        /// </summary>
+        public struct CorridorSegment
+        {
+            public float centerX, centerZ, width, depth, height;
+        }
+
+        // Merged floor rectangles of this build's perimeter corridor (world space).
+        // Populated by BuildPerimeterCorridor; empty if the corridor is off/skipped.
+        private readonly List<CorridorSegment> _perimeterCorridorSegments = new List<CorridorSegment>();
+
+        /// <summary>
+        /// The perimeter corridor's floor footprint, as merged rectangles in world
+        /// space. The walkway that wraps the generated building is entirely
+        /// SceneBuilder's own invented geometry — unlike rooms/doors it never
+        /// appears in <see cref="ActiveScenario"/>'s <c>layout</c> — so callers that
+        /// need it for anything outside this build (e.g. Module4's
+        /// <c>LayoutSnapshot</c> capture) must read it from here.
+        /// </summary>
+        public IReadOnlyList<CorridorSegment> PerimeterCorridorSegments => _perimeterCorridorSegments;
+
         private Transform _roomsRoot;
         private Transform _doorsRoot;
         private Transform _npcsRoot;
@@ -554,6 +592,20 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             DestroyChildren(_roomsRoot);
             DestroyChildren(_doorsRoot);
             DestroyChildren(_npcsRoot);
+
+            // Squads live in a static registry (Squad._all) that outlives this GameObject and
+            // this scene rebuild — without clearing it here, a fresh build's terrorists join a
+            // STALE squad carrying the previous build's hunt cooldowns/search-wave/HuntActive
+            // state, which silently blocks investigation dispatch (FanOutSearch's cooldown gate
+            // returns early with no error). The test/ablation runners already call this before
+            // each trial; the real scenario-build path never did. Terrorists re-register via
+            // Squad.GetOrCreate in SpawnTerrorists → ConfigureTerrorist either way, so this is
+            // safe to call unconditionally.
+            Squad.ClearAll();
+
+            // Fresh cast for a fresh build — see PickTerroristPrefab().
+            _terroristPrefabPool = null;
+            _terroristPrefabPoolIndex = 0;
 
             if (_safeZone != null)
             {
@@ -1037,15 +1089,33 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 return;
             }
 
-            // Uniform fit: scale the model so its footprint fills the reserved
-            // width×depth — the planner's footprints ARE real-world dimensions, so
-            // matching them is what puts every prop at a believable human scale.
-            // Upscaling is capped so an undersized model is never blown up into a
-            // caricature of itself; past the cap it keeps its authored proportions.
+            // Fit the model so its footprint fills the reserved width×depth — the
+            // planner's footprints ARE real-world dimensions, so matching them is
+            // what puts every prop at a believable human scale. Upscaling is capped
+            // so an undersized model is never blown up into a caricature of itself;
+            // past the cap it keeps its authored proportions.
             const float MaxUpscale = 1.35f;
-            float fit = Mathf.Min(size.x / natural.size.x, size.z / natural.size.z);
-            fit = Mathf.Min(fit, MaxUpscale);
-            go.transform.localScale = prefab.transform.localScale * fit;
+            float fitXZ = Mathf.Min(size.x / natural.size.x, size.z / natural.size.z);
+            fitXZ = Mathf.Min(fitXZ, MaxUpscale);
+
+            // Height is solved SEPARATELY from the footprint fit rather than reusing
+            // fitXZ. The bundled art (Furniture Mega Pack) ships every prop at an
+            // inflated, inconsistent import scale, so a model's natural height:width
+            // ratio routinely disagrees with its real-world counterpart (a "table"
+            // mesh whose footprint reads correctly at fitXZ can still stand 1.5x too
+            // tall or too short once that same factor is applied to Y). Tying Y to
+            // fitXZ was the source of undersized/oversized-looking furniture even
+            // though the footprint — and therefore collision/NavMesh — was correct.
+            // Solving Y against the catalogue's own target height corrects this
+            // while the footprint-driven fitXZ still governs collision. The result
+            // is clamped to stay within a bounded multiple of fitXZ so a wildly
+            // mismodelled prop is gently corrected rather than visibly stretched.
+            float fitY = natural.size.y > 1e-4f ? size.y / natural.size.y : fitXZ;
+            fitY = Mathf.Clamp(fitY, fitXZ * 0.6f, fitXZ * 1.8f);
+            fitY = Mathf.Min(fitY, MaxUpscale);
+
+            Vector3 baseScale = prefab.transform.localScale;
+            go.transform.localScale = new Vector3(baseScale.x * fitXZ, baseScale.y * fitY, baseScale.z * fitXZ);
 
             // Face into the room, then re-measure the placed bounds.
             go.transform.localRotation = rot;
@@ -1814,7 +1884,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                         pos.x = room.position.x + plane;
                     }
 
-                    PlaceDoor(door.id, World(pos), door.wallSide, door.state);
+                    PlaceDoor(door.id, World(pos), door.wallSide, door.state, door.isExterior);
                 }
             }
         }
@@ -2085,7 +2155,9 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                         else        pos.z = roomWorld.z + offset;
                     }
 
-                    PlaceDoor($"door_{opening.id}", pos, opening.side, entryState);
+                    // Every entry opening is a breach point into the building — exterior by definition
+                    // (see this method's summary).
+                    PlaceDoor($"door_{opening.id}", pos, opening.side, entryState, isExterior: true);
                 }
             }
         }
@@ -2127,6 +2199,10 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// </summary>
         private void BuildPerimeterCorridor(ScenarioData scenario)
         {
+            // Reset per build so a rebuild doesn't leave stale segments from the
+            // previous scenario layered on top of (or instead of) the new one.
+            _perimeterCorridorSegments.Clear();
+
             if (!buildPerimeterCorridor) return;
             if (corridorWidth <= 0.01f) return;
 
@@ -2224,6 +2300,14 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     float z0 = originZ + j * g, z1 = originZ + (j + h) * g;
                     BuildCorridorSlab("Floor", x0, x1, z0, z1, baseY, CorridorFloorThickness, floorMat);
                     BuildCorridorSlab("Roof",  x0, x1, z0, z1, baseY + height, CeilingThickness, roofMat);
+                    _perimeterCorridorSegments.Add(new CorridorSegment
+                    {
+                        centerX = (x0 + x1) * 0.5f,
+                        centerZ = (z0 + z1) * 0.5f,
+                        width   = x1 - x0,
+                        depth   = z1 - z0,
+                        height  = height,
+                    });
                 }
 
             // ── Outer walls: a segment on every corridor/outside boundary edge.
@@ -2288,7 +2372,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                     // The compound's outer door is the trainee's first obstacle and is
                     // ALWAYS closed — an open one leaves a straight line from the open
                     // ground outside all the way into the building.
-                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, DoorState.Closed);
+                    PlaceDoor("door_corridor_entry", doorPos, entranceSide, DoorState.Closed, isExterior: true);
 
                     // Remember where the entrance ended up so the guide path can run to it.
                     _entryDoorWorld    = doorPos;
@@ -2662,7 +2746,8 @@ namespace TeamSentinels.ScenarioGeneration.Scene
         /// (the XRI door's pivot sits on the hinge edge, not the centre), then
         /// applies the initial <see cref="DoorState"/>.
         /// </summary>
-        private void PlaceDoor(string name, Vector3 openingCenter, WallSide side, DoorState state)
+        private void PlaceDoor(string name, Vector3 openingCenter, WallSide side, DoorState state,
+                               bool isExterior = false)
         {
             Quaternion rot = DoorRotation(side) * _doorBaseRot;
 
@@ -2684,19 +2769,36 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             // room-to-room door list) is what finally covers the perimeter-corridor entry,
             // which SceneBuilder builds itself and which never appears in scenario.layout.
             // Without it the corridor was baked but unreachable: measured 0/6 corridor floor
-            // points pathable from a terrorist (all PathPartial).
-            _placedDoors.Add(new PlacedDoor { name = name, center = openingCenter, side = side });
+            // points pathable from a terrorist (all PathPartial). Module4Integration's
+            // CaptureLayout() reads this same list for the same reason — scenario.layout's
+            // door list only has room-to-room doors, so entry/corridor doors were previously
+            // missing from the replay entirely.
+            _placedDoors.Add(new PlacedDoor
+            {
+                name = name, center = openingCenter, side = side, isExterior = isExterior,
+            });
         }
 
         /// <summary>A doorway that was actually built, so it can be NavMesh-linked post-bake.</summary>
-        private struct PlacedDoor
+        public struct PlacedDoor
         {
             public string   name;
-            public Vector3  center;   // world-space centre of the opening
-            public WallSide side;     // which wall it sits in (decides the link's axis)
+            public Vector3  center;      // world-space centre of the opening
+            public WallSide side;        // which wall it sits in (decides the link's axis)
+            public bool     isExterior;  // breach point / compound entrance vs interior room-to-room
         }
 
         private readonly List<PlacedDoor> _placedDoors = new List<PlacedDoor>();
+
+        /// <summary>
+        /// Every door actually built this build, in world space — room-to-room doors
+        /// AND the entry/perimeter-corridor doors SceneBuilder invents itself (which
+        /// never appear in scenario.layout). The authoritative door list; callers
+        /// outside this class (e.g. Module4Integration's <c>LayoutSnapshot</c>
+        /// capture) should read this instead of scenario.layout's room-to-room-only
+        /// door list, or entry/exterior doors will be silently missing.
+        /// </summary>
+        public IReadOnlyList<PlacedDoor> PlacedDoors => _placedDoors;
 
         /// <summary>
         /// Drives a freshly instantiated door's initial state. Prefers the
@@ -3362,6 +3464,44 @@ namespace TeamSentinels.ScenarioGeneration.Scene
                 : new Vector2(0f, Mathf.Sign(delta.y));
         }
 
+        // Shuffled per scenario build (see ClearScene) and handed out in order by
+        // PickTerroristPrefab, so every distinct model gets used once before any repeats.
+        private List<GameObject> _terroristPrefabPool;
+        private int _terroristPrefabPoolIndex;
+
+        /// <summary>
+        /// Picks each spawned terrorist a DIFFERENT character model from terroristPrefab +
+        /// terroristPrefabVariants when enough variety exists, rather than an independent random
+        /// pick per spawn — which could (and did) land the same model on two terrorists in the
+        /// same mission purely by chance. Shuffles the full pool once per scenario build and hands
+        /// out entries in order; once every variant has been used, it reshuffles and starts over,
+        /// so a scenario with more terrorists than models only repeats after the full set has
+        /// appeared. Purely cosmetic (they all share the same TerroristController/animator
+        /// wiring), so no seeded/reproducible RNG is needed here.
+        /// </summary>
+        private GameObject PickTerroristPrefab()
+        {
+            var basePool = new List<GameObject> { terroristPrefab };
+            if (terroristPrefabVariants != null)
+                foreach (var variant in terroristPrefabVariants)
+                    if (variant != null) basePool.Add(variant);
+
+            if (basePool.Count <= 1) return terroristPrefab;
+
+            if (_terroristPrefabPool == null || _terroristPrefabPoolIndex >= _terroristPrefabPool.Count)
+            {
+                _terroristPrefabPool = new List<GameObject>(basePool);
+                for (int i = _terroristPrefabPool.Count - 1; i > 0; i--)
+                {
+                    int j = UnityEngine.Random.Range(0, i + 1);
+                    (_terroristPrefabPool[i], _terroristPrefabPool[j]) = (_terroristPrefabPool[j], _terroristPrefabPool[i]);
+                }
+                _terroristPrefabPoolIndex = 0;
+            }
+
+            return _terroristPrefabPool[_terroristPrefabPoolIndex++];
+        }
+
         private void SpawnTerrorists(ScenarioData scenario)
         {
             if (terroristPrefab == null)
@@ -3379,7 +3519,7 @@ namespace TeamSentinels.ScenarioGeneration.Scene
             {
                 ResolveTerroristSpawn(scenario, sp, out Vector3 spawnPos, out Quaternion spawnRot);
 
-                GameObject go = Instantiate(terroristPrefab, spawnPos, spawnRot, _npcsRoot);
+                GameObject go = Instantiate(PickTerroristPrefab(), spawnPos, spawnRot, _npcsRoot);
                 go.name = sp.entityId;
 
                 TerroristController controller = go.GetComponent<TerroristController>();

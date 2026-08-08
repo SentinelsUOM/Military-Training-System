@@ -28,6 +28,7 @@ Thumbs.db
 
 # Unity meta / crashes
 sysinfo.txt
+Assets/_Recovery/
 
 # Optional: Addressables cache
 [Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*

@@ -1,9 +1,14 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ErrorBar,
+} from 'recharts'
 import { analyzeMeasure, oneSampleWilcoxon, oneWayAnova } from '@/lib/stats'
 import { benchmarkPos } from '@/lib/expertBenchmarks'
 import { BENCHMARKS as MOVEMENT_BENCHMARKS, CITATIONS as MOVEMENT_CITATIONS, evalMetric as evalMovementMetric } from '@/lib/movementBenchmarks'
+import { useChartTheme } from '@/lib/useTheme'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import Module1Panel from './Module1Panel'
 import { METRIC_GROUPS as M1_METRIC_GROUPS, METRIC_LABELS as M1_METRIC_LABELS } from '@/lib/module1Results'
@@ -292,153 +297,198 @@ export default function EvaluationClient() {
                 </div>
               )}
 
-              {t.key === 'module2' && hasSessionData && (
-                <>
-                  {/* ── Per-player comparison, by AI tier — Module 2's own question ── */}
-                  <section className={styles.section}>
-                    <div className={styles.sectionHead}>
-                      <h2 className={styles.h2}>Per-player comparison</h2>
-                      <label className={styles.selectWrap}>
-                        Player&nbsp;
-                        <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
-                          {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
-                        </select>
-                      </label>
-                    </div>
-                    {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
-                  </section>
+                  {t.key === 'module2' && hasSessionData && (
+                    <>
+                      {/* ── Per-player comparison, by AI tier — Module 2's own question ── */}
+                      <section className={styles.section}>
+                        <div className={styles.sectionHead}>
+                          <h2 className={styles.h2}>Per-player comparison</h2>
+                          <label className={styles.selectWrap}>
+                            Player&nbsp;
+                            <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
+                              {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                        {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
+                        {player && <PlayerTierChart levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
+                        {player && <PlayerReliabilityChart player={player} surveyRows={surveyRows} metricRows={metricRows} />}
+                      </section>
 
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Overall averages (all players)</h2>
-                    <AveragesTable averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
-                  </section>
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Overall averages (all players)</h2>
+                        <AveragesTable averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
+                        <TierAveragesChart averages={data.averages} surveyRows={surveyRows} metricRows={metricRows} />
+                      </section>
 
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Statistical significance</h2>
-                    <StatsPanel players={data.players} measures={measures} />
-                  </section>
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Statistical significance</h2>
+                        <StatsPanel players={data.players} measures={measures} />
+                      </section>
 
-                  <p className={styles.note}>
-                    Survey scores are participant ratings after each play (higher = better for the AI).
-                    Enemy hit-rate is an objective telemetry measure of the same thing (how competently
-                    the AI fought). The significance section runs a Friedman test (any difference across
-                    the three levels?) and Wilcoxon signed-rank post-hoc tests (which pairs differ?) on
-                    complete-case participants — because AI difficulty IS Module 2's research question.
-                  </p>
-                </>
-              )}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Distribution across all sessions (pooled)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Every recorded session&apos;s value for each measure, any player, any tier — shows
+                          the spread behind the averages above (e.g. a wide, flat histogram means high
+                          disagreement between participants; a tall narrow one means consensus).
+                        </p>
+                        <PoolDistributionChart pooledValues={data.pooledValues} measures={measures} />
+                      </section>
 
-              {(t.key === 'module3' || t.key === 'module4') && hasSessionData && (
-                <>
-                  {/* ── Combined per-player average — no AI-tier split ──────
-                      Module 3/4 don't have an AI-difficulty independent variable (that's
-                      Module 2's own question, above) — so a player's sessions are combined
-                      across ALL tiers into one average, then compared to the expert value. ── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Per-player average </h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      {t.key === 'module3'
-                        ? "Reaction time doesn't depend on which AI tier was played, so each player's sessions are averaged together regardless of level."
-                        : "Module 4's five scores aren't about AI difficulty, so each player's sessions are averaged together across whichever levels they played."}
-                    </p>
-                    <CombinedPlayerTable players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
-                  </section>
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Ablation study (Unity telemetry)</h2>
+                        <AblationChart />
+                      </section>
 
-                  {/* ── Pooled vs expert — one-sample test ──────────────────
-                      Is the trainee population's average different from the published expert
-                      value? Pools every individual session (any player, any tier). ── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>vs Expert Value (all sessions pooled)</h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      One-sample Wilcoxon signed-rank test: does the pooled set of every recorded
-                      session's value differ significantly from the published expert benchmark?
-                      Only measures with an independent published benchmark are testable this way.
-                    </p>
-                    <PooledVsExpertPanel pooledValues={data.pooledValues} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
-                  </section>
+                      <p className={styles.note}>
+                        Survey scores are participant ratings after each play (higher = better for the AI).
+                        Enemy hit-rate is an objective telemetry measure of the same thing (how competently
+                        the AI fought). The significance section runs a Friedman test (any difference across
+                        the three levels?) and Wilcoxon signed-rank post-hoc tests (which pairs differ?) on
+                        complete-case participants — because AI difficulty IS Module 2's research question.
+                      </p>
+                    </>
+                  )}
 
-                  {/* ── ANOVA Table — a genuinely different question from the one above:
-                      does the measure vary BETWEEN players, given the spread WITHIN each
-                      player's own sessions? Standard one-way ANOVA terminology throughout. ── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>ANOVA Table (between players)</h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      One-way analysis of variance, with each PLAYER as a group and their own
-                      sessions as that group&apos;s replicates: does the mean differ between
-                      players by more than their own session-to-session variability would explain?
-                      Source / SS (sum of squares) / df (degrees of freedom) / MS (mean square) / F
-                      (F-statistic) / p — standard ANOVA-table columns.
-                    </p>
-                    <AnovaPanel players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
-                  </section>
-                </>
-              )}
+                  {(t.key === 'module3' || t.key === 'module4') && hasSessionData && (
+                    <>
+                      {/* ── Combined per-player average — no AI-tier split ──────
+                          Module 3/4 don't have an AI-difficulty independent variable (that's
+                          Module 2's own question, above) — so a player's sessions are combined
+                          across ALL tiers into one average, then compared to the expert value. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Per-player average </h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          {t.key === 'module3'
+                            ? "Reaction time doesn't depend on which AI tier was played, so each player's sessions are averaged together regardless of level."
+                            : "Module 4's five scores aren't about AI difficulty, so each player's sessions are averaged together across whichever levels they played."}
+                        </p>
+                        <CombinedPlayerTable players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                        {t.key === 'module4' && player && <PlayerScoresRadarChart player={player} measures={MODULE4_MEASURES} />}
+                      </section>
 
-              {t.key === 'module3' && hasSessionData && (
-                <>
-                  {/* ── Body-movement & reaction-channel metrics vs literature bands ──
-                      Same evalMetric() verdict logic as the per-session Movement tab
-                      (lib/movementBenchmarks.js), applied to each player's combined
-                      (all-tiers) average instead of a single session. ── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Body movement & reaction-channel metrics (per player vs literature)</h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      Each player&apos;s sessions are averaged together (all AI tiers combined), then
-                      compared against the same literature-derived bands the per-session Movement tab
-                      uses. Tier A = direct empirical match, B = literature proxy, C = no quantified
-                      source (shown with no verdict rather than a fabricated one).
-                    </p>
-                    <MovementBenchmarkTable players={data.players} measures={MOVEMENT_MEASURES} />
-                    <MovementBenchmarkSources measures={MOVEMENT_MEASURES} />
-                  </section>
+                      {/* ── Pooled vs expert — one-sample test ──────────────────
+                          Is the trainee population's average different from the published expert
+                          value? Pools every individual session (any player, any tier). ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>vs Expert Value (all sessions pooled)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          One-sample Wilcoxon signed-rank test: does the pooled set of every recorded
+                          session's value differ significantly from the published expert benchmark?
+                          Only measures with an independent published benchmark are testable this way.
+                        </p>
+                        <PooledVsExpertPanel pooledValues={data.pooledValues} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                      </section>
 
-                  {/* ── ANOVA — same one-way, between-player test as reaction time above,
-                      applied to each movement/reaction-channel metric. ── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>ANOVA Table — movement metrics (between players)</h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      Does each movement/reaction-channel metric differ between players by more than
-                      their own session-to-session variability would explain? Same one-way ANOVA as the
-                      reaction-time table above (Source / SS / df / MS / F / p), one player = one group,
-                      that player&apos;s sessions = that group&apos;s replicates.
-                    </p>
-                    <AnovaPanel players={data.players} measures={MOVEMENT_MEASURES} />
-                  </section>
+                      {/* ── ANOVA Table — a genuinely different question from the one above:
+                          does the measure vary BETWEEN players, given the spread WITHIN each
+                          player's own sessions? Standard one-way ANOVA terminology throughout. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>ANOVA Table (between players)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          One-way analysis of variance, with each PLAYER as a group and their own
+                          sessions as that group&apos;s replicates: does the mean differ between
+                          players by more than their own session-to-session variability would explain?
+                          Source / SS (sum of squares) / df (degrees of freedom) / MS (mean square) / F
+                          (F-statistic) / p — standard ANOVA-table columns.
+                        </p>
+                        <AnovaPanel players={data.players} measures={t.key === 'module3' ? MODULE3_MEASURES : MODULE4_MEASURES} />
+                      </section>
+                    </>
+                  )}
 
-                  <p className={styles.note}>
-                    Workload reasoning and the stability/attention proxy scores still live only in each
-                    session&apos;s own Movement and Workload tabs on the dashboard, not here — those are
-                    per-session diagnostics, not population-level measures with a literature benchmark.
-                  </p>
-                </>
-              )}
+                  {t.key === 'module3' && hasSessionData && (
+                    <>
+                      {/* ── Body-movement & reaction-channel metrics vs literature bands ──
+                          Same evalMetric() verdict logic as the per-session Movement tab
+                          (lib/movementBenchmarks.js), applied to each player's combined
+                          (all-tiers) average instead of a single session. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Body movement & reaction-channel metrics (per player vs literature)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Each player&apos;s sessions are averaged together (all AI tiers combined), then
+                          compared against the same literature-derived bands the per-session Movement tab
+                          uses. Tier A = direct empirical match, B = literature proxy, C = no quantified
+                          source (shown with no verdict rather than a fabricated one).
+                        </p>
+                        <MovementBenchmarkTable players={data.players} measures={MOVEMENT_MEASURES} />
+                        <MovementBenchmarkSources measures={MOVEMENT_MEASURES} />
+                      </section>
 
-              {t.key === 'module4' && hasSessionData && (
-                <>
-                  {/* ── Repeated-play reliability ──────────────────── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>Repeated-Play Reliability</h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      Is Module 4&apos;s score consistent when the SAME person plays more than once?
-                      Shown per session, with mean and standard deviation across sessions — tight
-                      clustering (low SD) means the score is reliable, not noisy.
-                    </p>
-                    <ReliabilityPanel players={data.players} />
-                  </section>
+                      {/* ── ANOVA — same one-way, between-player test as reaction time above,
+                          applied to each movement/reaction-channel metric. ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>ANOVA Table — movement metrics (between players)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Does each movement/reaction-channel metric differ between players by more than
+                          their own session-to-session variability would explain? Same one-way ANOVA as the
+                          reaction-time table above (Source / SS / df / MS / F / p), one player = one group,
+                          that player&apos;s sessions = that group&apos;s replicates.
+                        </p>
+                        <AnovaPanel players={data.players} measures={MOVEMENT_MEASURES} />
+                      </section>
 
-                  {/* ── Expert-benchmark comparison, averaged across a player's sessions ── */}
-                  <section className={styles.section}>
-                    <h2 className={styles.h2}>vs Expert Benchmarks (averaged per player)</h2>
-                    <p className={styles.note} style={{ marginTop: 0 }}>
-                      Each person&apos;s sessions are averaged first (to smooth out single-session
-                      noise), then compared to published expert/novice values where one exists.
-                      Speed and Operator Safety have no independent published benchmark — shown
-                      as-is, not scored against a source that doesn&apos;t exist.
-                    </p>
-                    <BenchmarkPanel players={data.players} />
-                  </section>
-                </>
-              )}
+                      <p className={styles.note}>
+                        Workload reasoning and the stability/attention proxy scores still live only in each
+                        session&apos;s own Movement and Workload tabs on the dashboard, not here — those are
+                        per-session diagnostics, not population-level measures with a literature benchmark.
+                      </p>
+                    </>
+                  )}
+
+                  {t.key === 'module4' && hasSessionData && (
+                    <>
+                      {/* ── Repeated-play reliability — one player at a time, picked below ── */}
+                      <section className={styles.section}>
+                        <div className={styles.sectionHead}>
+                          <h2 className={styles.h2}>Repeated-Play Reliability</h2>
+                          <label className={styles.selectWrap}>
+                            Player&nbsp;
+                            <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
+                              {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Is Module 4&apos;s score consistent when the SAME person plays more than once?
+                          Shown per session, with mean and standard deviation across sessions — tight
+                          clustering (low SD) means the score is reliable, not noisy.
+                        </p>
+                        <ReliabilityPanel players={data.players} playerId={playerId} />
+                      </section>
+
+                      {/* ── Expert-benchmark comparison, averaged across a player's sessions ── */}
+                      <section className={styles.section}>
+                        <div className={styles.sectionHead}>
+                          <h2 className={styles.h2}>vs Expert Benchmarks (averaged per player)</h2>
+                          <label className={styles.selectWrap}>
+                            Player&nbsp;
+                            <select className={styles.select} value={playerId} onChange={e => setPlayerId(e.target.value)}>
+                              {data.players.map(p => <option key={p.playerId} value={p.playerId}>{p.playerId}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Each person&apos;s sessions are averaged first (to smooth out single-session
+                          noise), then compared to published expert/novice values where one exists.
+                          Speed and Operator Safety have no independent published benchmark — shown
+                          as-is, not scored against a source that doesn&apos;t exist.
+                        </p>
+                        <BenchmarkPanel players={data.players} playerId={playerId} />
+                      </section>
+
+                      {/* ── Distribution across all sessions (pooled) — same pattern as Module 2's ── */}
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Distribution across all sessions (pooled)</h2>
+                        <p className={styles.note} style={{ marginTop: 0 }}>
+                          Every recorded session&apos;s value for each of Module 4&apos;s 5 scores, any
+                          player — shows the spread behind the averages above.
+                        </p>
+                        <ScoreDistributionChart pooledValues={data.pooledValues} measures={MODULE4_SCORES} />
+                      </section>
+                    </>
+                  )}
             </div>
           )
         })}
@@ -512,6 +562,369 @@ function AveragesTable({ averages, surveyRows, metricRows }) {
   )
 }
 
+// Survey sub-scales are on different raw scales (Godspeed 1-5, UEQ-S 1-7) — parse the
+// row's own `/5` or `/7` unit label so every measure can be normalized onto a common
+// 0-100% axis and plotted side-by-side. Objective metric rows (enemyAccuracy, unit '%')
+// are already 0-100 and pass through unchanged.
+function measureMax(unit) {
+  const m = /\/(\d+)/.exec(unit || '')
+  return m ? parseInt(m[1], 10) : 100
+}
+const toPct100 = (raw, max) => (typeof raw === 'number' ? Math.round((raw / max) * 1000) / 10 : null)
+
+// ── Overall averages, by AI tier — grouped bar chart ────────────────────────
+// Mirrors AveragesTable one-for-one (same `averages` prop, same rows) so it recalculates
+// automatically the moment a new tagged session lands — no separate data path to keep in sync.
+function TierAveragesChart({ averages, surveyRows, metricRows }) {
+  const chartTheme = useChartTheme()
+  const rows = [
+    ...surveyRows.map(r => ({ ...r, group: 'survey' })),
+    ...metricRows.map(r => ({ ...r, group: 'metrics' })),
+  ]
+  const chartData = rows.map(r => {
+    const max = measureMax(r.unit)
+    const entry = { name: r.label }
+    for (const lvl of LEVELS) {
+      const raw = averages?.[lvl]?.[r.group]?.[r.key]
+      entry[lvl] = r.group === 'survey' ? toPct100(raw, max) : (typeof raw === 'number' ? raw : null)
+    }
+    return entry
+  })
+  if (!rows.length) return null
+  const totalN = LEVELS.reduce((sum, lvl) => sum + (averages?.[lvl]?.n || 0), 0)
+  if (!totalN) return null
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <div className={styles.note} style={{ marginTop: 0, marginBottom: '.5rem' }}>
+        All measures normalized to 0–100% so survey scales (Godspeed /5, UEQ-S /7) and the
+        objective enemy hit-rate (%) can be compared on one axis.
+      </div>
+      <ResponsiveContainer width="100%" height={Math.max(220, rows.length * 46)}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
+          <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" horizontal={false} />
+          <XAxis type="number" domain={[0, 100]} tick={{ fill: chartTheme.label, fontSize: 11 }} unit="%" />
+          <YAxis type="category" dataKey="name" width={150} tick={{ fill: chartTheme.label, fontSize: 11 }} />
+          <Tooltip
+            contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+            labelStyle={{ color: chartTheme.label }}
+            formatter={(v) => (v == null ? '—' : `${v}%`)}
+          />
+          <Legend wrapperStyle={{ fontSize: 11, color: chartTheme.label }} formatter={(v) => LEVEL_LABEL[v] || v} />
+          {LEVELS.map((lvl, i) => (
+            <Bar key={lvl} dataKey={lvl} name={lvl} fill={chartTheme.colors[i % chartTheme.colors.length]} radius={[0, 3, 3, 0]} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+// ── Per-player trend across AI tiers — line chart ───────────────────────────
+// Same `levels` prop as CompareTable, for whichever player is selected above — swapping
+// the player dropdown re-renders this instantly since it's derived straight from props.
+function PlayerTierChart({ levels, surveyRows, metricRows }) {
+  const chartTheme = useChartTheme()
+  const rows = [
+    ...surveyRows.map(r => ({ ...r, group: 'survey' })),
+    ...metricRows.map(r => ({ ...r, group: 'metrics' })),
+  ]
+  const chartData = LEVELS.map(lvl => {
+    const play = levels[lvl]
+    const entry = { tier: LEVEL_LABEL[lvl] }
+    for (const r of rows) {
+      const max = measureMax(r.unit)
+      const raw = r.group === 'survey' ? play?.aiEval?.[r.key] : play?.metrics?.[r.key]
+      entry[r.key] = r.group === 'survey' ? toPct100(raw, max) : (typeof raw === 'number' ? raw : null)
+    }
+    return entry
+  })
+  const hasAnyValue = chartData.some(d => rows.some(r => d[r.key] != null))
+  if (!rows.length || !hasAnyValue) return null
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <div className={styles.note} style={{ marginTop: 0, marginBottom: '.5rem' }}>
+        This player&apos;s believability ratings and enemy hit-rate as AI difficulty rises
+        (normalized to 0–100% — see chart above). A rising line means the AI felt/performed
+        better at harder tiers; missing points mean that tier hasn&apos;t been played yet.
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={chartData} margin={{ top: 4, right: 16, left: -12, bottom: 0 }}>
+          <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+          <XAxis dataKey="tier" tick={{ fill: chartTheme.label, fontSize: 11 }} />
+          <YAxis domain={[0, 100]} tick={{ fill: chartTheme.label, fontSize: 11 }} unit="%" />
+          <Tooltip
+            contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+            labelStyle={{ color: chartTheme.label }}
+            formatter={(v) => (v == null ? '—' : `${v}%`)}
+          />
+          <Legend wrapperStyle={{ fontSize: 11, color: chartTheme.label }} />
+          {rows.map((r, i) => (
+            <Line
+              key={r.key}
+              type="monotone"
+              dataKey={r.key}
+              name={r.label}
+              stroke={chartTheme.colors[i % chartTheme.colors.length]}
+              strokeWidth={2}
+              dot={{ r: 3 }}
+              connectNulls
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+// ── Per-player reliability — repeated plays at the SAME tier ────────────────
+// Unlike PlayerTierChart above (one point per tier, the newest play), this walks
+// `player.allTrials` — every session this player ever played, oldest→newest — grouped
+// by npcLevel, so a tier the player replayed shows a consistency/learning-curve line
+// across attempts #1, #2, … instead of just the latest value.
+function PlayerReliabilityChart({ player, surveyRows, metricRows }) {
+  const chartTheme = useChartTheme()
+  const rows = [
+    ...surveyRows.map(r => ({ ...r, group: 'survey' })),
+    ...metricRows.map(r => ({ ...r, group: 'metrics' })),
+  ]
+  const byTier = {}
+  for (const lvl of LEVELS) {
+    const trials = (player.allTrials || []).filter(t => t.npcLevel === lvl)
+    if (trials.length > 1) byTier[lvl] = trials
+  }
+  const tiersWithRepeats = LEVELS.filter(lvl => byTier[lvl])
+  if (!rows.length || !tiersWithRepeats.length) return null
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <div className={styles.note} style={{ marginTop: 0, marginBottom: '.5rem' }}>
+        Reliability — how this player&apos;s ratings/hit-rate changed each time they replayed the
+        <strong> same</strong> AI tier. A flat line means consistent scoring; a rising one may mean
+        the player was learning the mission rather than judging the AI.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: tiersWithRepeats.length > 1 ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+        {tiersWithRepeats.map(lvl => {
+          const chartData = byTier[lvl].map((t, i) => {
+            const entry = { attempt: `#${i + 1}` }
+            for (const r of rows) {
+              const max = measureMax(r.unit)
+              const raw = r.group === 'survey' ? t.aiEval?.[r.key] : t.metrics?.[r.key]
+              entry[r.key] = r.group === 'survey' ? toPct100(raw, max) : (typeof raw === 'number' ? raw : null)
+            }
+            return entry
+          })
+          return (
+            <div key={lvl}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', marginBottom: 4 }}>
+                {LEVEL_LABEL[lvl]} <span className={styles.nBadge}>{byTier[lvl].length} plays</span>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={chartData} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+                  <XAxis dataKey="attempt" tick={{ fill: chartTheme.label, fontSize: 10 }} />
+                  <YAxis domain={[0, 100]} tick={{ fill: chartTheme.label, fontSize: 10 }} unit="%" />
+                  <Tooltip
+                    contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+                    labelStyle={{ color: chartTheme.label }}
+                    formatter={(v) => (v == null ? '—' : `${v}%`)}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 10, color: chartTheme.label }} />
+                  {rows.map((r, i) => (
+                    <Line
+                      key={r.key}
+                      type="monotone"
+                      dataKey={r.key}
+                      name={r.label}
+                      stroke={chartTheme.colors[i % chartTheme.colors.length]}
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Distribution / spread across all pooled sessions — histogram ────────────
+// One mini-histogram per measure, built from `pooledValues` (every tagged session,
+// any player, any tier). Survey scores are normalized to 0-100% the same way the
+// other Module 2 charts are, so all four measures share one x-axis.
+function buildHistogramBins(values, binCount = 8, domainMax = 100) {
+  const bins = Array.from({ length: binCount }, (_, i) => ({
+    label: `${Math.round((i * domainMax) / binCount)}-${Math.round(((i + 1) * domainMax) / binCount)}`,
+    count: 0,
+  }))
+  for (const v of values) {
+    let idx = Math.floor((v / domainMax) * binCount)
+    if (idx >= binCount) idx = binCount - 1
+    if (idx < 0) idx = 0
+    bins[idx].count++
+  }
+  return bins
+}
+
+function PoolDistributionChart({ pooledValues, measures }) {
+  const items = measures.map(m => {
+    const raw = pooledValues?.[m.key] || []
+    // STAT_MEASURES don't carry their own scale — reuse SURVEY_ROWS/METRIC_ROWS' unit
+    // (same source AveragesTable/TierAveragesChart already read) to normalize.
+    const row = SURVEY_ROWS.find(r => r.key === m.key) || METRIC_ROWS.find(r => r.key === m.key)
+    const max = measureMax(row?.unit)
+    const isRatio = !!row?.unit && row.unit.startsWith('/')
+    const values = raw.map(v => (isRatio ? toPct100(v, max) : v)).filter(v => typeof v === 'number')
+    return { key: m.key, label: m.label, n: values.length, bins: buildHistogramBins(values) }
+  }).filter(it => it.n >= 5)
+  return <HistogramGrid items={items} />
+}
+
+// Module 4's own 5 scores are already 0-1 ratios (not a /5 or /7 survey scale like Module
+// 2's), so they only need a straight ×100 — reuses toPct100(v, 1) rather than the
+// unit-string lookup PoolDistributionChart needs for Module 2's mixed scales.
+function ScoreDistributionChart({ pooledValues, measures }) {
+  const items = measures.map(m => {
+    const raw = pooledValues?.[m.key] || []
+    const values = raw.map(v => toPct100(v, 1)).filter(v => typeof v === 'number')
+    return { key: m.key, label: m.label, n: values.length, bins: buildHistogramBins(values) }
+  }).filter(it => it.n >= 5)
+  return <HistogramGrid items={items} />
+}
+
+// Shared renderer for both distribution charts above — one mini-histogram card per
+// pre-built item ({ key, label, n, bins }), so the two callers can't visually drift apart.
+function HistogramGrid({ items }) {
+  const chartTheme = useChartTheme()
+  if (!items.length) {
+    return <div className={styles.msg}>Need at least 5 pooled sessions for a measure to plot its distribution.</div>
+  }
+  return (
+    <div className={styles.stats}>
+      {items.map(it => (
+        <div key={it.key} className={styles.statBlock}>
+          <div className={styles.statHead}>
+            <span className={styles.statTitle}>{it.label}</span>
+            <span className={styles.statMeta}>n = {it.n} sessions</span>
+          </div>
+          <ResponsiveContainer width="100%" height={140}>
+            <BarChart data={it.bins} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <XAxis dataKey="label" tick={{ fill: chartTheme.label, fontSize: 9 }} unit="%" />
+              <YAxis allowDecimals={false} tick={{ fill: chartTheme.label, fontSize: 10 }} width={24} />
+              <Tooltip
+                contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+                labelStyle={{ color: chartTheme.label }}
+                formatter={(v) => [`${v} session${v === 1 ? '' : 's'}`, 'Count']}
+              />
+              <Bar dataKey="count" radius={[3, 3, 0, 0]} fill={chartTheme.accent} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Ablation study — client-parsed Unity CSV ─────────────────────────────────
+// AblationExperimentRunner.cs writes AblationResults_*.csv to
+// Application.persistentDataPath/Telemetry/ — that data never reaches Mongo, so this
+// reads the file straight in the browser (FileReader, nothing uploaded anywhere) and
+// graphs it. Not tied to the live DB feed like the charts above: re-load a fresh CSV
+// export any time you want to see updated numbers.
+function parseAblationCsv(text) {
+  const lines = text.trim().split(/\r?\n/)
+  if (lines.length < 2) throw new Error('File is empty.')
+  const header = lines[0].split(',').map(h => h.trim())
+  const modeIdx = header.indexOf('ablation_mode')
+  const scoreIdx = header.indexOf('state_score')
+  if (modeIdx === -1 || scoreIdx === -1) {
+    throw new Error('Not a recognized AblationResults CSV (missing ablation_mode / state_score columns).')
+  }
+  const rows = []
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue
+    const cols = lines[i].split(',')
+    const score = parseFloat(cols[scoreIdx])
+    const mode = cols[modeIdx]?.trim()
+    if (mode && !Number.isNaN(score)) rows.push({ mode, score })
+  }
+  if (!rows.length) throw new Error('No usable rows found in this CSV.')
+  return rows
+}
+
+function AblationChart() {
+  const chartTheme = useChartTheme()
+  const [rows, setRows] = useState(null)
+  const [fileName, setFileName] = useState('')
+  const [error, setError] = useState('')
+
+  const onFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFileName(file.name)
+    setError('')
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        setRows(parseAblationCsv(String(reader.result)))
+      } catch (err) {
+        setRows(null)
+        setError(err.message)
+      }
+    }
+    reader.onerror = () => { setRows(null); setError('Could not read this file.') }
+    reader.readAsText(file)
+  }
+
+  const chartData = useMemo(() => {
+    if (!rows) return []
+    const byMode = {}
+    for (const r of rows) {
+      byMode[r.mode] = byMode[r.mode] || { mode: r.mode, sum: 0, n: 0 }
+      byMode[r.mode].sum += r.score
+      byMode[r.mode].n += 1
+    }
+    return Object.values(byMode).map(g => ({ mode: g.mode, avgScore: round2(g.sum / g.n), n: g.n }))
+  }, [rows])
+
+  return (
+    <div>
+      <p className={styles.note} style={{ marginTop: 0 }}>
+        Loads an <strong>AblationResults_*.csv</strong> file exported by Unity&apos;s
+        AblationExperimentRunner (<code>Application.persistentDataPath/Telemetry/</code>) and graphs
+        the average responder-selection <code>state_score</code> per ablation mode — how much each
+        scoring factor (line-of-sight, distance, role) actually mattered. This data lives only in
+        the exported file, not the trainee database, so re-load a new export to see updated numbers.
+      </p>
+      <input type="file" accept=".csv" onChange={onFile} className={styles.select} style={{ marginBottom: '.75rem' }} />
+      {fileName && !error && <span className={styles.nBadge}>{fileName} · {rows?.length ?? 0} rows loaded</span>}
+      {error && <div className={styles.msg} style={{ marginTop: '.5rem' }}>{error}</div>}
+      {chartData.length > 0 && (
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={chartData} margin={{ top: 4, right: 16, left: -8, bottom: 0 }}>
+            <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+            <XAxis dataKey="mode" tick={{ fill: chartTheme.label, fontSize: 11 }} />
+            <YAxis tick={{ fill: chartTheme.label, fontSize: 11 }} />
+            <Tooltip
+              contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+              labelStyle={{ color: chartTheme.label }}
+              formatter={(v, name, props) => [`${v} (n=${props.payload.n})`, 'Avg state_score']}
+            />
+            <Bar dataKey="avgScore" radius={[3, 3, 0, 0]}>
+              {chartData.map((_, i) => <Cell key={i} fill={chartTheme.colors[i % chartTheme.colors.length]} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  )
+}
+
 // Build one series per level for a measure, aligned by participant index so the
 // tests only use participants who have a value at every level (complete cases).
 function buildSeries(players, measure) {
@@ -553,6 +966,7 @@ function StatsPanel({ players, measures }) {
         changed the measure at all; <strong>Wilcoxon</strong> signed-rank post-hoc asks which pair
         differs (α is Bonferroni-corrected for the 3 pairs). A result is significant when p &lt; α.
       </p>
+      <StatsEffectChart results={results} />
       {results.map(({ m, n, friedman: fr, pairs, alpha }) => (
         <div key={m.key} className={styles.statBlock}>
           <div className={styles.statHead}>
@@ -590,6 +1004,59 @@ function StatsPanel({ players, measures }) {
           )}
         </div>
       ))}
+    </div>
+  )
+}
+
+// ── Effect size (r) per tier pair, across measures — grouped bar chart ──────
+// Same `results` StatsPanel already computed (analyzeMeasure per measure) — just
+// re-plotted, so it can never drift from the table underneath it. Solid bars mark a
+// pair that cleared the Bonferroni-corrected α; faded bars did not.
+function StatsEffectChart({ results }) {
+  const chartTheme = useChartTheme()
+  const usable = results.filter(r => r.n >= 3 && r.friedman && r.pairs.length > 0)
+  if (!usable.length) return null
+
+  const pairLabels = usable[0].pairs.map(pr => `${pr.labelA} vs ${pr.labelB}`)
+  const chartData = usable.map(({ m, pairs, alpha }) => {
+    const entry = { name: m.label }
+    pairs.forEach((pr, i) => {
+      const key = pairLabels[i]
+      entry[key] = round2(pr.r)
+      entry[`${key}__p`] = pr.p
+      entry[`${key}__sig`] = pr.p < alpha
+    })
+    return entry
+  })
+
+  return (
+    <div style={{ marginBottom: '.5rem' }}>
+      <div className={styles.note} style={{ marginTop: 0 }}>
+        Wilcoxon effect size (r, 0–1) per tier pair. Solid bars are statistically
+        significant (p &lt; Bonferroni-corrected α); faded bars are not.
+      </div>
+      <ResponsiveContainer width="100%" height={Math.max(180, usable.length * 60)}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
+          <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" horizontal={false} />
+          <XAxis type="number" domain={[0, 1]} tick={{ fill: chartTheme.label, fontSize: 11 }} />
+          <YAxis type="category" dataKey="name" width={150} tick={{ fill: chartTheme.label, fontSize: 11 }} />
+          <Tooltip
+            contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+            labelStyle={{ color: chartTheme.label }}
+            formatter={(value, name, props) => {
+              const p = props.payload[`${name}__p`]
+              const sig = props.payload[`${name}__sig`]
+              return [`r = ${value}, p = ${fmtP(p)} (${sig ? 'sig.' : 'n.s.'})`, name]
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11, color: chartTheme.label }} />
+          {pairLabels.map((key, i) => (
+            <Bar key={key} dataKey={key} name={key} fill={chartTheme.colors[i % chartTheme.colors.length]}>
+              {chartData.map((d, di) => <Cell key={di} fillOpacity={d[`${key}__sig`] ? 1 : 0.3} />)}
+            </Bar>
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   )
 }
@@ -658,6 +1125,42 @@ function CombinedPlayerTable({ players, measures }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+// ── Module 4's 5 scores, one player's combined average, as a radar shape ────────────
+// Same axis/value/radar recipe as the per-session Performance Radar on the dashboard's
+// own Summary tab (components/dashboard/SummaryTab.jsx) — reused here for the *combined*
+// (all-tiers-averaged) score instead of a single session, for whichever player is
+// selected via the Player dropdown above CombinedPlayerTable.
+function PlayerScoresRadarChart({ player, measures }) {
+  const chartTheme = useChartTheme()
+  if (!player?.combined?.n) return null
+  const radarData = measures
+    .map(m => ({ axis: m.label, value: player.combined.metrics[m.key] }))
+    .filter(d => typeof d.value === 'number')
+    .map(d => ({ ...d, value: Math.round(d.value * 100) }))
+  if (radarData.length < 3) return null // a radar needs 3+ axes to read as a shape
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <div className={styles.note} style={{ marginTop: 0, marginBottom: '.5rem' }}>
+        {player.playerId}&apos;s combined score shape, averaged across all {player.combined.n} sessions.
+      </div>
+      <ResponsiveContainer width="100%" height={260}>
+        <RadarChart data={radarData}>
+          <PolarGrid stroke={chartTheme.grid} />
+          <PolarAngleAxis dataKey="axis" tick={{ fill: chartTheme.label, fontSize: 12 }} />
+          <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+          <Tooltip
+            contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+            labelStyle={{ color: chartTheme.label }}
+            formatter={(v) => `${v}%`}
+          />
+          <Radar dataKey="value" stroke={chartTheme.accent} fill={chartTheme.accent} fillOpacity={0.25} dot={{ r: 3, fill: chartTheme.accent }} />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
@@ -814,12 +1317,47 @@ function AnovaPanel({ players, measures }) {
                   {' '}— {result.p < 0.05 ? 'players differ significantly from each other' : 'no significant difference between players'} on {m.label.toLowerCase()}.
                   {m.bench && ` For reference, the published expert value is ${m.bench.fmt(m.bench.expert)} (${m.bench.source}).`}
                 </div>
+                <AnovaChart groups={groups} />
               </>
             )}
           </div>
         )
       })}
     </div>
+  )
+}
+
+// Each player's mean ± 1 SD for the measure the ANOVA table above just tested — the same
+// `groups` array (one entry per player, that player's sessions as values), just plotted
+// instead of reduced to a table. Error bars make the "between vs within" question visual:
+// tall bars with barely-overlapping error whiskers = players really do differ.
+function AnovaChart({ groups }) {
+  const chartTheme = useChartTheme()
+  const chartData = groups
+    .map(g => {
+      const m = meanOf(g.values)
+      const sd = stdDevOf(g.values, m)
+      return { name: g.label, mean: m == null ? null : round2(m), sd: sd == null ? 0 : round2(sd) }
+    })
+    .filter(d => d.mean != null)
+  if (chartData.length < 2) return null
+
+  return (
+    <ResponsiveContainer width="100%" height={160}>
+      <BarChart data={chartData} margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
+        <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+        <XAxis dataKey="name" tick={{ fill: chartTheme.label, fontSize: 10 }} />
+        <YAxis tick={{ fill: chartTheme.label, fontSize: 10 }} />
+        <Tooltip
+          contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+          labelStyle={{ color: chartTheme.label }}
+          formatter={(v, name, props) => [`${v} ± ${props.payload.sd}`, 'Mean ± SD']}
+        />
+        <Bar dataKey="mean" fill={chartTheme.accent} radius={[3, 3, 0, 0]}>
+          <ErrorBar dataKey="sd" width={4} strokeWidth={1.5} stroke={chartTheme.label} />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
   )
 }
 
@@ -869,7 +1407,9 @@ function PooledVsExpertPanel({ pooledValues, measures }) {
 
 // ── Repeated-trial reliability ────────────────────────────────────────────
 // Any player with 2+ recorded sessions (ANY AI tier — Module 4 doesn't split by tier).
-function ReliabilityPanel({ players }) {
+// Filtered to the single player picked in the section header — showing every player's
+// block at once got unwieldy as the study grew, so this renders one at a time instead.
+function ReliabilityPanel({ players, playerId }) {
   const withRepeats = players.filter(p => (p.allTrials?.length || 0) > 1)
   if (!withRepeats.length) {
     return (
@@ -879,9 +1419,18 @@ function ReliabilityPanel({ players }) {
       </div>
     )
   }
+  const player = withRepeats.find(p => p.playerId === playerId)
+  if (!player) {
+    return (
+      <div className={styles.msg}>
+        <strong>{playerId || 'This player'}</strong> hasn&apos;t played more than once yet.
+        Players with repeat sessions: {withRepeats.map(p => p.playerId).join(', ')}.
+      </div>
+    )
+  }
   return (
     <div className={styles.stats}>
-      {withRepeats.map(p => <RetestBlock key={p.playerId} player={p} />)}
+      <RetestBlock player={player} />
     </div>
   )
 }
@@ -940,7 +1489,8 @@ function RetestBlock({ player }) {
 }
 
 // ── Module 4 vs expert benchmarks, averaged across a player's sessions ─────
-function BenchmarkPanel({ players }) {
+// Same one-player-at-a-time filtering as ReliabilityPanel above, same reason.
+function BenchmarkPanel({ players, playerId }) {
   const withRepeats = players.filter(p => (p.allTrials?.length || 0) > 1)
   if (!withRepeats.length) {
     return (
@@ -950,10 +1500,61 @@ function BenchmarkPanel({ players }) {
       </div>
     )
   }
+  const player = withRepeats.find(p => p.playerId === playerId)
+  if (!player) {
+    return (
+      <div className={styles.msg}>
+        <strong>{playerId || 'This player'}</strong> hasn&apos;t played more than once yet.
+        Players with repeat sessions: {withRepeats.map(p => p.playerId).join(', ')}.
+      </div>
+    )
+  }
   return (
     <div className={styles.stats}>
-      {withRepeats.map(p => <BenchmarkBlock key={p.playerId} player={p} />)}
+      <BenchmarkBlock player={player} />
     </div>
+  )
+}
+
+// Grouped Novice / Trainee / Expert bar chart across all 5 scores — the numeric version
+// of the gauge rows below (kept — the gauge is still the clearest single-metric readout,
+// this chart is for comparing all 5 scores against each other at a glance). Scores with
+// no published benchmark (Speed, Operator Safety, Overall) still show their trainee bar,
+// just with no novice/expert bars alongside — same "don't invent a source" rule as the
+// gauge rows use.
+function BenchmarkBarChart({ trials }) {
+  const chartTheme = useChartTheme()
+  const chartData = MODULE4_SCORES.map(spec => {
+    const nums = scoreSeries(trials, spec).filter(v => typeof v === 'number')
+    if (!nums.length) return null
+    const m = meanOf(nums)
+    const b = MODULE4_BENCH[spec.key]
+    return {
+      name: spec.label,
+      trainee: Math.round(m * 100),
+      novice: b ? Math.round(b.novice * 100) : null,
+      expert: b ? Math.round(b.expert * 100) : null,
+    }
+  }).filter(Boolean)
+  if (!chartData.length) return null
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={chartData} margin={{ top: 4, right: 16, left: -8, bottom: 0 }}>
+        <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+        <XAxis dataKey="name" tick={{ fill: chartTheme.label, fontSize: 10 }} />
+        <YAxis domain={[0, 100]} unit="%" tick={{ fill: chartTheme.label, fontSize: 11 }} />
+        <Tooltip
+          contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
+          labelStyle={{ color: chartTheme.label }}
+          formatter={(v) => (v == null ? '—' : `${v}%`)}
+        />
+        <Legend wrapperStyle={{ fontSize: 11, color: chartTheme.label }} />
+        <Bar dataKey="novice" name="Novice" fill="#f87171" radius={[3, 3, 0, 0]} />
+        <Bar dataKey="trainee" name="Trainee" fill={chartTheme.accent} radius={[3, 3, 0, 0]} />
+        <Bar dataKey="expert" name="Expert" fill="#34d399" radius={[3, 3, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
   )
 }
 
@@ -965,6 +1566,7 @@ function BenchmarkBlock({ player }) {
         <span className={styles.statTitle}>{player.playerId}</span>
         <span className={styles.statMeta}>avg of {trials.length} sessions</span>
       </div>
+      <BenchmarkBarChart trials={trials} />
       <div className={styles.benchGrid}>
         {MODULE4_SCORES.map(spec => {
           const nums = scoreSeries(trials, spec).filter(v => typeof v === 'number')

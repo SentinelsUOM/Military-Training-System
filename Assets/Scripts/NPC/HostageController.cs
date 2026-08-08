@@ -65,6 +65,16 @@ public class HostageController : MonoBehaviour, INPCResponder
              "with a walking player. Overrides the agent's 3.5 m/s default.")]
     public float followSpeed = 2.2f;
 
+    [Header("Held Collider (human shield)")]
+    [Tooltip("While Held, the hostage kneels but its CapsuleCollider stayed sized for a " +
+             "standing pose — an invisible column kept covering the airspace above the actual " +
+             "kneeling body, so any shot aimed at the guardian's head/torso peeking out above " +
+             "the hostage was intercepted by empty air instead of reaching the guardian. This " +
+             "margin (m) is how far above the animated head bone the shrunk collider still " +
+             "extends — small enough that a shot at the hostage's real head still lands, big " +
+             "enough to allow for hair/helmet clearance.")]
+    public float heldColliderHeadroom = 0.15f;
+
     [Header("Health (the hostage can be shot)")]
     [Tooltip("Hostage starting health. As fragile as an enemy in terms of shots-to-down: the " +
              "trainee's rifle does 30/round, so 90 = THREE rounds and the hostage is down. " +
@@ -472,6 +482,10 @@ public class HostageController : MonoBehaviour, INPCResponder
     float       _lastResponseTime = -99f;
     NavMeshAgent _agent;
     Animator    _animator;
+    CapsuleCollider _capsule;               // resized while Held so the phantom "standing" airspace
+                                             // above the kneeling body doesn't shield the guardian
+    float       _capsuleStandingHeight;     // original (standing) height/center, restored on release
+    Vector3     _capsuleStandingCenter;
     Transform   _followTarget;
     Coroutine   _followRoutine;
     Coroutine   _freezeCheckRoutine;
@@ -503,6 +517,13 @@ public class HostageController : MonoBehaviour, INPCResponder
         _animator = GetComponentInChildren<Animator>(); // optional — drives walk/idle blend
         _lastAnimPos = transform.position;
         _currentHealth = maxHealth;
+
+        _capsule = GetComponent<CapsuleCollider>(); // optional — resized while Held, see Update()
+        if (_capsule != null)
+        {
+            _capsuleStandingHeight = _capsule.height;
+            _capsuleStandingCenter = _capsule.center;
+        }
 
         // Personality profile — random by research-weighted prevalence for training variety,
         // or forced (assignRandomProfile = false) for a controlled evaluation run.
@@ -556,6 +577,22 @@ public class HostageController : MonoBehaviour, INPCResponder
                 Quaternion look = Quaternion.LookRotation(toCaptor);
                 transform.rotation = Quaternion.Slerp(transform.rotation, look, Time.deltaTime * 6f);
             }
+        }
+
+        // While Held, shrink the CapsuleCollider to hug the actual (animated) kneeling head
+        // height every frame — the kneel blends in over a few frames, and the guardian keeps
+        // repositioning behind the hostage, so a one-shot resize on entering Held would either
+        // fire too early (still standing-pose head height) or go stale. Tracking the live head
+        // bone means a shot aimed above the real kneeling body reaches the guardian instead of
+        // being eaten by the leftover "standing" airspace; a shot at the hostage's actual body
+        // still lands on the hostage as before.
+        if (currentState == HostageState.Held && _capsule != null && _animator != null && _animator.isHuman)
+        {
+            float headLocalY = transform.InverseTransformPoint(HeadPosition).y;
+            float bottomLocalY = _capsuleStandingCenter.y - _capsuleStandingHeight / 2f;
+            float topLocalY = Mathf.Max(bottomLocalY + 0.2f, headLocalY + heldColliderHeadroom);
+            _capsule.height = topLocalY - bottomLocalY;
+            _capsule.center = new Vector3(_capsuleStandingCenter.x, (topLocalY + bottomLocalY) / 2f, _capsuleStandingCenter.z);
         }
 
         // Velocity-driven locomotion blend: walk while moving (e.g. following the trainee),
@@ -634,6 +671,13 @@ public class HostageController : MonoBehaviour, INPCResponder
                 if (_hasHeldParam) _animator?.SetBool(_animHeld, false);
                 else               scareController?.SetScared(false);
                 if (_agent != null && _agent.isActiveAndEnabled) _agent.isStopped = false;
+            }
+            // Undo the Held-only collider shrink (see Update()) — standing/fleeing/dead all
+            // need the normal full-height hitbox back.
+            if (_capsule != null)
+            {
+                _capsule.height = _capsuleStandingHeight;
+                _capsule.center = _capsuleStandingCenter;
             }
         }
 
