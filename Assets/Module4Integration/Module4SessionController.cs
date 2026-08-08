@@ -258,8 +258,16 @@ public class Module4SessionController : MonoBehaviour
             return;
         }
 
-        var snap      = new LayoutSnapshot();
-        var seenDoors = new HashSet<string>();
+        var snap = new LayoutSnapshot();
+
+        // scenario.layout stores positions in layout-local space (pre-placement).
+        // SceneBuilder instantiates the actual rooms/doors/NPCs shifted by its
+        // resolved build offset (buildAnchor / buildOffset, further nudged by
+        // ResolveBaseMapClearance) — the same offset already baked into every
+        // actor's Transform that ReplayRecorder samples. Without adding it here,
+        // the layout snapshot and the replay actors end up in different world
+        // positions in the dashboard's 2D/3D replay.
+        Vector3 buildOffset = builder.ResolvedBuildOffset;
 
         foreach (var room in scenario.layout.rooms)
         {
@@ -268,28 +276,52 @@ public class Module4SessionController : MonoBehaviour
             {
                 id      = room.id,
                 type    = room.type.ToString(),
-                centerX = room.position?.x ?? 0f,
-                centerZ = room.position?.z ?? 0f,
+                centerX = (room.position?.x ?? 0f) + buildOffset.x,
+                centerZ = (room.position?.z ?? 0f) + buildOffset.z,
                 width   = room.size?.width  ?? 0f,
                 depth   = room.size?.depth  ?? 0f,
                 height  = room.size?.height ?? 0f,
             });
+        }
 
-            if (room.doors == null) continue;
-            foreach (var d in room.doors)
+        // Read doors from SceneBuilder's own PlacedDoors, NOT scenario.layout's
+        // room-to-room door list. The layout only knows about doors Module 1's
+        // generator placed between two rooms — it has no idea about the entry/
+        // breach doors or the perimeter-corridor's exterior door, both of which
+        // SceneBuilder invents itself while building. Walking the layout's list
+        // (as this used to) silently dropped every one of those from the replay.
+        // PlacedDoors is already de-duplicated (one entry per door actually built)
+        // and already in world space, so no buildOffset add here.
+        foreach (var d in builder.PlacedDoors)
+        {
+            snap.doors.Add(new DoorMark
             {
-                if (d?.position == null) continue;
-                // A door between two rooms is recorded on both — dedupe by rounded position.
-                string key = Mathf.RoundToInt(d.position.x * 100f) + "_" + Mathf.RoundToInt(d.position.z * 100f);
-                if (!seenDoors.Add(key)) continue;
-                snap.doors.Add(new DoorMark
-                {
-                    x          = d.position.x,
-                    z          = d.position.z,
-                    wallSide   = d.wallSide.ToString(),
-                    isExterior = d.isExterior,
-                });
-            }
+                x          = d.center.x,
+                z          = d.center.z,
+                wallSide   = d.side.ToString(),
+                isExterior = d.isExterior,
+            });
+        }
+
+        // The perimeter corridor (the walkway wrapping the building) is
+        // SceneBuilder's own invented geometry — it never appears in
+        // scenario.layout.rooms, so without this the replay shows nothing at all
+        // wherever a fight happens out in that corridor. Its segments are already
+        // world space (SceneBuilder computes them via World()), unlike the layout
+        // rooms above, so no buildOffset add here.
+        int segIdx = 0;
+        foreach (var seg in builder.PerimeterCorridorSegments)
+        {
+            snap.rooms.Add(new RoomBox
+            {
+                id      = "corridor_seg_" + segIdx++,
+                type    = "Corridor",
+                centerX = seg.centerX,
+                centerZ = seg.centerZ,
+                width   = seg.width,
+                depth   = seg.depth,
+                height  = seg.height,
+            });
         }
 
         SessionLogger.Instance.SetLayout(snap);

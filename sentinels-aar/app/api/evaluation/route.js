@@ -120,6 +120,7 @@ export async function GET() {
 
       const play = {
         sessionId: s.sessionId,
+        npcLevel:  lvl, // kept on every trial (not just the per-level slot) so allTrials can be grouped by tier client-side
         aiEval:    s.aiEval?.derived || null,
         workload:  s.simTlx?.derived?.overallWorkload ?? null,
         metrics:   metricsOf(s),
@@ -162,6 +163,18 @@ export async function GET() {
         .map(s => metricsOf(s)[k])
         .filter(v => typeof v === 'number' && !Number.isNaN(v))
     }
+    // Module 2's own measures — pooled across every tagged session (any tier), for the
+    // distribution/spread chart on the evaluation page. Survey sub-scales come straight
+    // from aiEval.derived (metricsOf() doesn't carry them); enemyAccuracy reuses
+    // metricsOf() the same way the per-level averages above do.
+    for (const k of SURVEY_KEYS) {
+      pooledValues[k] = sessions
+        .map(s => s.aiEval?.derived?.[k])
+        .filter(v => typeof v === 'number' && !Number.isNaN(v))
+    }
+    pooledValues.enemyAccuracy = sessions
+      .map(s => metricsOf(s).enemyAccuracy)
+      .filter(v => typeof v === 'number' && !Number.isNaN(v))
 
     // ── Per-level averages across all study sessions ───────────────────────
     const averages = {}

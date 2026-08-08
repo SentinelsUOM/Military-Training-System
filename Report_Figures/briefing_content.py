@@ -24,7 +24,7 @@ Block format — a list of tuples, first element is the block type:
     ('pagebreak',)                   -- force a new page (PDF/DOCX only)
 """
 
-LAST_UPDATED = "2026-08-04"
+LAST_UPDATED = "2026-08-07"
 
 BLOCKS = [
     ('h1', 'Module 2 — Evaluation Briefing'),
@@ -54,7 +54,7 @@ BLOCKS = [
           'contact doctrine says the opposite: a confirmed sighting should commit the '
           'whole squad to a coordinated pursuit, not a private memory that expires. That '
           'gap — and the U.S. Army doctrine that contradicts it — is the origin story for '
-          'the whole squad-coordination architecture (see Section 3).'),
+          'the whole squad-coordination architecture (see Section 4).'),
 
     ('h1', '2. How It Is Built — conceptual architecture (no code)'),
     ('bullet', [
@@ -69,9 +69,81 @@ BLOCKS = [
         'can actually see the event — and picks the highest scorer.',
     ]),
     ('p', 'That is the whole architecture in three sentences. Depth beyond this belongs '
-          'in Q&A answers, not the opening pitch — see Section 8.'),
+          'in Q&A answers, not the opening pitch — see Section 9.'),
 
-    ('h1', '3. Why It Is Built This Way — literature grounding, summarised'),
+    ('h1', '3. Inputs, Processing & Outputs — the full pipeline'),
+    ('p', 'How data flows through Module 2, end to end — what it receives, how it turns '
+          'that into a decision, and what it produces. Every step below cites the actual '
+          'file and method it lives in.'),
+
+    ('h2', '3.1 Inputs — what Module 2 receives'),
+    ('bullet', [
+        'Scenario setup, from Module 1 — SceneBuilder.cs spawns each NPC with its role '
+        '(Guard/Roamer/Leader), squad ID, AI level, and starting position, read from the '
+        'generated scenario.',
+        'Live player state, every frame — the player\'s position/camera, used as the aim '
+        'target and for line-of-sight checks.',
+        'World/physics data — wall/door raycasts (Physics.Raycast in '
+        'PerceptionController.cs) and the baked NavMesh for pathing.',
+        'Events from other systems — ShotFired, DoorOpened, RoomBreached, '
+        'HostageContactStarted and others, delivered through the shared event bus, '
+        'EventManager.cs.',
+        'Tunable numbers — hearingRange, targetConfirmTime, preferredStandoffDistance, '
+        'and the four NPCSelector scoring weights (NPCSelector.cs lines 51-60) — the '
+        'dials the whole system runs on.',
+    ]),
+
+    ('h2', '3.2 Processing — how an input becomes a decision'),
+    ('numbered', [
+        'Perception turns raw world data into an event. PerceptionController.cs\'s '
+        'PerceptionTick() runs every 0.2s per NPC: checks distance, field-of-view, then '
+        'a line-of-sight raycast (CheckVisibility()). Newly visible -> PlayerSeen; '
+        'sustained sight -> TargetConfirmed; sustained loss -> PlayerLost.',
+        'Each NPC\'s own state machine reacts. TerroristController.cs\'s '
+        'HandleDetection() and RespondTo() move the NPC through its states via '
+        'TransitionTo(): Idle -> Suspicious -> Alert -> Engage -> TakeCover/Retreat -> Down.',
+        'NPCSelector picks the one responder, when only one should act. '
+        'EventManager.cs\'s RouteToNPCs() collects every eligible NPC (CanRespond() true) '
+        'and hands them to NPCSelector.SelectBest(), which scores distance/role/'
+        'readiness/LOS and returns the highest scorer.',
+        'Squad coordination updates the shared blackboard. Squad.cs\'s '
+        'ReportConfirmedContact() writes a confirmed sighting to shared state; '
+        'BeginHunt() and FanOutSearch() dispatch squad members via each NPC\'s '
+        'DispatchToInvestigate().',
+        'Movement and combat execution turn the decision into physical action. '
+        'NavMeshAgent.SetDestination() moves the body; CombatPositionRoutine() governs '
+        'firing-line spacing; NpcShooterRaycast fires the weapon and resolves hit/miss.',
+        'The hostage runs a parallel process. HostageController.cs listens to the same '
+        'event bus and runs its own FSM, with MisreadsNonThreat() (driven by the '
+        'personality\'s ThreatDiscrimination value) deciding whether a stimulus is read '
+        'correctly at four separate decision points.',
+    ]),
+
+    ('h2', '3.3 Outputs — what Module 2 produces'),
+    ('bullet', [
+        'Observable in-game behaviour — NPCs reacting, taking cover, converging, firing; '
+        'hostages fleeing or following. The thing the trainee actually experiences.',
+        'Damage to the player — shots fired via NpcShooterRaycast connect to '
+        'PlayerHealth.',
+        'Telemetry events, for Module 4 — TelemetryLogger.LogStateChange() on every FSM '
+        'transition, LogDecision() on every NPCSelector pick, LogDirective() on every '
+        'leader order. This is the raw material every evaluation (ablation charts, '
+        'sensitivity charts, the significance tests) is built from.',
+        'Mission-outcome signals — hostage rescued/killed, terrorists down, mission '
+        'success/fail — consumed downstream by Module 4\'s scoring.',
+        'Derived events fed back in — e.g. a terrorist opening fire raises a new '
+        'GunshotHeard event that other terrorists and the hostage react to. Module 2 '
+        'is not a straight pipeline; some of its own outputs become next-tick inputs.',
+    ]),
+
+    ('bp', 'The whole thing in one line: Input (player position + world geometry + '
+           'scenario setup) -> Perception (raw data becomes an event) -> Individual FSM '
+           '(one NPC decides its own state) -> Selector (picks the one best responder) '
+           '-> Squad blackboard (shares knowledge, coordinates a search) -> Movement/'
+           'combat (executes it physically) -> Output (visible behaviour + damage + a '
+           'full telemetry trail Module 4 runs on).'),
+
+    ('h1', '4. Why It Is Built This Way — literature grounding, summarised'),
     ('p', 'The two-layer structure (individual behaviour under squad coordination) mirrors '
           'F.E.A.R.\'s well-known enemy AI (Orkin, 2006). The react-to-contact and '
           'shared-sighting behaviour follows actual U.S. Army battle-drill doctrine '
@@ -82,11 +154,11 @@ BLOCKS = [
           '2009; Dill, 2010/2011/2012), with two citations specifically about virtual '
           'characters for military training simulators — the same domain as this '
           'project. Full citations, verified working links, and what each source backs '
-          'are in Section 9 (Bibliography).'),
+          'are in Section 10 (Bibliography).'),
 
     # ══════════════════════════════════════════════════════════════════════
-    ('h1', '4. The Responder-Selection Formula — full justification'),
-    ('h2', '4.1 What it is'),
+    ('h1', '5. The Responder-Selection Formula — full justification'),
+    ('h2', '5.1 What it is'),
     ('p', 'NPCSelector.SelectBest scores every eligible NPC on four weighted factors and '
           'picks the highest total:'),
     ('quote', 'score = (1/distance) x DistanceWeight\n'
@@ -102,9 +174,9 @@ BLOCKS = [
           'well-grounded is the technique itself (weighted multi-factor scoring) and each '
           'individual factor, matched independently across three literatures: game-AI '
           'utility theory, multi-robot task allocation, and military/emergency dispatch '
-          'operations research (Section 9, Group 4).'),
+          'operations research (Section 10, Group 4).'),
 
-    ('h2', '4.2 Ablation study — does each factor actually matter?'),
+    ('h2', '5.2 Ablation study — does each factor actually matter?'),
     ('p', 'Method: the real NPCSelector was run live inside Unity, switching each of the '
           'four factors fully OFF one at a time, across 250 real selection decisions '
           '(50 gunshot events x 5 modes: Full, NoDistance, NoRole, NoState, NoLOS), and '
@@ -142,7 +214,7 @@ BLOCKS = [
            'external ground truth (an expert\'s judgement of who SHOULD respond), which '
            'this study does not have.'),
 
-    ('h2', '4.3 Weight-sensitivity study — are the chosen numbers fragile or robust?'),
+    ('h2', '5.3 Weight-sensitivity study — are the chosen numbers fragile or robust?'),
     ('p', 'Method: each factor\'s weight was swept across seven values (0, 0.5, 1, 1.5, '
           '2, 3, 4) while holding the other three at their defaults, across 25,200 real '
           'selection decisions — 3 event types (the three rows of the role-bonus table) '
@@ -179,7 +251,7 @@ BLOCKS = [
            'individually the "best" possible numbers — no experiment run here, or '
            'runnable without expert ground truth, can show that.'),
 
-    ('h2', '4.4 The honest, calibrated defense'),
+    ('h2', '5.4 The honest, calibrated defense'),
     ('quote', '"The specific combination of distance, role, state-readiness, and '
               'line-of-sight — and the exact weights used — is our own design; no '
               'single paper prescribes this formula. Each factor individually, and the '
@@ -198,7 +270,7 @@ BLOCKS = [
           'pushes back on this exact point.'),
 
     # ══════════════════════════════════════════════════════════════════════
-    ('h1', '5. Human Evaluation Results'),
+    ('h1', '6. Human Evaluation Results'),
     ('h2', '5.1 What was tested'),
     ('p', 'The same trainees played the identical mission three times — once against '
           '"Basic" AI, once "Intermediate," once "Advanced" — and rated the enemy after '
@@ -282,11 +354,11 @@ BLOCKS = [
            'contact all switch on together. This evaluation cannot isolate '
            "NPCSelector's specific contribution from the rest of that package. It "
            "corroborates that the mechanism is worth having; it does not validate its "
-           'specific weights — that remains the job of Section 4\'s ablation/sensitivity '
+           'specific weights — that remains the job of Section 5\'s ablation/sensitivity '
            'studies.'),
 
     # ══════════════════════════════════════════════════════════════════════
-    ('h1', '6. Recent Behaviour Fixes (verified compiling; playtest still needed)'),
+    ('h1', '7. Recent Behaviour Fixes (verified compiling; playtest still needed)'),
     ('p', 'Three concrete bugs were found and fixed while preparing for evaluation. '
           'Listed here because they are good evidence of iterative rigor if asked "what '
           'did you find and fix during testing?" — and as a reminder to actually '
@@ -316,7 +388,7 @@ BLOCKS = [
            'confirm the terrorist closes in; then break line of sight and confirm he '
            'goes to where you actually were, not somewhere else.'),
 
-    ('h1', '7. Presentation Structure — how to actually run the demo'),
+    ('h1', '8. Presentation Structure — how to actually run the demo'),
     ('numbered', [
         'One-sentence framing (Section 1) — set the standard you want to be judged '
         'against before showing anything.',
@@ -327,16 +399,16 @@ BLOCKS = [
         'moment, it is literally the bug that motivated the redesign, (c) the '
         'hostage-guard escalation ladder.',
         'How it is built — 30 seconds, conceptual only, no code (Section 2).',
-        'Why it is built this way — 30 seconds, name 2-3 sources (Section 3).',
+        'Why it is built this way — 30 seconds, name 2-3 sources (Section 4).',
         'How you know it works — do not rush this, it is your strongest material: the '
         'ablation numbers, the sensitivity numbers, and the real significance results '
-        '(Sections 4 and 5).',
+        '(Sections 5 and 6).',
         'State one limitation, unprompted — e.g. "the specific weights are not from a '
-        'published source; we validated them ourselves" (Section 4.4). Volunteering it '
+        'published source; we validated them ourselves" (Section 5.4). Volunteering it '
         'reads as rigor, not weakness.',
     ]),
 
-    ('h1', '8. Anticipated Questions — quick answers'),
+    ('h1', '9. Anticipated Questions — quick answers'),
     ('table',
      ['If asked...', 'Say...'],
      [
@@ -360,7 +432,7 @@ BLOCKS = [
           'out of scope here. This is stated plainly rather than hidden.'],
      ]),
 
-    ('h1', '9. Bibliography — every cited source, with working links'),
+    ('h1', '10. Bibliography — every cited source, with working links'),
     ('p', 'Grouped by what each cluster of sources backs. Links verified by direct '
           'fetch, not guessed; where a link is genuinely dead or access-restricted, that '
           'is stated rather than invented.'),
@@ -452,7 +524,7 @@ BLOCKS = [
           'MODULE2_MASTER_BIBLIOGRAPHY.md / .docx — this section covers only the sources '
           'most likely to come up in a live Q&A.'),
 
-    ('h1', '10. Open Items — track before the evaluation'),
+    ('h1', '11. Open Items — track before the evaluation'),
     ('bullet', [
         'No SME (subject-matter expert) comparison has been run yet — this is the only '
         'thing that could establish ground-truth "correctness" for the selection '
@@ -465,7 +537,7 @@ BLOCKS = [
         'Two citation discrepancies flagged in the master bibliography (#12 DiVA thesis '
         'title/authors, #20 Almeida FPS-AI review authors) — re-check against original '
         'sources before citing in front of an evaluator.',
-        'The three behaviour fixes in Section 6 need an actual VR playtest confirmation '
+        'The three behaviour fixes in Section 7 need an actual VR playtest confirmation '
         '— not yet done.',
     ]),
     ('p', 'Add new findings to this section (or a new numbered section above it) as they '

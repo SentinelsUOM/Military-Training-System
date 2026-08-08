@@ -1248,7 +1248,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
             // cautious tactical walk (Ch08@Walking) via the AlertMove state. Driven
             // here every frame so it stays correct even in states (e.g. Engage) that
             // don't set it on entry.
-            animator.SetBool(_animAlert, currentState != TerroristState.Idle);
+            // A hostage guardian stays visibly vigilant even before anything has happened —
+            // rifle up, always, not just once something alerts him.
+            animator.SetBool(_animAlert, currentState != TerroristState.Idle || isHostageGuardian);
         }
         _lastAnimPos = transform.position;
 
@@ -1317,8 +1319,18 @@ public class TerroristController : MonoBehaviour, INPCResponder
             _squadSupportRoutine = StartCoroutine(SquadSupportRoutine());
         }
 
-        // Keep look anchor tracking the player's live position every frame.
-        if (_lastSeenPlayer != null && currentState != TerroristState.Idle && _lookAnchor != null)
+        // Keep look anchor tracking the player's live position every frame — but ONLY while a
+        // guardian currently has eyes on them. A regular terrorist legitimately keeps looking
+        // toward the last place it saw the player while searching (that IS what searching looks
+        // like); a guardian covering a doorway should not — _lastSeenPlayer is a "last known"
+        // memory that never clears on its own, so without the extra _playerVisible check here a
+        // guardian that had caught even one earlier glimpse of the trainee (very likely by the
+        // time they've fought through the rest of the mission) would have its gaze permanently
+        // pinned on that stale position from then on, silently overriding every door-watching
+        // behaviour below regardless of whether it can currently see anything.
+        bool trackLastSeen = _lastSeenPlayer != null && currentState != TerroristState.Idle &&
+                              (!isHostageGuardian || _playerVisible);
+        if (trackLastSeen && _lookAnchor != null)
             _lookAnchor.position = new Vector3(
                 _lastSeenPlayer.position.x, transform.position.y, _lastSeenPlayer.position.z);
 
@@ -1328,12 +1340,34 @@ public class TerroristController : MonoBehaviour, INPCResponder
             _lookAnchor.position = new Vector3(
                 guardedHostage.transform.position.x, transform.position.y, guardedHostage.transform.position.z);
 
+        // A guardian's whole job is watching the way in. Whenever it can't currently see the
+        // trainee — in ANY state, not just while calm — and isn't already threatening the
+        // hostage, keep the look anchor pinned on the nearest doorway. Without this the guard
+        // only ever faced the door ONCE at mission start (_initialFacingSet below), or briefly
+        // during a single patrol-point pick that the block above could (and did) immediately
+        // overwrite, i.e. "looking away" right when a trainee walks in to make the rescue.
+        // Skipped while actually moving (fighting the NavMeshAgent's own rotation mid-step would
+        // look like the head twitching).
+        bool guardianNotMoving = agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh ||
+                                  agent.velocity.sqrMagnitude < 0.0025f;
+        if (isHostageGuardian && currentState != TerroristState.Down && !_playerVisible &&
+            !_hostageWarning && guardianNotMoving && _lookAnchor != null)
+        {
+            Transform guardDoor = NearestDoorTo(transform.position);
+            if (guardDoor != null)
+                _lookAnchor.position = new Vector3(
+                    guardDoor.position.x, transform.position.y, guardDoor.position.z);
+        }
+
         // Wander/Static NPCs have PatrolLine disabled so we rotate them ourselves.
         // Patrol NPCs use PatrolLine.StopAndLook which reads _lookAnchor, but we also
         // handle rotation here so all three idle modes track the player smoothly.
         // Skip during investigation — the InvestigateRoutine controls rotation for searching.
         // Skip during retreat — the NavMeshAgent rotates the body toward the escape path.
-        if (currentState != TerroristState.Idle &&
+        // A guardian at Idle IS included here (unlike other NPCs) so it actually turns to
+        // face the door it's been pinned on above, instead of standing frozen in whatever
+        // direction its last patrol step left it.
+        if ((currentState != TerroristState.Idle || (isHostageGuardian && guardianNotMoving)) &&
             currentState != TerroristState.Retreat &&
             _lookAnchor != null && !_isInvestigating)
         {
@@ -2467,9 +2501,19 @@ public class TerroristController : MonoBehaviour, INPCResponder
                 belowTransform = transform.position.y - minY; // positive when mesh extends below transform
         }
 
+        // Guard against the auto-calculated offset going negative (mesh appears to be
+        // ABOVE the transform origin, e.g. a re-snap caught the body mid-fall in a
+        // contorted pose) — that's never correct for a body resting on the ground, and
+        // because floorY + belowTransform is self-reinforcing (both terms shift together
+        // if the transform is already wrong), a bad reading here would otherwise lock in
+        // permanently instead of self-correcting. Floor-clamp as the hard guarantee: a
+        // corpse may end up sitting a touch high, but it can never sink through the floor.
+        float targetY = floorY + Mathf.Max(0f, belowTransform) + deathFloorOffset;
+        targetY = Mathf.Max(targetY, floorY);
+
         transform.position = new Vector3(
             transform.position.x,
-            floorY + belowTransform + deathFloorOffset,
+            targetY,
             transform.position.z);
 
         // Restore collider states (hitboxes/non-triggers are disabled separately in EnterDownState).
