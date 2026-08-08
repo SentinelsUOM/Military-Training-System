@@ -269,8 +269,10 @@ public class TerroristController : MonoBehaviour, INPCResponder
 
     [Tooltip("While engaging, if the terrorist is farther than (preferredStandoffDistance + this), it " +
              "ADVANCES on the player to close the gap instead of holding and shooting from range. This " +
-             "is 'when he sees you, he comes at you'. 0 = never advance (old hold-only behaviour).")]
-    public float pursueAdvanceMargin = 2.0f;
+             "is 'when he sees you, he comes at you'. Default 0 = advances the moment he's beyond the " +
+             "standoff ring at all — no dead zone. Raise it if you want him to tolerate standing off at " +
+             "extra range before bothering to close in.")]
+    public float pursueAdvanceMargin = 0f;
 
     [Header("Directional search (chase the escape, check the doubling-back)")]
     [Tooltip("When the player breaks line of sight, the terrorist searches this far ALONG the " +
@@ -787,11 +789,15 @@ public class TerroristController : MonoBehaviour, INPCResponder
         {
             agent.SetDestination(StandoffPoint(threat)); // too close — step back
         }
-        else if (pursueAdvanceMargin > 0f && dist > preferredStandoffDistance + pursueAdvanceMargin)
+        else if (dist > preferredStandoffDistance + pursueAdvanceMargin)
         {
             // Too FAR — close the gap. "When he sees you, he comes at you." StandoffPoint sits on
             // the firing ring around the player, so pathing to it walks the terrorist in to that
             // ring rather than standing off at range plinking. He stops once he reaches it.
+            // No pursueAdvanceMargin > 0f gate here: with the default margin of 0, ANY distance
+            // beyond the ring triggers the advance — previously this required exceeding the ring
+            // by a further 2m dead zone, which almost never happened in small indoor CQB rooms, so
+            // engaging terrorists effectively never closed in and just planted wherever first spotted.
             agent.SetDestination(StandoffPoint(threat));
         }
         else if (posture == CombatPosture.HoldAndShoot &&
@@ -2798,11 +2804,20 @@ public class TerroristController : MonoBehaviour, INPCResponder
         while (currentState != TerroristState.Down)
         {
             // Not my job if I'm the guardian, if I'm personally fighting, or if I'm calm.
+            //
+            // _playerVisible is also excluded here: without it, an Alert NPC who has JUST spotted
+            // the player (but hasn't hit targetConfirmTime yet — a window of well under a second)
+            // could still have its NavMeshAgent hijacked by the SWEEP branch below and sent off to
+            // fan out into a different room, even though it is at that exact moment staring
+            // straight at the player. That produced "he sees me, then wanders off" — the fix is to
+            // simply not let this routine touch the agent while there is a live sighting; Engage
+            // (and CombatPositionRoutine's advance-to-standoff-ring logic) takes over within moments.
             if (isHostageGuardian ||
                 currentState == TerroristState.Engage ||
                 currentState == TerroristState.TakeCover ||
                 currentState == TerroristState.Retreat ||
                 currentState == TerroristState.Idle ||
+                _playerVisible ||
                 agent == null || !agent.isActiveAndEnabled || !agent.isOnNavMesh)
             {
                 yield return new WaitForSeconds(0.4f);
