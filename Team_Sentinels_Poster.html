@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sentinels — A2 Poster</title>
+<style>
+  :root{
+    --navy:#0b3d78;
+    --navy-deep:#082a54;
+    --blue:#2a78d6;
+    --blue-light:#86b6ef;
+    --blue-pale:#eaf2fc;
+    --orange:#eb6834;
+    --orange-pale:#fdece3;
+    --aqua:#1baf7a;
+    --aqua-pale:#e6f7f0;
+    --ink:#16181c;
+    --text:#2c2e33;
+    --muted:#63676e;
+    --line:#d8dce2;
+    --paper:#ffffff;
+    --card:#fbfcfe;
+  }
+  *{box-sizing:border-box;}
+  html{font-size:10.6pt;}
+  body{
+    margin:0; padding:0;
+    width:420mm;
+    background:#e9edf2;
+    font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    color:var(--text);
+  }
+  .page{
+    width:420mm; min-height:594mm;
+    margin:0 auto;
+    background:var(--paper);
+    padding:5.5mm 12mm 3.2mm 12mm;
+    position:relative;
+  }
+  .no-print{
+    max-width:420mm; margin:6mm auto 0 auto; background:#fff7d6;
+    border:1px solid #e0c94a; border-radius:6px; padding:8px 14px;
+    font:12px/1.5 "Segoe UI",Arial,sans-serif; color:#5a4a00;
+  }
+  .no-print b{color:#3a2f00;}
+  @media print{
+    body{width:auto; background:none;}
+    .page{margin:0; box-shadow:none;}
+    .no-print{display:none;}
+    @page{ size:420mm 594mm; margin:0; }
+  }
+  @media screen{
+    .page{box-shadow:0 0 24px rgba(0,0,0,.25); margin-bottom:20px;}
+  }
+
+  h1,h2,h3,h4{margin:0; font-family:inherit;}
+  p{margin:0 0 5pt 0;}
+  ul{margin:0; padding-left:14pt;}
+  li{margin-bottom:3pt;}
+
+  /* ---------- HEADER ---------- */
+  .header{
+    display:flex; align-items:center; gap:10mm;
+    background:linear-gradient(135deg,var(--navy) 0%,var(--navy-deep) 100%);
+    color:#fff; border-radius:8px;
+    padding:3.6mm 9mm; margin-bottom:2.4mm;
+  }
+  .header .badge{
+    flex:0 0 auto; text-align:center; border:2px solid var(--orange);
+    border-radius:8px; padding:3.5mm 4mm; background:rgba(255,255,255,.06);
+  }
+  .header .badge .g{font-size:8pt; letter-spacing:.5px; color:var(--blue-light); font-weight:700;}
+  .header .badge .n{font-size:21pt; font-weight:800; color:#fff; line-height:1;}
+  .header .badge .t{font-size:8pt; color:var(--orange); font-weight:700; letter-spacing:1px; margin-top:1pt;}
+  .header .titles{flex:1 1 auto;}
+  .header .eyebrow{font-size:8pt; letter-spacing:.5px; color:var(--blue-light); font-weight:700; text-transform:uppercase; margin-bottom:1.6mm;}
+  .header h1{font-size:18pt; line-height:1.12; font-weight:800; color:#fff;}
+  .header .sub{font-size:8.6pt; color:#dbe6f5; margin-top:1.6mm; line-height:1.32; max-width:300mm;}
+
+  /* ---------- SECTION HEADS ---------- */
+  .sec-head{
+    display:flex; align-items:center; gap:7pt; margin:1.8mm 0 1mm 0;
+  }
+  .sec-head .bar{width:5pt; height:12pt; background:var(--orange); border-radius:2pt;}
+  .sec-head h2{font-size:12pt; font-weight:800; color:var(--navy); letter-spacing:.2px;}
+  .sec-head .rule{flex:1; height:1px; background:var(--line);}
+
+  /* ---------- TWO COL INTRO ---------- */
+  .intro-grid{display:grid; grid-template-columns:1fr 1fr; gap:5mm;}
+  .intro-box{background:var(--card); border:1px solid var(--line); border-left:4px solid var(--blue); border-radius:6px; padding:3.4mm 5mm;}
+  .intro-box.solution{border-left-color:var(--orange);}
+  .intro-box h3{font-size:12pt; color:var(--navy); font-weight:800; margin-bottom:1.2mm;}
+  .intro-box h4{font-size:9.5pt; color:var(--orange); font-weight:800; margin:1.6mm 0 0.8mm 0; text-transform:uppercase; letter-spacing:.3px;}
+  .intro-box p, .intro-box li{font-size:10.5pt; line-height:1.24; color:var(--text);}
+  .intro-box li{margin-bottom:0.5pt;}
+
+  /* ---------- INTRO (left) + ARCHITECTURE (right) ROW ---------- */
+  .intro-arch-grid{display:grid; grid-template-columns:1fr 1.05fr; gap:5mm; align-items:stretch;}
+  .intro-col{display:flex; flex-direction:column; gap:2.6mm;}
+  .arch-col{display:flex; flex-direction:column;}
+  .arch-col .sec-head{margin:0 0 2mm 0;}
+
+  /* ---------- DIAGRAM PANELS (hard height caps — never grow past this) ---------- */
+  .diagram-panel{
+    background:var(--card); border:1px solid var(--line); border-radius:6px;
+    padding:3mm 5mm 2.4mm 5mm; flex:1; display:flex; flex-direction:column; justify-content:center;
+  }
+  .visbox{
+    height:92mm; width:100%; display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .arch-col .visbox{flex:1; height:auto; min-height:0;}
+  .visbox svg{max-width:100%; max-height:100%; width:auto; height:auto; display:block;}
+  .cap{font-size:7.8pt; color:var(--muted); text-align:center; margin-top:1.4mm; line-height:1.3;}
+  .cap b{color:var(--text);}
+
+  /* ---------- SHARED CONTRACT MINI-ROWS (left column, one per artefact — plain text, no SVG) ---------- */
+  .mini-section-title{font-size:9pt; color:var(--navy); font-weight:800; text-transform:uppercase; letter-spacing:.3px; margin:0 0 0.8mm 1pt;}
+  .contract-mini{background:var(--card); border:1px solid var(--line); border-left:4px solid var(--blue); border-radius:4px; padding:1.4mm 3.5mm;}
+  .contract-mini.cm1{border-left-color:var(--navy);}
+  .contract-mini.cm2{border-left-color:var(--blue);}
+  .contract-mini.cm4{border-left-color:var(--orange);}
+  .contract-mini .flow{font-size:10.5pt; line-height:1.25;}
+  .contract-mini .flow .chip{display:inline-block; padding:0.3mm 2mm; border-radius:3px; color:#fff; font-weight:800; font-size:10pt;}
+  .cm1 .flow .chip{background:var(--navy);}
+  .cm2 .flow .chip{background:var(--blue);}
+  .cm4 .flow .chip{background:var(--orange);}
+  .contract-mini .flow .artifact{color:var(--navy); font-weight:800;}
+  .contract-mini .flow .consumers{color:#164a86; font-weight:700; background:var(--blue-pale); padding:0.3mm 2mm; border-radius:3px; font-size:10pt;}
+  .contract-mini .flow .arrow{color:var(--muted); margin:0 1pt;}
+  .contract-mini .note{font-size:8.3pt; color:var(--muted); margin-top:0.4mm; line-height:1.16; font-style:italic;}
+
+  /* ---------- SCREENSHOT GALLERY ---------- */
+  .gallery{display:grid; grid-template-columns:repeat(4,1fr); gap:4mm;}
+  .gal-item{background:var(--card); border:1px solid var(--line); border-top-width:3px; border-radius:0 0 6px 6px; overflow:hidden;}
+  .gal-item.g1{border-top-color:var(--navy);}
+  .gal-item.g2{border-top-color:var(--blue);}
+  .gal-item.g3{border-top-color:var(--aqua);}
+  .gal-item.g4{border-top-color:var(--orange);}
+  .gal-item .imgwrap{background:#0d0e10; height:22mm; display:flex; align-items:center; justify-content:center; overflow:hidden;}
+  .gal-item img{width:100%; height:100%; object-fit:cover; display:block;}
+  .gal-item .tag{font-size:8pt; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; padding:1.6mm 2.4mm 0 2.4mm;}
+  .gal-item .cap2{font-size:9pt; color:var(--text); padding:0.6mm 2.4mm 2mm 2.4mm; line-height:1.22;}
+
+  /* ---------- MODULE CARDS (2x2 grid) ---------- */
+  .module-grid{display:grid; grid-template-columns:1fr 1fr; gap:2.5mm;}
+  .module{
+    border:1px solid var(--line); border-radius:7px; overflow:hidden;
+    page-break-inside:avoid; display:flex; flex-direction:column;
+  }
+  .module .mhead{
+    display:flex; align-items:center; gap:6pt; padding:2mm 4.5mm; color:#fff;
+  }
+  .module .mhead .num{font-size:12pt; font-weight:800; opacity:.55;}
+  .module .mhead h3{font-size:10.3pt; font-weight:800;}
+  .m1 .mhead{background:var(--navy);}
+  .m2 .mhead{background:var(--blue);}
+  .m3 .mhead{background:var(--aqua);}
+  .m4 .mhead{background:var(--orange);}
+  .module .mbody{display:grid; grid-template-columns:1fr 1fr; gap:3.5mm; padding:2.6mm 4mm 3mm 4mm; flex:1;}
+  .module .mtext{display:flex; flex-direction:column;}
+  .mod-detail{list-style:none; margin:0 0 1.6mm 0; padding:0; flex:1; display:flex; flex-direction:column; justify-content:space-around;}
+  .mod-detail li{font-size:11pt; line-height:1.16; color:var(--text); padding-left:9pt; position:relative; margin-bottom:0;}
+  .mod-detail li::before{content:""; position:absolute; left:0; top:0.48em; width:5px; height:5px; border-radius:1px;}
+  .mod-detail li b{font-size:9.5pt; text-transform:uppercase; letter-spacing:.2px; margin-right:2pt;}
+  .m1 .mod-detail li::before{background:var(--navy);} .m1 .mod-detail li b{color:var(--navy);}
+  .m2 .mod-detail li::before{background:var(--blue);} .m2 .mod-detail li b{color:var(--blue);}
+  .m3 .mod-detail li::before{background:var(--aqua);} .m3 .mod-detail li b{color:#0c7a52;}
+  .m4 .mod-detail li::before{background:var(--orange);} .m4 .mod-detail li b{color:var(--orange);}
+  .stat-row{display:grid; grid-template-columns:repeat(3,1fr); gap:1.6mm; margin-top:auto;}
+  .stat{
+    background:var(--blue-pale); border-radius:5px; padding:1.3mm 1.5mm; border:1px solid #d3e2f8;
+  }
+  .m3 .stat{background:var(--aqua-pale); border-color:#c9ecdd;}
+  .m4 .stat{background:var(--orange-pale); border-color:#f7d9c6;}
+  .stat .v{font-size:10pt; font-weight:800; color:var(--navy); line-height:1.05;}
+  .m3 .stat .v{color:#0c7a52;}
+  .m4 .stat .v{color:#b74d1f;}
+  .stat .k{font-size:7.6pt; color:var(--muted); line-height:1.1; margin-top:.3mm;}
+  .mvis{display:flex; flex-direction:column; gap:2mm;}
+  .mvis .diagbox{
+    background:#fff; border:1px solid var(--line); border-radius:5px;
+    height:36mm; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:1.5mm;
+  }
+  .mvis .diagbox svg{max-width:100%; max-height:100%; width:auto; height:auto; display:block;}
+  .mvis .chartbox{
+    background:#fff; border:1px solid var(--line); border-radius:5px;
+    height:44mm; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:1.5mm;
+  }
+  .mvis .chartbox img{max-width:100%; max-height:100%; width:auto; height:auto; display:block; border-radius:2px;}
+  .mvis .chartname{font-size:8pt; color:var(--muted); text-align:center; margin-top:-0.3mm; font-style:italic; line-height:1.15;}
+
+  /* ---------- MODULE MBODY v2: full-width diagram on top, text+chart split below ---------- */
+  .module .mbody{display:flex; flex-direction:column; gap:1.7mm; padding:2mm 4mm 2.2mm 4mm; flex:1;}
+  .mvis-full{width:100%;}
+  .mvis-full .diagbox{
+    background:#fff; border:1px solid var(--line); border-radius:5px;
+    height:37mm; width:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; padding:1.5mm 2.5mm;
+  }
+  .mvis-full .diagbox svg{max-width:100%; max-height:100%; width:auto; height:auto; display:block;}
+  .mvis-full .diagcap{font-size:7.4pt; color:var(--muted); text-align:center; margin-top:0.8mm; line-height:1.15;}
+  .mod-bottom{display:grid; grid-template-columns:1fr 65mm; gap:3.5mm; height:68mm;}
+  .mod-bottom .mtext{display:flex; flex-direction:column; height:100%; overflow:hidden;}
+  .mod-bottom .mchart{display:flex; flex-direction:column; height:100%;}
+  .mod-bottom .chartbox{
+    background:#fff; border:1px solid var(--line); border-radius:5px; flex:1;
+    display:flex; align-items:center; justify-content:center; overflow:hidden; padding:1.2mm;
+  }
+  .mod-bottom .chartbox img{max-width:100%; max-height:100%; width:auto; height:auto; display:block; border-radius:2px;}
+  .mod-bottom .chartname{font-size:6.6pt; color:var(--muted); text-align:center; margin-top:0.6mm; font-style:italic; line-height:1.1;}
+
+  /* ---------- RESULTS / CONCLUSION ---------- */
+  .results-grid{display:grid; grid-template-columns:1.35fr 1fr; gap:6mm;}
+  .results-box{background:var(--card); border:1px solid var(--line); border-left:4px solid var(--navy); border-radius:6px; padding:2.4mm 5.5mm;}
+  .results-box p, .results-box li{font-size:10.5pt; line-height:1.18; color:var(--text); margin:0 0 4pt 0;}
+  .limits-box{background:#fff9ef; border:1px solid #eddfb8; border-left:4px solid var(--orange); border-radius:6px; padding:2.4mm 5.5mm;}
+  .limits-box h4{font-size:10pt; color:var(--orange); font-weight:800; text-transform:uppercase; letter-spacing:.3px; margin-bottom:1mm;}
+  .limits-box li{font-size:10pt; line-height:1.2; color:var(--text); margin-bottom:0.8mm;}
+
+  /* ---------- FOOTER ---------- */
+  .footer{
+    margin-top:1mm; border-top:3px solid var(--navy); padding-top:1.1mm;
+    display:grid; grid-template-columns:16mm 1.5fr 1.4fr 1fr; gap:5mm; align-items:start;
+  }
+  .footer .logo-slot{align-self:center;}
+  .footer .fcol{margin-top:2.5mm;}
+  .footer .fcol h5{font-size:9pt; color:var(--orange); text-transform:uppercase; font-weight:800; letter-spacing:.4px; margin:0 0 1mm 0;}
+  .footer .fcol p, .footer .fcol div{font-size:10pt; color:var(--text); line-height:1.28;}
+  .footer .logo-slot{
+    width:17mm; height:17mm; border:1px dashed var(--line); border-radius:50%;
+    display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--card);
+  }
+  .footer .logo-slot img{width:100%; height:100%; object-fit:contain;}
+  .footer .affil div{font-size:10pt; line-height:1.3; color:var(--text);}
+  .footer .affil div:first-child{font-weight:800; color:var(--navy);}
+  .footer .members div{display:flex; gap:5pt; font-size:9.5pt;}
+  .footer .members .idx{color:var(--muted); font-variant-numeric:tabular-nums; flex:0 0 15mm;}
+</style>
+</head>
+<body>
+
+<div class="no-print">
+  <b>How to export:</b> Ctrl+P → Destination "Save as PDF" → Margins "None" → check the preview says <b>1 page</b>.
+  If your dialog offers a Paper size field, A2/A3/A4 all work equally well (they're the same shape) — pick whichever is available; a print shop can scale any of them up to A2 with zero distortion, just ask them to
+  <b>"scale to A2, 420×594mm"</b>. If it still shows more than 1 page, look for a Scale field and reduce it a few % until it collapses to 1 page.
+  This banner and the page shadow never appear in the exported PDF. On-screen at 100% zoom the page looks small — that's expected, since it's laid out at true poster size; check Print Preview to judge it properly.
+</div>
+
+<div class="page">
+
+  <!-- ============ HEADER ============ -->
+  <div class="header">
+    <div class="badge">
+      <div class="g">GROUP</div>
+      <div class="n">56</div>
+      <div class="t">SENTINELS</div>
+    </div>
+    <div class="titles">
+      <h1>Dynamic Scenario Generation and Evaluation for VR-Based Military Training</h1>
+      <div class="sub">A four-module Unity VR hostage-rescue trainer for the Meta Quest&nbsp;3 — parameter-driven scenarios, tactical NPC behaviour, non-invasive cognition analysis, and evidence-linked after-action review — each independently, empirically evaluated.</div>
+    </div>
+  </div>
+
+  <!-- ============ PROBLEM/SOLUTION (left) + SYSTEM ARCHITECTURE (right) ============ -->
+  <div class="intro-arch-grid">
+   <div class="intro-col">
+    <div class="intro-box">
+      <h3>Problem Statement</h3>
+      <p>Live hostage-rescue training is expensive and hard to repeat under comparable conditions. Existing VR trainers compound this with <b>fixed/lightly-varied scenarios</b>, NPCs that behave <b>predictably</b>, and feedback limited to a <b>single score with no evidence trail</b>.</p>
+      <h4>Objectives</h4>
+      <ul>
+        <li>Generate spatially-valid, varied missions from evaluator parameters.</li>
+        <li>Drive NPCs through event-driven, doctrinally-grounded, multi-tier behaviour.</li>
+        <li>Capture trainee cognition/movement non-invasively, honestly against literature.</li>
+        <li><b>Demonstrate — not assert —</b> every subsystem works, with a matched evaluation.</li>
+      </ul>
+    </div>
+    <div class="intro-box solution">
+      <h3>Proposed Solution</h3>
+      <p>A Unity 2022.3 VR prototype for Meta Quest 3, as <b>four cooperating modules</b> around one shared <code>Scenario.json</code> contract + a common event schema — built and evaluated largely in parallel.</p>
+      <h4>Four Cooperating Modules</h4>
+      <ul>
+        <li><b>M1 Scenario Generation:</b> parameters → validated <code>Scenario.json</code></li>
+        <li><b>M2 NPC Behaviour:</b> event-driven FSM + squad hunt, 3 AI tiers</li>
+        <li><b>M3 Cognitive Analysis:</b> reaction time + movement → tiered indicators</li>
+        <li><b>M4 Logging &amp; AAR:</b> telemetry → 5 scores + timeline + 2D/3D replay</li>
+      </ul>
+    </div>
+
+    <div class="mini-section-title">One Shared Contract → Four Independently-Testable Modules</div>
+
+    <div class="contract-mini cm1">
+      <div class="flow"><span class="chip">M1</span> <span class="arrow">→</span> <span class="artifact">Scenario.json</span> <span class="arrow">→</span> <span class="consumers">M2 · M3 · M4</span></div>
+      <div class="note">Room graph, roles &amp; navigation context — produced once by M1, consumed by every module.</div>
+    </div>
+
+    <div class="contract-mini cm2">
+      <div class="flow"><span class="chip">M2</span> <span class="arrow">→</span> <span class="artifact">ScenarioEvents</span> <span class="arrow">→</span> <span class="consumers">M3 · M4</span></div>
+      <div class="note">Runtime event stream — observed live for cognitive features (M3) and logging/AAR (M4).</div>
+    </div>
+
+    <div class="contract-mini cm4">
+      <div class="flow"><span class="chip">M4</span> <span class="arrow">→</span> <span class="artifact">SessionSummary</span> <span class="arrow">→</span> <span class="consumers">Dashboard</span></div>
+      <div class="note">Post-session JSON — scores, timeline &amp; replay data for the evaluation dashboard.</div>
+    </div>
+   </div>
+   <div class="arch-col">
+    <div class="sec-head"><div class="bar"></div><h2>Our Approach — System Architecture</h2><div class="rule"></div></div>
+    <div class="diagram-panel">
+   <div class="visbox">
+    <svg viewBox="0 0 1120 760" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#2c2e33"/>
+        </marker>
+        <marker id="arrowDash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#eb6834"/>
+        </marker>
+      </defs>
+      <!-- Evaluator top -->
+      <rect x="250" y="6" width="500" height="76" rx="10" fill="#f2f4f7" stroke="#63676e" stroke-width="1.8"/>
+      <text x="500" y="42" text-anchor="middle" font-size="24" font-weight="800" fill="#16181c">EVALUATOR</text>
+      <text x="500" y="65" text-anchor="middle" font-size="14" fill="#63676e">layout · entity counts · AI tier · seed</text>
+
+      <line x1="500" y1="82" x2="500" y2="118" stroke="#2c2e33" stroke-width="2.4" marker-end="url(#arrow)"/>
+      <text x="500" y="105" text-anchor="middle" font-size="14" fill="#63676e" font-style="italic">ScenarioConfig.json</text>
+
+      <!-- Module 1 -->
+      <rect x="120" y="124" width="760" height="80" rx="10" fill="#0b3d78"/>
+      <text x="500" y="160" text-anchor="middle" font-size="20" font-weight="800" fill="#ffffff">MODULE 1 — Dynamic Scenario Generation</text>
+      <text x="500" y="184" text-anchor="middle" font-size="13" fill="#cfe0f5">room graph · placement · roles · nav context · furniture</text>
+
+      <line x1="500" y1="204" x2="500" y2="240" stroke="#2c2e33" stroke-width="2.4" marker-end="url(#arrow)"/>
+      <text x="500" y="227" text-anchor="middle" font-size="14" fill="#63676e" font-weight="700" font-style="italic">Scenario.json</text>
+
+      <!-- Runtime container -->
+      <rect x="40" y="246" width="920" height="330" rx="12" fill="#ffffff" stroke="#2a78d6" stroke-width="2" stroke-dasharray="9 6"/>
+      <text x="62" y="270" font-size="16" font-weight="800" fill="#2a78d6">VR RUNTIME — UNITY MISSION EXECUTION</text>
+
+      <rect x="62" y="286" width="260" height="270" rx="10" fill="#f2f4f7" stroke="#63676e" stroke-width="1.5"/>
+      <text x="192" y="416" text-anchor="middle" font-size="20" font-weight="800" fill="#16181c">TRAINEE</text>
+      <text x="192" y="440" text-anchor="middle" font-size="13" fill="#63676e">actions in VR</text>
+
+      <rect x="350" y="286" width="590" height="115" rx="10" fill="#2a78d6"/>
+      <text x="645" y="338" text-anchor="middle" font-size="18" font-weight="800" fill="#ffffff">MODULE 2 — NPC Behaviour</text>
+      <text x="645" y="362" text-anchor="middle" font-size="12.5" fill="#dceafd">event-driven FSM · squad hunt · 3 AI tiers</text>
+
+      <rect x="350" y="417" width="590" height="115" rx="10" fill="#1baf7a"/>
+      <text x="645" y="469" text-anchor="middle" font-size="18" font-weight="800" fill="#ffffff">MODULE 3 — Cognitive Analysis</text>
+      <text x="645" y="493" text-anchor="middle" font-size="12.5" fill="#e3f8ef">reaction time · movement · workload</text>
+
+      <line x1="322" y1="343" x2="348" y2="343" stroke="#2c2e33" stroke-width="2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+      <line x1="322" y1="474" x2="348" y2="474" stroke="#2c2e33" stroke-width="2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+
+      <text x="645" y="552" text-anchor="middle" font-size="12" fill="#63676e">M2 ↔ M3 share one runtime event bus — every action</text>
+      <text x="645" y="568" text-anchor="middle" font-size="12" fill="#63676e">&amp; NPC state change is a named event, observed by M4</text>
+
+      <line x1="500" y1="576" x2="500" y2="612" stroke="#2c2e33" stroke-width="2.4" marker-end="url(#arrow)"/>
+      <text x="500" y="599" text-anchor="middle" font-size="13.5" fill="#63676e" font-style="italic">Runtime telemetry — events · NPC states · cognitive indicators</text>
+
+      <!-- Module 4 -->
+      <rect x="120" y="618" width="760" height="80" rx="10" fill="#eb6834"/>
+      <text x="500" y="654" text-anchor="middle" font-size="20" font-weight="800" fill="#ffffff">MODULE 4 — Logging, AAR &amp; Session Replay</text>
+      <text x="500" y="678" text-anchor="middle" font-size="12.5" fill="#fde3d5">incident extraction · 5 scores · distress index · 2D/3D replay</text>
+
+      <text x="500" y="726" text-anchor="middle" font-size="15" fill="#16181c" font-weight="700">→ Evaluator reviews the AAR (post-mission debrief)</text>
+
+      <!-- dashed cross link M1 -> M4, routed well clear of the runtime container's own dashed border -->
+      <path d="M 882,164 C 1075,240 1075,600 882,658" fill="none" stroke="#eb6834" stroke-width="2.6" stroke-dasharray="10 6" marker-end="url(#arrowDash)"/>
+      <text x="1098" y="411" font-size="13" fill="#eb6834" font-weight="700" font-style="italic" text-anchor="middle" transform="rotate(90 1098 411)">Scenario.json context, for replay/AAR</text>
+    </svg>
+   </div>
+    <div class="cap">Module 1 produces the mission before play begins; Modules 2 and 3 run live during the mission over a shared event bus; Module 4 transforms the completed session into evidence for the evaluator.</div>
+    </div>
+   </div>
+  </div>
+
+  <!-- ============ SCREENSHOT GALLERY ============ -->
+  <div class="sec-head"><div class="bar"></div><h2>System in Action</h2><div class="rule"></div></div>
+  <div class="gallery">
+    <div class="gal-item g1">
+      <div class="imgwrap"><img src="Report_Figures/fig_6_5_persistent_hunt.png" alt="Generated scenario top-down view"></div>
+      <div class="tag">Module 1</div>
+      <div class="cap2">A generated mission realised in Unity — room graph, doors, furniture and NPC roles.</div>
+    </div>
+    <div class="gal-item g2">
+      <div class="imgwrap"><img src="Report_Figures/fig_6_4_squad_hostage_room.png" alt="Squad holding a hostage"></div>
+      <div class="tag">Module 2</div>
+      <div class="cap2">Squad-coordinated terrorists holding a hostage — FSM plus the shared, persistent hunt.</div>
+    </div>
+    <div class="gal-item g3">
+      <div class="imgwrap"><img src="Report_Figures/fig_6_10_cognitive_mirror_hud.png" alt="In-headset cognitive mirror HUD"></div>
+      <div class="tag">Module 3</div>
+      <div class="cap2">In-headset cognitive mirror HUD — reflecting the trainee's own tracking, non-invasively.</div>
+    </div>
+    <div class="gal-item g4">
+      <div class="imgwrap"><img src="Screenshot 2026-08-08 173305.png" alt="Sentinels AAR web dashboard" style="object-fit:contain; background:#0d1117;"></div>
+      <div class="tag">Module 4</div>
+      <div class="cap2">The Sentinels AAR web dashboard — session history, scores and workload trends across the trainee population.</div>
+    </div>
+  </div>
+
+  <!-- ============ MODULE GRID (2x2) ============ -->
+  <div class="sec-head"><div class="bar"></div><h2>Key Modules &amp; Evaluation Results</h2><div class="rule"></div></div>
+  <div class="module-grid">
+
+  <div class="module m1">
+    <div class="mhead"><span class="num">01</span><h3>Dynamic Scenario Generation</h3></div>
+    <div class="mbody">
+      <div class="mvis-full">
+        <div class="diagbox">
+          <svg viewBox="0 0 1000 165" xmlns="http://www.w3.org/2000/svg">
+            <defs><marker id="fa1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2c2e33"/></marker>
+            <marker id="fa1d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#eb6834"/></marker></defs>
+            <rect x="0" y="8" width="225" height="70" rx="7" fill="#f2f4f7" stroke="#63676e" stroke-width="1.3"/><text x="112" y="50" text-anchor="middle" font-size="22" font-weight="700" fill="#16181c">ScenarioConfig</text>
+            <line x1="225" y1="43" x2="252" y2="43" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+            <rect x="257" y="8" width="225" height="70" rx="7" fill="#0b3d78"/><text x="369" y="50" text-anchor="middle" font-size="21" font-weight="700" fill="#fff">LayoutGenerator</text>
+            <line x1="482" y1="43" x2="509" y2="43" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+            <rect x="514" y="8" width="225" height="70" rx="7" fill="#0b3d78"/><text x="626" y="50" text-anchor="middle" font-size="22" font-weight="700" fill="#fff">EntityPlacer</text>
+            <line x1="739" y1="43" x2="766" y2="43" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+            <rect x="771" y="8" width="225" height="70" rx="7" fill="#0b3d78"/><text x="883" y="50" text-anchor="middle" font-size="22" font-weight="700" fill="#fff">RoleAssigner</text>
+
+            <path d="M 883,78 L 883,85 L 130,85 L 130,91" fill="none" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+
+            <rect x="0" y="93" width="255" height="70" rx="7" fill="#0b3d78"/><text x="127" y="121" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">NavigationContext-</text><text x="127" y="143" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">Builder</text>
+            <line x1="255" y1="128" x2="282" y2="128" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+            <rect x="287" y="93" width="225" height="70" rx="7" fill="#0b3d78"/><text x="399" y="135" text-anchor="middle" font-size="21" font-weight="700" fill="#fff">FurniturePlacer</text>
+            <line x1="512" y1="128" x2="539" y2="128" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+            <rect x="544" y="93" width="235" height="70" rx="7" fill="#0b3d78"/><text x="661" y="121" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">ScenarioValidator</text><text x="661" y="143" text-anchor="middle" font-size="16" fill="#cfe0f5">→ Exporter</text>
+            <line x1="779" y1="128" x2="806" y2="128" stroke="#2c2e33" stroke-width="1.8" marker-end="url(#fa1)"/>
+            <rect x="811" y="93" width="185" height="70" rx="35" fill="#eb6834"/><text x="903" y="135" text-anchor="middle" font-size="20" font-weight="800" fill="#fff">Scenario.json</text>
+
+            <path d="M 661,93 C 661,86 369,86 369,78" fill="none" stroke="#eb6834" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#fa1d)"/>
+          </svg>
+        </div>
+      </div>
+      <div class="mod-bottom">
+        <div class="mtext">
+          <ul class="mod-detail">
+            <li><b>What:</b> Converts evaluator parameters into a valid, playable mission — the contract every other module consumes.</li>
+            <li><b>Novelty:</b> No existing system combines layout generation, placement, role assignment, validation and export in one pipeline; hostage room is always the deepest, most-defended dead end (BFS depth), never random.</li>
+            <li><b>Method:</b> One seeded <code>System.Random</code>, 4 layout topologies, two-tier validator (local bounds/overlap/doors + global reachability/hostage-path/roles), seed+1 retry (budget 3).</li>
+            <li><b>Evaluation:</b> 2,000-scenario statistical study across 6 experiments (Shapiro-Wilk → ANOVA/Kruskal-Wallis, effect sizes).</li>
+          </ul>
+          <div class="stat-row">
+            <div class="stat"><div class="v">100%</div><div class="k">valid, every evaluator-reachable config (43/43)</div></div>
+            <div class="stat"><div class="v">24 / 26</div><div class="k">parameter→metric pairs p&lt;0.0001</div></div>
+            <div class="stat"><div class="v">2,000</div><div class="k">scenarios across 6 experiments</div></div>
+          </div>
+        </div>
+        <div class="mchart">
+          <div class="chartbox"><img src="Assets/Module1_DataModels_and_IO/Output/EvaluationResults/figures/FigE1_passrate_by_scope.png" alt="Validation pass rate by scope"></div>
+          <div class="chartname">Validation pass rate — 100% within the evaluator-reachable range</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODULE 2 ============ -->
+  <div class="module m2">
+    <div class="mhead"><span class="num">02</span><h3>NPC Behaviour &amp; Coordination</h3></div>
+    <div class="mbody">
+      <div class="mvis-full">
+        <div class="diagbox">
+          <svg viewBox="0 0 1000 180" xmlns="http://www.w3.org/2000/svg">
+            <defs><marker id="fa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2c2e33"/></marker>
+            <marker id="fa2d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#eb6834"/></marker></defs>
+            <text x="0" y="13" font-size="16" font-weight="800" fill="#2a78d6">INDIVIDUAL LAYER — terrorist FSM</text>
+            <g font-weight="700" fill="#fff">
+              <rect x="0" y="20" width="140" height="56" rx="6" fill="#63676e"/><text x="70" y="54" text-anchor="middle" font-size="20">Idle</text>
+              <rect x="163" y="20" width="140" height="56" rx="6" fill="#2a78d6"/><text x="233" y="54" text-anchor="middle" font-size="20">Alert</text>
+              <rect x="326" y="20" width="155" height="56" rx="6" fill="#2a78d6"/><text x="403" y="53" text-anchor="middle" font-size="18">Investigate</text>
+              <rect x="504" y="20" width="150" height="56" rx="6" fill="#0b3d78"/><text x="579" y="54" text-anchor="middle" font-size="20">Engage</text>
+              <rect x="677" y="20" width="160" height="56" rx="6" fill="#0b3d78"/><text x="757" y="42" text-anchor="middle" font-size="15.5">Cover /</text><text x="757" y="63" text-anchor="middle" font-size="15.5">Retreat</text>
+              <rect x="860" y="20" width="140" height="56" rx="6" fill="#16181c"/><text x="930" y="54" text-anchor="middle" font-size="20">Down</text>
+            </g>
+            <line x1="140" y1="48" x2="160" y2="48" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <line x1="303" y1="48" x2="323" y2="48" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <line x1="481" y1="48" x2="501" y2="48" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <line x1="654" y1="48" x2="674" y2="48" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <line x1="837" y1="48" x2="857" y2="48" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <text x="0" y="90" font-size="16" font-weight="800" fill="#eb6834">SQUAD LAYER — shared blackboard</text>
+            <g font-weight="700" fill="#fff">
+              <rect x="0" y="97" width="255" height="56" rx="6" fill="#eb6834"/><text x="127" y="131" text-anchor="middle" font-size="16">ReportConfirmedContact</text>
+              <rect x="285" y="97" width="235" height="56" rx="6" fill="#eb6834"/><text x="402" y="116" text-anchor="middle" font-size="18">BeginHunt</text><text x="402" y="140" text-anchor="middle" font-size="14" fill="#fde3d5" font-weight="400">anchor: PointLastSeen</text>
+              <rect x="550" y="97" width="235" height="56" rx="6" fill="#eb6834"/><text x="667" y="116" text-anchor="middle" font-size="18">Radius grows</text><text x="667" y="140" text-anchor="middle" font-size="14" fill="#fde3d5" font-weight="400">= speed × elapsed</text>
+              <rect x="815" y="97" width="185" height="56" rx="6" fill="#eb6834"/><text x="907" y="116" text-anchor="middle" font-size="18">EndHunt</text><text x="907" y="140" text-anchor="middle" font-size="14" fill="#fde3d5" font-weight="400">budget ≈ 45 s</text>
+            </g>
+            <line x1="255" y1="125" x2="282" y2="125" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <line x1="520" y1="125" x2="547" y2="125" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <line x1="785" y1="125" x2="812" y2="125" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa2)"/>
+            <path d="M 907,153 C 907,172 402,172 402,153" fill="none" stroke="#eb6834" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#fa2d)"/>
+          </svg>
+        </div>
+        <div class="diagcap">Re-anchor on squad-mate down / fresh gunshot / fresh sighting — PlayerSeen · GunshotHeard · TargetConfirmed drive all transitions; health=0 → Down</div>
+      </div>
+      <div class="mod-bottom">
+        <div class="mtext">
+          <ul class="mod-detail">
+            <li><b>What:</b> Drives every terrorist &amp; hostage in-mission via an event-driven FSM plus a squad layer that shares confirmed contact and hunts around the last-seen point.</li>
+            <li><b>Novelty:</b> Grounded in real U.S. Army react-to-contact doctrine and the F.E.A.R. squad-AI model, not game convention — trainees rated the Advanced tier most believable yet lost <i>more</i> missions against it (believability ≠ performance).</li>
+            <li><b>Method:</b> Shared blackboard (PointLastSeen, hunt state, leader), growing search radius, hostage escalation ladder (warning → shot → execution); 3 switchable AI tiers.</li>
+            <li><b>Evaluation:</b> Within-subjects ablation, 21 participants/95 sessions, Godspeed + UEQ-S instruments, Friedman/Wilcoxon.</li>
+          </ul>
+          <div class="stat-row">
+            <div class="stat"><div class="v">1.6→3.7→4.4/5</div><div class="k">Perceived Intelligence, Basic→Intermediate→Advanced</div></div>
+            <div class="stat"><div class="v">p ≤ 0.004</div><div class="k">Friedman, significant on all 3 believability constructs</div></div>
+            <div class="stat"><div class="v">21 &amp; 95</div><div class="k">participants &amp; sessions, within-subjects ablation</div></div>
+          </div>
+        </div>
+        <div class="mchart">
+          <div class="chartbox"><img src="Report_Figures/fig_7_11_believability_by_tier.png" alt="Believability ratings by AI intelligence tier"></div>
+          <div class="chartname">Believability ratings rise significantly, Basic → Advanced</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODULE 3 ============ -->
+  <div class="module m3">
+    <div class="mhead"><span class="num">03</span><h3>Cognitive &amp; Movement Behaviour Analysis</h3></div>
+    <div class="mbody">
+      <div class="mvis-full">
+        <div class="diagbox">
+          <svg viewBox="0 0 1000 172" xmlns="http://www.w3.org/2000/svg">
+            <defs><marker id="fa3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2c2e33"/></marker></defs>
+            <rect x="0" y="8" width="225" height="70" rx="7" fill="#1baf7a"/>
+            <text x="112" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#fff">XR Tracking</text>
+            <text x="112" y="56" text-anchor="middle" font-size="13" fill="#eafff5">Head / hand / body</text>
+            <text x="112" y="70" text-anchor="middle" font-size="13" fill="#eafff5">+ trigger pressure</text>
+            <line x1="225" y1="43" x2="249" y2="43" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa3)"/>
+
+            <rect x="257" y="8" width="225" height="70" rx="7" fill="#63676e"/>
+            <text x="369" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#fff">Extract</text>
+            <text x="369" y="56" text-anchor="middle" font-size="13" fill="#eceef1">4-channel reaction time</text>
+            <text x="369" y="70" text-anchor="middle" font-size="13" fill="#eceef1">5 Hz movement sampling</text>
+            <line x1="482" y1="43" x2="506" y2="43" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa3)"/>
+
+            <rect x="514" y="8" width="225" height="70" rx="7" fill="#63676e"/>
+            <text x="626" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#fff">Interpret</text>
+            <text x="626" y="56" text-anchor="middle" font-size="13" fill="#eceef1">Rule-based scoring vs</text>
+            <text x="626" y="70" text-anchor="middle" font-size="13" fill="#eceef1">A/B/C benchmark bands</text>
+
+            <path d="M 626,78 L 626,87 L 230,87 L 230,96" fill="none" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa3)"/>
+
+            <rect x="0" y="96" width="460" height="70" rx="7" fill="#63676e"/>
+            <text x="230" y="122" text-anchor="middle" font-size="20" font-weight="700" fill="#fff">Score</text>
+            <text x="230" y="144" text-anchor="middle" font-size="15" fill="#eceef1">+ SIM-TLX self-report</text>
+            <text x="230" y="160" text-anchor="middle" font-size="15" fill="#eceef1">confidence tiering</text>
+            <line x1="460" y1="131" x2="488" y2="131" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa3)"/>
+
+            <rect x="492" y="96" width="508" height="70" rx="7" fill="#1baf7a"/>
+            <text x="746" y="122" text-anchor="middle" font-size="20" font-weight="700" fill="#fff">Indicators</text>
+            <text x="746" y="144" text-anchor="middle" font-size="15" fill="#eafff5">Cognitive load +</text>
+            <text x="746" y="160" text-anchor="middle" font-size="15" fill="#eafff5">workload profile</text>
+          </svg>
+        </div>
+        <div class="diagcap">Reads existing XR tracking — zero added hardware — at 5 Hz; A/B/C tiers = direct benchmark / literature proxy / exploratory (no benchmark)</div>
+      </div>
+      <div class="mod-bottom">
+        <div class="mtext">
+          <ul class="mod-detail">
+            <li><b>What:</b> Reads the trainee's existing XR head/hand tracking — no extra hardware — to derive movement telemetry and 4-channel reaction time (head, hands, body, trigger).</li>
+            <li><b>Novelty:</b> Combines objective movement/reaction evidence with self-reported SIM-TLX workload in one honestly-tiered evaluation; a rule-based reasoning layer explains, not just reports, why a score is high or low.</li>
+            <li><b>Method:</b> 3 anti-false-positive rules (already-in-motion, 80&nbsp;ms noise floor, response window+cooldown); 5&nbsp;Hz sampling; self-calibrating crouch baseline; A/B/C confidence tiers.</li>
+            <li><b>Evaluation:</b> Construct-validity audit of 12 benchmark bands (4 tier A / 5 B / 3 C); one-sample Wilcoxon vs published expert.</li>
+          </ul>
+          <div class="stat-row">
+            <div class="stat"><div class="v">4 / 5 / 3</div><div class="k">metrics at tier A (direct) / B (proxy) / C (no benchmark)</div></div>
+            <div class="stat"><div class="v">0.65s vs 0.30s</div><div class="k">mean RT vs published expert (p&lt;0.001, r=0.67)</div></div>
+            <div class="stat"><div class="v">5 Hz</div><div class="k">movement sampling, zero added hardware</div></div>
+          </div>
+        </div>
+        <div class="mchart">
+          <div class="chartbox"><img src="Report_Figures/fig_7_14_reaction_time_per_participant.png" alt="Reaction time per participant vs published benchmarks"></div>
+          <div class="chartname">Mean reaction time per participant vs published expert/novice</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODULE 4 ============ -->
+  <div class="module m4">
+    <div class="mhead"><span class="num">04</span><h3>Logging, AAR &amp; Session Replay</h3></div>
+    <div class="mbody">
+      <div class="mvis-full">
+        <div class="diagbox">
+          <svg viewBox="0 0 1000 165" xmlns="http://www.w3.org/2000/svg">
+            <defs><marker id="fa4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2c2e33"/></marker></defs>
+            <rect x="20" y="10" width="290" height="42" rx="7" fill="#2a78d6"/>
+            <text x="165" y="29" text-anchor="middle" font-size="21" font-weight="700" fill="#fff">Mission Events (M2)</text>
+            <text x="165" y="44" text-anchor="middle" font-size="14" fill="#dbe9fb">from Module 2</text>
+
+            <rect x="338" y="10" width="325" height="42" rx="7" fill="#1baf7a"/>
+            <text x="500" y="29" text-anchor="middle" font-size="21" font-weight="700" fill="#fff">Cognitive Outputs (M3)</text>
+            <text x="500" y="44" text-anchor="middle" font-size="14" fill="#e2fbf1">from Module 3</text>
+
+            <rect x="690" y="10" width="290" height="42" rx="7" fill="#0b3d78"/>
+            <text x="835" y="29" text-anchor="middle" font-size="21" font-weight="700" fill="#fff">Scenario Context (M1)</text>
+            <text x="835" y="44" text-anchor="middle" font-size="14" fill="#cfe0f5">from Module 1</text>
+
+            <line x1="165" y1="52" x2="460" y2="66" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa4)"/>
+            <line x1="500" y1="52" x2="500" y2="64" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa4)"/>
+            <line x1="835" y1="52" x2="540" y2="66" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa4)"/>
+
+            <rect x="300" y="66" width="400" height="46" rx="8" fill="#eb6834"/>
+            <text x="500" y="88" text-anchor="middle" font-size="22" font-weight="800" fill="#fff">LOGGING ENGINE</text>
+            <text x="500" y="105" text-anchor="middle" font-size="15" fill="#fde3d5">single shared event bus</text>
+
+            <line x1="460" y1="112" x2="200" y2="124" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa4)"/>
+            <line x1="500" y1="112" x2="500" y2="122" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa4)"/>
+            <line x1="540" y1="112" x2="800" y2="124" stroke="#2c2e33" stroke-width="1.6" marker-end="url(#fa4)"/>
+
+            <rect x="20" y="124" width="290" height="38" rx="19" fill="#f2f4f7" stroke="#63676e" stroke-width="1"/>
+            <text x="165" y="148" text-anchor="middle" font-size="21" font-weight="700" fill="#2c2e33">Score Summary</text>
+            <rect x="338" y="124" width="325" height="38" rx="19" fill="#f2f4f7" stroke="#63676e" stroke-width="1"/>
+            <text x="500" y="148" text-anchor="middle" font-size="21" font-weight="700" fill="#2c2e33">AAR Dashboard</text>
+            <rect x="690" y="124" width="290" height="38" rx="19" fill="#f2f4f7" stroke="#63676e" stroke-width="1"/>
+            <text x="835" y="148" text-anchor="middle" font-size="21" font-weight="700" fill="#2c2e33">Synchronised Replay</text>
+          </svg>
+        </div>
+        <div class="diagcap">Score Summary → 5 scores + timeline · AAR Dashboard → distress index + HUD · Synchronised Replay → 2D/3D mission playback</div>
+      </div>
+      <div class="mod-bottom">
+        <div class="mtext">
+          <ul class="mod-detail">
+            <li><b>What:</b> Subscribes to one shared event bus and turns a completed mission into inspectable evidence — five scores, an incident timeline, a distress index, and a 2D/3D replay.</li>
+            <li><b>Novelty:</b> A distinct Operator Safety axis (separate from mission outcome) plus a hostage psychological distress index — dimensions most commercial/academic AAR tools omit entirely.</li>
+            <li><b>Method:</b> Scores calibrated to NYPD SOP-9, RAND hostage-rescue outcomes &amp; Hick's Law; Freeze scored above Panic (tonic immobility → worse trauma outcomes); zero-instrumentation logging.</li>
+            <li><b>Evaluation:</b> Construct-validity audit vs the Expert Value Table; benchmark + discriminant-validity tests across 21 trainees.</li>
+          </ul>
+          <div class="stat-row">
+            <div class="stat"><div class="v">52% vs 85%</div><div class="k">Hostage Safety vs published expert (p&lt;0.001)</div></div>
+            <div class="stat"><div class="v">68% vs 100%</div><div class="k">Accuracy vs distance-normalised expert (p&lt;0.001)</div></div>
+            <div class="stat"><div class="v">F=4.22, p=.003</div><div class="k">Operator Safety separates trainees most strongly</div></div>
+          </div>
+        </div>
+        <div class="mchart">
+          <div class="chartbox"><img src="Report_Figures/fig_7_17_scores_vs_benchmarks.png" alt="Hostage Safety and Accuracy vs published expert benchmarks"></div>
+          <div class="chartname">Hostage Safety &amp; Accuracy — trainees plotted against novice/expert bands</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /module-grid -->
+
+  <!-- ============ RESULTS / CONCLUSION ============ -->
+  <div class="sec-head"><div class="bar"></div><h2>Key Results &amp; Conclusion</h2><div class="rule"></div></div>
+  <div class="results-grid">
+    <div class="results-box">
+      <p>Every module was evaluated with a <b>methodology matched to what it produces</b> — a 2,000-scenario statistical study, a controlled ablation with real significance testing, a construct-validity audit, and a benchmark/discriminant-validity audit. M1's generation is valid and traceable to its parameters; M2's AI tiers are perceived as genuinely more intelligent as capability increases; M3 honestly separates trainees from published benchmarks; M4's scoring agrees with every checkable benchmark and discriminates trainees on 3 of 5 scores.</p>
+      <p><b>Sentinels demonstrates that parameter-driven generation, tactical NPC behaviour, non-invasive cognition measurement, and evidence-linked AAR can be integrated into one coherent, empirically evaluated VR trainer on consumer hardware.</b></p>
+    </div>
+    <div class="limits-box">
+      <h4>Limitations</h4>
+      <ul>
+        <li>Single floor, single hostage per mission</li>
+        <li>Quest 3 approximate body tracking; ~20-participant cognitive sample</li>
+        <li>Greybox (ProBuilder) environments, not production art</li>
+      </ul>
+      <h4 style="margin-top:2mm;">Future Work</h4>
+      <ul>
+        <li>Expert (military/tactical) evaluation of realism and training validity</li>
+        <li>15–30 participant SIM-TLX study; trained-personnel transfer study</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============ FOOTER ============ -->
+  <div class="footer">
+    <div class="logo-slot">
+      <img src="Uni_emblem.jpg" alt="University of Moratuwa emblem">
+    </div>
+    <div class="fcol affil">
+      <div>BSc (Hons) in Information Technology</div>
+      <div>Department of Information Technology</div>
+      <div>Faculty of Information Technology</div>
+      <div>University of Moratuwa, Sri Lanka</div>
+    </div>
+    <div class="fcol members">
+      <h5>Group Members</h5>
+      <div><span class="idx">214036J</span><span>Chathuranga S.P.Y.N</span></div>
+      <div><span class="idx">214057A</span><span>Dilshan R.P</span></div>
+      <div><span class="idx">214217P</span><span>Wadumulla G.M.D</span></div>
+      <div><span class="idx">214237C</span><span>Wijesinghe W.N.U</span></div>
+    </div>
+    <div class="fcol">
+      <h5>Project Supervisor</h5>
+      <p>Dr. S. C. Premaratne</p>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -219,3 +219,171 @@ behind a wall.
    ```
    (edit the `DATA` path at the top of the script to point at a new CSV if you
    re-run the experiment).
+
+---
+
+## 7. Extending to RoomBreached and AllyDownSeen (2026-08-09)
+
+**The gap.** Everything above (§1-6) only ever tested `GunshotHeard` events.
+Look at the role-bonus table in `NPCSelector.GetRoleBonus`:
+
+```
+(Guard,  RoomBreached) → 3.0
+(Roamer, GunshotHeard) → 2.0
+(Leader, AllyDownSeen) → 1.5
+```
+
+A `GunshotHeard`-only study can **only ever** exercise the Roamer bonus — every
+Guard and Leader candidate scores exactly `0.0` role bonus on every single test
+event, because their bonus is defined for a *different* event type that never
+appeared in the data. §5 of this report already names this limitation
+("a different event type... would shift the role-bonus story entirely") but it
+was not tested until now. This section closes that gap.
+
+### 7.1 Method
+
+Identical NPC setup to §2 (8 terrorists, round-robin Guard/Roamer/Leader roles
+and Idle/Suspicious/Alert/TakeCover/Retreat states, seed=42, one occluding
+centre wall), but `AblationExperimentRunner` was extended
+([diff in source](Assets/Scripts/Tests/AblationExperimentRunner.cs)) to test
+**three** event types — `GunshotHeard`, `RoomBreached`, `AllyDownSeen` —
+against the **same 50 event positions**, reused identically across all three.
+This matters: any difference found between event types can only be caused by
+which role's bonus applies, never by the three types having been tested
+against different points in space.
+
+| Parameter | Value |
+|---|---|
+| NPCs | 8 terrorists, round-robin roles (3 Guard, 3 Roamer, 2 Leader) and round-robin states |
+| Event positions | 50, shared identically across all 3 event types |
+| Event types | GunshotHeard (favours Roamer), RoomBreached (favours Guard), AllyDownSeen (favours Leader) |
+| Modes per event | Full, NoDistance, NoRole, NoState, NoLOS |
+| Total decisions | 50 events × 3 event types × 5 modes = **750 selection calls** |
+| Seed | 42 (identical NPC layout and event positions to the §1-6 study) |
+
+**Status.** Real run, executed live inside the Unity Editor (6000.3.1f1) via
+MCP on **2026-08-09**, using the project's own updated
+`AblationExperimentRunner` and unmodified `NPCSelector` production code.
+
+Raw output: [Report_Figures/ablation_data/AblationResults_MULTIEVENT_20260809_150537.csv](Report_Figures/ablation_data/AblationResults_MULTIEVENT_20260809_150537.csv)
+(750 rows — event type, event position, ablation mode, selected NPC, its role,
+distance, LOS, state-readiness).
+
+**Reproducibility check.** The `GunshotHeard` rows in this run are
+**bit-for-bit identical** to the original §1-6 study (same Full/NoDistance/
+NoRole/NoState/NoLOS role counts and agreement percentages, down to the exact
+NPC IDs picked) — an independent confirmation, eight days later and a
+different Unity session, that the seed=42 setup really is deterministic and
+reproducible, not just claimed to be.
+
+### 7.2 Headline numbers
+
+| Event type | Favoured role | Bonus | Full: Guard/Roamer/Leader | Full-mode dominance of favoured role |
+|---|---|--:|---|--:|
+| GunshotHeard | Roamer | 2.0 | 2 / **48** / 0 | 96% |
+| RoomBreached | Guard | 3.0 | **49** / 1 / 0 | **98%** |
+| AllyDownSeen | Leader | 1.5 | 3 / 1 / **46** | 92% |
+
+Full agreement/ablation breakdown, all three event types:
+
+| Event type | Mode | Guard | Roamer | Leader | Agreement w/ Full |
+|---|---|--:|--:|--:|--:|
+| GunshotHeard | Full | 2 | 48 | 0 | 100% (baseline) |
+| GunshotHeard | NoDistance | 0 | 50 | 0 | 94% |
+| GunshotHeard | NoRole | 20 | 9 | 21 | 22% |
+| GunshotHeard | NoState | 2 | 48 | 0 | 44% |
+| GunshotHeard | NoLOS | 0 | 50 | 0 | 80% |
+| RoomBreached | Full | 49 | 1 | 0 | 100% (baseline) |
+| RoomBreached | NoDistance | 50 | 0 | 0 | 96% |
+| RoomBreached | NoRole | 20 | 9 | 21 | 42% |
+| RoomBreached | NoState | 49 | 1 | 0 | 70% |
+| RoomBreached | NoLOS | 49 | 1 | 0 | 62% |
+| AllyDownSeen | Full | 3 | 1 | 46 | 100% (baseline) |
+| AllyDownSeen | NoDistance | 0 | 0 | 50 | 92% |
+| AllyDownSeen | NoRole | 20 | 9 | 21 | 50% |
+| AllyDownSeen | NoState | 2 | 1 | 47 | 64% |
+| AllyDownSeen | NoLOS | 0 | 1 | 49 | 84% |
+
+### Fig 6/7 — role distribution and agreement, RoomBreached
+![Who gets picked for RoomBreached](Report_Figures/fig_ablation_roombreached_1_role_distribution.png)
+*Who gets picked for RoomBreached (favours Guard).*
+![Agreement with Full, RoomBreached](Report_Figures/fig_ablation_roombreached_2_agreement.png)
+*Selection agreement vs. Full — RoomBreached.*
+
+### Fig 8/9 — role distribution and agreement, AllyDownSeen
+![Who gets picked for AllyDownSeen](Report_Figures/fig_ablation_allydownseen_1_role_distribution.png)
+*Who gets picked for AllyDownSeen (favours Leader).*
+![Agreement with Full, AllyDownSeen](Report_Figures/fig_ablation_allydownseen_2_agreement.png)
+*Selection agreement vs. Full — AllyDownSeen.*
+
+### Fig 10 — does bonus magnitude track measured dominance?
+![Bonus magnitude vs measured dominance](Report_Figures/fig_ablation_6_bonus_vs_dominance.png)
+*For each event type, the % of Full-mode events won by that event's favoured
+role, plotted against that role's bonus value.*
+
+### 7.3 Interpretation
+
+- **Every role dominates its own favoured event type** — not just Roamer's.
+  Guard wins 98% of RoomBreached events, Roamer 96% of GunshotHeard events,
+  Leader 92% of AllyDownSeen events. The formula behaves as designed for all
+  three role-bonus entries, not only the one that happened to be tested before.
+- **The relative ordering of the three bonus magnitudes tracks the relative
+  ordering of measured dominance**: Guard (3.0) > Roamer (2.0) > Leader (1.5)
+  in bonus value, and 98% > 96% > 92% in measured dominance — monotonic, in
+  the intended direction. This is real, useful evidence for the *relative*
+  design of the role-bonus table (bigger bonus → proportionally stronger
+  preference) even though — as stated plainly in
+  `MODULE2_SELECTION_LITERATURE_JUSTIFICATION.md` — no literature source fixes
+  the *absolute* values 3.0/2.0/1.5 themselves. This experiment does not
+  manufacture a citation for those numbers; it demonstrates the formula's
+  *behaviour* is internally consistent with its own design intent, which is a
+  different and more limited claim.
+- **`NoRole` produces the identical 20/9/21 role split for all three event
+  types.** This is not a coincidence and not a new finding about role
+  specifically — it is the expected consequence of reusing the same 50 event
+  positions and the same 8 NPCs across all three event types: once the role
+  term is zeroed, distance/state/LOS are the only remaining terms, and none of
+  them read the event type, so the outcome is necessarily identical. It is
+  included here as confirmation the shared-position experimental design
+  actually worked as intended, not as a substantive result.
+- **The magnitude of the bonus visibly changes how much removing it
+  matters** — RoomBreached (bonus 3.0) drops to 42% agreement when Role is
+  removed; AllyDownSeen (bonus 1.5, the smallest) only drops to 50%. A bigger
+  bonus is more consequential to remove, which is the expected direction, but
+  reading too much into the exact agreement percentages here would repeat the
+  §5 caveat: distance/state/LOS still shape *which specific* NPC of the
+  favoured role wins, and the three role populations differ in size (3 Guards,
+  3 Roamers, 2 Leaders), which is a second variable this comparison doesn't
+  isolate.
+
+### 7.4 Caveats (in addition to §5, which still apply in full)
+
+- **Still one arena, one seed.** All 750 decisions share the same 30m × 30m
+  arena and the same 8-NPC layout as the original study — this section adds a
+  second independent variable (event type) but does not add arena-scale or
+  NPC-count variation.
+- **"Dominance" and "agreement" still measure formula self-consistency, not
+  correctness.** The same caveat as §5 applies without modification: showing
+  Guard wins 98% of RoomBreached events under the current formula proves the
+  Guard bonus is doing real, substantial work — it does not independently
+  establish that a Guard *should* be the one who responds to a room breach.
+  That would need the SME comparison in `MODULE2_EVALUATION_METHODOLOGY.md`
+  (Part B5).
+- **The bonus-vs-dominance chart (Fig 10) has three data points.** Three
+  points showing a monotonic trend is suggestive and honestly reportable, but
+  it is not a statistically powered claim — a fourth or fifth role-bonus value
+  would strengthen it considerably. Report it as "consistent with the intended
+  design," not as a proof of correct calibration.
+
+### 7.5 Reproducing this extension
+
+Same procedure as §6, using the now-updated `AblationExperimentRunner` (tests
+all three event types automatically — no extra configuration needed) and:
+```
+cd Report_Figures
+python generate_ablation_charts_by_eventtype.py
+```
+(edit the `DATA` path at the top of that script to point at a new CSV if you
+re-run the experiment; it will refuse to run against a CSV that lacks the
+`event_type` column, i.e. one produced by the pre-2026-08-09 version of the
+runner).

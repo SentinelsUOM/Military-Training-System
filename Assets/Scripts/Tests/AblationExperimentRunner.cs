@@ -10,22 +10,45 @@ using UnityEngine;
 ///
 /// What it does:
 ///   1. Spawns N terrorists with random roles in a square area.
-///   2. Generates M random GunshotHeard events at random positions.
-///   3. For EACH event, runs NPCSelector.SelectBest FOUR times — once with each
-///      ablation configuration:
+///   2. Generates M random event ORIGIN POSITIONS, reused IDENTICALLY across all
+///      three tested event types — so the only thing that varies between event
+///      types is which role's bonus applies, never the geometry the candidates
+///      are being scored against.
+///   3. For EACH (event type × event position), runs NPCSelector.SelectBest FIVE
+///      times — once per ablation configuration:
 ///        • Full       — all four scoring terms enabled (baseline)
-///        • NoLOS      — perception term disabled
 ///        • NoDistance — distance term disabled
 ///        • NoRole     — role-bonus term disabled
+///        • NoState    — state-readiness term disabled
+///        • NoLOS      — perception term disabled
 ///   4. Records every decision to a CSV file in Application.persistentDataPath/Telemetry/
-///   5. Prints a summary table to the Console.
+///   5. Prints a per-event-type summary table to the Console.
+///
+/// Event types tested (one per entry in NPCSelector.GetRoleBonus):
+///   GunshotHeard  → favours Roamer (+2.0)
+///   RoomBreached  → favours Guard  (+3.0)
+///   AllyDownSeen  → favours Leader (+1.5)
+///
+/// WHY ALL THREE, NOT JUST GunshotHeard:
+///   Earlier versions of this runner only fired GunshotHeard events. Since
+///   Guard's bonus only applies to RoomBreached and Leader's only to
+///   AllyDownSeen, a GunshotHeard-only test can NEVER exercise those two
+///   bonuses — every Guard/Leader candidate scores 0 role bonus on every
+///   single test event, identical to "no role match at all". That run could
+///   only ever produce evidence for the Roamer/GunshotHeard=2.0 bonus, none
+///   for Guard=3.0 or Leader=1.5. Testing all three event types closes that
+///   gap and lets each role's own bonus be measured on its own event type.
 ///
 /// What you do with the CSV:
 ///   • Compare WHICH NPC each ablation picked for the same event — if Full and
 ///     NoLOS pick the same NPC 99% of the time, LOS is doing nothing; if they
 ///     disagree 30% of the time, LOS materially shifts selection.
-///   • Open in Excel or run the included Python snippet to get summary stats
-///     for the report.
+///   • Group by event_type to see whether each role's bonus produces the
+///     intended dominance for ITS OWN event type, and whether the RELATIVE
+///     dominance (Guard's 3.0 vs Roamer's 2.0 vs Leader's 1.5) tracks the
+///     relative bonus magnitude — evidence for the ordering, even without a
+///     literature source for the exact numbers.
+///   • Open in Excel or run generate_ablation_charts.py for print-ready figures.
 ///
 /// Setup (same as Module2TestRunner):
 ///   1. Open any scene (e.g. SampleScene or a fresh empty one).
@@ -34,7 +57,7 @@ using UnityEngine;
 ///   4. Right-click the component → "EXP → Run Ablation Experiment".
 ///   5. Console will print the output file path when done.
 ///
-/// Defaults: 8 NPCs × 20 events × 4 modes = 80 decision rows.
+/// Defaults: 8 NPCs × 50 events × 3 event types × 5 modes = 750 decision rows.
 /// </summary>
 public class AblationExperimentRunner : MonoBehaviour
 {
@@ -42,8 +65,9 @@ public class AblationExperimentRunner : MonoBehaviour
     [Tooltip("Number of terrorist NPCs to spawn.")]
     public int  npcCount = 8;
 
-    [Tooltip("Number of random gunshot events to evaluate.")]
-    public int  eventCount = 20;
+    [Tooltip("Number of random event positions to evaluate PER event type " +
+             "(the same positions are reused across all event types).")]
+    public int  eventCount = 50;
 
     [Tooltip("Side length of the square arena (NPCs spawn within ±arenaSize/2).")]
     public float arenaSize = 30f;
@@ -54,6 +78,15 @@ public class AblationExperimentRunner : MonoBehaviour
     [Tooltip("If true, places one Cube wall at the centre to create LOS occlusion.")]
     public bool addCentreWall = true;
 
+    // The three event types under test — one per role-bonus entry in
+    // NPCSelector.GetRoleBonus. Order here is also the order printed/logged.
+    static readonly ScenarioEventType[] EventTypesTested =
+    {
+        ScenarioEventType.GunshotHeard,   // favours Roamer (+2.0)
+        ScenarioEventType.RoomBreached,   // favours Guard  (+3.0)
+        ScenarioEventType.AllyDownSeen,   // favours Leader (+1.5)
+    };
+
     [ContextMenu("EXP → Run Ablation Experiment")]
     void RunMenu() => StartCoroutine(RunExperiment());
 
@@ -63,7 +96,9 @@ public class AblationExperimentRunner : MonoBehaviour
         Squad.ClearAll();
         NPCSelector.ResetWeights();
 
-        Debug.Log($"[Ablation] Starting: {npcCount} NPCs × {eventCount} events × 4 ablations");
+        Debug.Log($"[Ablation] Starting: {npcCount} NPCs × {eventCount} events × " +
+                  $"{EventTypesTested.Length} event types × 5 ablations = " +
+                  $"{eventCount * EventTypesTested.Length * 5} decisions");
 
         // ── Setup: spawn NPCs ─────────────────────────────────────────────
         var rng     = new System.Random(seed);
@@ -104,9 +139,22 @@ public class AblationExperimentRunner : MonoBehaviour
         yield return null;
         yield return null; // let Awake/registration settle
 
+        // ── Pre-generate the shared event positions ──────────────────────
+        // Drawn ONCE and reused for every event type below, so a difference in
+        // outcome between e.g. GunshotHeard and RoomBreached can only be caused
+        // by which role gets the bonus for that event type — never by the two
+        // event types having been tested against different points in space.
+        var eventOrigins = new List<Vector3>(eventCount);
+        for (int ev = 0; ev < eventCount; ev++)
+        {
+            float ex = RandomFloat(rng, -arenaSize / 2f, arenaSize / 2f);
+            float ez = RandomFloat(rng, -arenaSize / 2f, arenaSize / 2f);
+            eventOrigins.Add(new Vector3(ex, 0f, ez));
+        }
+
         // ── Run experiment ────────────────────────────────────────────────
         var csv = new StringBuilder();
-        csv.AppendLine("event_id,ablation_mode,event_x,event_z,selected_npc,selected_role,distance_m,had_los,state_score");
+        csv.AppendLine("event_type,event_id,ablation_mode,event_x,event_z,selected_npc,selected_role,distance_m,had_los,state_score");
 
         var ablations = new (string name, System.Action apply)[]
         {
@@ -120,44 +168,51 @@ public class AblationExperimentRunner : MonoBehaviour
         var allCandidates = new List<INPCResponder>(npcs.Count);
         foreach (var n in npcs) allCandidates.Add(n);
 
-        // Counters for the summary
-        var picksPerMode = new Dictionary<string, Dictionary<string, int>>(); // mode → role → count
-        foreach (var ab in ablations) picksPerMode[ab.name] = new Dictionary<string, int>();
-
-        for (int ev = 0; ev < eventCount; ev++)
+        // Counters for the console summary: eventType → mode → role → count
+        var picksPerTypeMode = new Dictionary<string, Dictionary<string, Dictionary<string, int>>>();
+        foreach (var et in EventTypesTested)
         {
-            float ex = RandomFloat(rng, -arenaSize / 2f, arenaSize / 2f);
-            float ez = RandomFloat(rng, -arenaSize / 2f, arenaSize / 2f);
-            var origin = new Vector3(ex, 0f, ez);
-            var e = new ScenarioEvent(ScenarioEventType.GunshotHeard, origin);
+            var perMode = new Dictionary<string, Dictionary<string, int>>();
+            foreach (var ab in ablations) perMode[ab.name] = new Dictionary<string, int>();
+            picksPerTypeMode[et.ToString()] = perMode;
+        }
 
-            foreach (var ab in ablations)
+        foreach (var eventType in EventTypesTested)
+        {
+            for (int ev = 0; ev < eventCount; ev++)
             {
-                ab.apply();
-                var winner = NPCSelector.SelectBest(allCandidates, e, log: false);
-                if (winner == null)
+                Vector3 origin = eventOrigins[ev];
+                var e = new ScenarioEvent(eventType, origin);
+
+                foreach (var ab in ablations)
                 {
-                    csv.AppendLine($"{ev},{ab.name},{ex:F2},{ez:F2},NONE,-,-,-,-");
-                    continue;
+                    ab.apply();
+                    var winner = NPCSelector.SelectBest(allCandidates, e, log: false);
+                    if (winner == null)
+                    {
+                        csv.AppendLine($"{eventType},{ev},{ab.name},{origin.x:F2},{origin.z:F2},NONE,-,-,-,-");
+                        continue;
+                    }
+
+                    float distance = Vector3.Distance(winner.Position, origin);
+                    bool  hasLos   = !Physics.Raycast(
+                        winner.Position + Vector3.up * 1.5f,
+                        (origin + Vector3.up * 1.5f - (winner.Position + Vector3.up * 1.5f)).normalized,
+                        distance,
+                        NPCSelector.LosObstacleLayers,
+                        QueryTriggerInteraction.Ignore);
+
+                    csv.AppendLine($"{eventType},{ev},{ab.name},{origin.x:F2},{origin.z:F2},{winner.NPCId},{winner.Role},{distance:F2},{(hasLos ? 1 : 0)},{winner.StateScore:F2}");
+
+                    // tally
+                    string roleKey = winner.Role.ToString();
+                    var counts = picksPerTypeMode[eventType.ToString()][ab.name];
+                    if (!counts.ContainsKey(roleKey)) counts[roleKey] = 0;
+                    counts[roleKey]++;
                 }
 
-                float distance = Vector3.Distance(winner.Position, origin);
-                bool  hasLos   = !Physics.Raycast(
-                    winner.Position + Vector3.up * 1.5f,
-                    (origin + Vector3.up * 1.5f - (winner.Position + Vector3.up * 1.5f)).normalized,
-                    distance,
-                    NPCSelector.LosObstacleLayers,
-                    QueryTriggerInteraction.Ignore);
-
-                csv.AppendLine($"{ev},{ab.name},{ex:F2},{ez:F2},{winner.NPCId},{winner.Role},{distance:F2},{(hasLos ? 1 : 0)},{winner.StateScore:F2}");
-
-                // tally
-                string roleKey = winner.Role.ToString();
-                if (!picksPerMode[ab.name].ContainsKey(roleKey)) picksPerMode[ab.name][roleKey] = 0;
-                picksPerMode[ab.name][roleKey]++;
+                if (ev % 5 == 0) yield return null; // keep editor responsive
             }
-
-            if (ev % 5 == 0) yield return null; // keep editor responsive
         }
 
         // ── Write output ──────────────────────────────────────────────────
@@ -171,20 +226,23 @@ public class AblationExperimentRunner : MonoBehaviour
 
         Debug.Log($"[Ablation] CSV written to: {path}");
 
-        // ── Summary table ─────────────────────────────────────────────────
+        // ── Summary table (per event type) ────────────────────────────────
         var sb = new StringBuilder();
-        sb.AppendLine("════════════════════════════════════════════════");
-        sb.AppendLine($"  Ablation Summary  (n = {eventCount} events)");
-        sb.AppendLine("════════════════════════════════════════════════");
-        sb.AppendLine("Mode         | Guard | Roamer | Leader");
-        sb.AppendLine("-------------+-------+--------+--------");
-        foreach (var ab in ablations)
+        foreach (var eventType in EventTypesTested)
         {
-            var counts = picksPerMode[ab.name];
-            int g = counts.TryGetValue("Guard",  out var gg) ? gg : 0;
-            int r = counts.TryGetValue("Roamer", out var rr) ? rr : 0;
-            int l = counts.TryGetValue("Leader", out var ll) ? ll : 0;
-            sb.AppendLine($"{ab.name,-12} | {g,5} | {r,6} | {l,6}");
+            sb.AppendLine("════════════════════════════════════════════════");
+            sb.AppendLine($"  Ablation Summary — {eventType}  (n = {eventCount} events)");
+            sb.AppendLine("════════════════════════════════════════════════");
+            sb.AppendLine("Mode         | Guard | Roamer | Leader");
+            sb.AppendLine("-------------+-------+--------+--------");
+            foreach (var ab in ablations)
+            {
+                var counts = picksPerTypeMode[eventType.ToString()][ab.name];
+                int g = counts.TryGetValue("Guard",  out var gg) ? gg : 0;
+                int r = counts.TryGetValue("Roamer", out var rr) ? rr : 0;
+                int l = counts.TryGetValue("Leader", out var ll) ? ll : 0;
+                sb.AppendLine($"{ab.name,-12} | {g,5} | {r,6} | {l,6}");
+            }
         }
         sb.AppendLine("════════════════════════════════════════════════");
         sb.AppendLine("If Full and NoX show similar distributions, term X is not");

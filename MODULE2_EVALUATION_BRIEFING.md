@@ -1,6 +1,6 @@
 # Module 2 — Evaluation Briefing
 
-**A living reference document — how to explain Module 2 (NPC behaviour & coordination) to your supervisor and evaluators, with the evidence behind every claim. Last updated 2026-08-07.**
+**A living reference document — how to explain Module 2 (NPC behaviour & coordination) to your supervisor and evaluators, with the evidence behind every claim. Last updated 2026-08-09.**
 
 This document consolidates everything established across the ablation study, the weight-sensitivity study, the literature grounding, the real human evaluation results, and the recent behaviour fixes — organised in the order you would actually present it, not the order it was discovered. Update this file as new findings come in; it is designed to grow with the project rather than be rewritten each time.
 
@@ -102,6 +102,27 @@ Method: the real NPCSelector was run live inside Unity, switching each of the fo
 *Figure 5. % of selections with clear line-of-sight to the event. Full (88%) vs NoLOS (68%): without the perception term, the selector sends a "blind" responder almost 3x more often.*
 
 **What this proves: every one of the four factors has real, measurable influence on the outcome — none of them is dead weight in the formula. What this does NOT prove: that including a factor makes the decision "better" or "more correct" — only that the formula's output genuinely depends on it. Whether that dependency helps or hurts training realism would need an external ground truth (an expert's judgement of who SHOULD respond), which this study does not have.**
+
+### Extending the ablation study to RoomBreached and AllyDownSeen (2026-08-09)
+
+The study above only ever tested GunshotHeard events — which can only exercise the Roamer bonus. Guard's bonus (RoomBreached) and Leader's bonus (AllyDownSeen) never fired against a GunshotHeard-only event stream, so the original study gave zero evidence for two of the three role-bonus entries. This was closed by re-running the SAME 50 event positions under all three event types (750 decisions total), live inside Unity — so any difference found between event types can only be caused by which role's bonus applies, never by different event geometry.
+
+![Figure 5a. Who gets picked for RoomBreached (favours Guard). Guard wins 49/50 events under Full — the same dominance pattern the original study found for Roamer under GunshotHeard.](Report_Figures/fig_ablation_roombreached_1_role_distribution.png)
+*Figure 5a. Who gets picked for RoomBreached (favours Guard). Guard wins 49/50 events under Full — the same dominance pattern the original study found for Roamer under GunshotHeard.*
+
+![Figure 5b. Who gets picked for AllyDownSeen (favours Leader). Leader wins 46/50 events under Full.](Report_Figures/fig_ablation_allydownseen_1_role_distribution.png)
+*Figure 5b. Who gets picked for AllyDownSeen (favours Leader). Leader wins 46/50 events under Full.*
+
+| Event type | Favoured role | Bonus | Full-mode dominance |
+|---|---|---|---|
+| RoomBreached | Guard | 3.0 | 98% (49/50) |
+| GunshotHeard | Roamer | 2.0 | 96% (48/50) |
+| AllyDownSeen | Leader | 1.5 | 92% (46/50) |
+
+![Figure 5c. Bonus magnitude vs. measured dominance across all three role-bonus entries. The ordering is monotonic — bigger bonus produces proportionally stronger real-world dominance.](Report_Figures/fig_ablation_6_bonus_vs_dominance.png)
+*Figure 5c. Bonus magnitude vs. measured dominance across all three role-bonus entries. The ordering is monotonic — bigger bonus produces proportionally stronger real-world dominance.*
+
+**What this proves: all three role-bonus entries — not just Roamer's — produce real, substantial dominance for their intended role, and the RELATIVE ordering of the three bonus magnitudes (Guard 3.0 > Roamer 2.0 > Leader 1.5) tracks the relative ordering of measured dominance (98% > 96% > 92%). What this does NOT prove: the absolute values 3.0/2.0/1.5 are still not literature-derived — this shows the formula behaves consistently with its own design intent, not that the specific numbers are independently correct or optimal. Three data points showing a monotonic trend is suggestive and honestly reportable, not a statistically powered claim. As a reproducibility check: the GunshotHeard rows from this later run reproduced the original study's numbers exactly, eight days later, in a separate Unity session — confirming the seed=42 setup is genuinely deterministic.**
 
 ## 5.3 Weight-sensitivity study — are the chosen numbers fragile or robust?
 

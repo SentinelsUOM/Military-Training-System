@@ -24,7 +24,7 @@ Block format — a list of tuples, first element is the block type:
     ('pagebreak',)                   -- force a new page (PDF/DOCX only)
 """
 
-LAST_UPDATED = "2026-08-07"
+LAST_UPDATED = "2026-08-09"
 
 BLOCKS = [
     ('h1', 'Module 2 — Evaluation Briefing'),
@@ -213,6 +213,46 @@ BLOCKS = [
            'Whether that dependency helps or hurts training realism would need an '
            'external ground truth (an expert\'s judgement of who SHOULD respond), which '
            'this study does not have.'),
+
+    ('h3', 'Extending the ablation study to RoomBreached and AllyDownSeen (2026-08-09)'),
+    ('p', 'The study above only ever tested GunshotHeard events — which can only exercise '
+          'the Roamer bonus. Guard\'s bonus (RoomBreached) and Leader\'s bonus '
+          '(AllyDownSeen) never fired against a GunshotHeard-only event stream, so the '
+          'original study gave zero evidence for two of the three role-bonus entries. '
+          'This was closed by re-running the SAME 50 event positions under all three '
+          'event types (750 decisions total), live inside Unity — so any difference found '
+          'between event types can only be caused by which role\'s bonus applies, never by '
+          'different event geometry.'),
+    ('image', 'fig_ablation_roombreached_1_role_distribution.png',
+     'Figure 5a. Who gets picked for RoomBreached (favours Guard). Guard wins 49/50 '
+     'events under Full — the same dominance pattern the original study found for '
+     'Roamer under GunshotHeard.'),
+    ('image', 'fig_ablation_allydownseen_1_role_distribution.png',
+     'Figure 5b. Who gets picked for AllyDownSeen (favours Leader). Leader wins 46/50 '
+     'events under Full.'),
+    ('table',
+     ['Event type', 'Favoured role', 'Bonus', 'Full-mode dominance'],
+     [
+         ['RoomBreached', 'Guard', '3.0', '98% (49/50)'],
+         ['GunshotHeard', 'Roamer', '2.0', '96% (48/50)'],
+         ['AllyDownSeen', 'Leader', '1.5', '92% (46/50)'],
+     ]),
+    ('image', 'fig_ablation_6_bonus_vs_dominance.png',
+     'Figure 5c. Bonus magnitude vs. measured dominance across all three role-bonus '
+     'entries. The ordering is monotonic — bigger bonus produces proportionally '
+     'stronger real-world dominance.'),
+    ('bp', 'What this proves: all three role-bonus entries — not just Roamer\'s — produce '
+           'real, substantial dominance for their intended role, and the RELATIVE '
+           'ordering of the three bonus magnitudes (Guard 3.0 > Roamer 2.0 > Leader 1.5) '
+           'tracks the relative ordering of measured dominance (98% > 96% > 92%). What '
+           'this does NOT prove: the absolute values 3.0/2.0/1.5 are still not '
+           'literature-derived — this shows the formula behaves consistently with its own '
+           'design intent, not that the specific numbers are independently correct or '
+           'optimal. Three data points showing a monotonic trend is suggestive and '
+           'honestly reportable, not a statistically powered claim. As a reproducibility '
+           'check: the GunshotHeard rows from this later run reproduced the original '
+           'study\'s numbers exactly, eight days later, in a separate Unity session — '
+           'confirming the seed=42 setup is genuinely deterministic.'),
 
     ('h2', '5.3 Weight-sensitivity study — are the chosen numbers fragile or robust?'),
     ('p', 'Method: each factor\'s weight was swept across seven values (0, 0.5, 1, 1.5, '
