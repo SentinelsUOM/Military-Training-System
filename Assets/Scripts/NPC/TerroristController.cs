@@ -111,6 +111,16 @@ public class TerroristController : MonoBehaviour, INPCResponder
              "Adjust until the body sits visually correctly on the ground.")]
     public float deathFloorOffset = 0f;
 
+    [Tooltip("Safety net for character models whose Death clip doesn't actually retarget into a " +
+             "collapsed pose (seen on some imported rigs — the animation completes, SnapToFloor " +
+             "correctly grounds the ROOT, but the skeleton itself stays in a near-standing shape, " +
+             "so the corpse visually hovers/stands in place instead of lying down). If the frozen " +
+             "pose's own height (top of head to lowest point) is still taller than this after the " +
+             "Death animation finishes, the body is physically tipped onto its back as a fallback " +
+             "so it always ends up ON the floor. A genuinely collapsed body measures well under 1m; " +
+             "a broken standing-height pose measures close to full height.")]
+    public float standingPoseFallbackHeight = 1.0f;
+
     [Header("Role & Squad")]
     [Tooltip("Tactical role — drives roleBonus in NPCSelector.")]
     public NPCRole role = NPCRole.Guard;
@@ -2472,12 +2482,23 @@ public class TerroristController : MonoBehaviour, INPCResponder
         }
 
         // Raycast from well above the NPC straight down to find the actual floor surface.
+        // Uses RaycastAll + the LOWEST hit, not just the first hit: if death root motion
+        // (or a re-snap mid-fall) briefly carries the corpse above a room's Roof/ceiling
+        // collider, a single first-hit Raycast finds the Roof and mistakes it for the
+        // floor — the corpse then gets permanently pinned at ceiling height, because
+        // every later re-snap raycasts from up there too and just re-confirms the same
+        // wrong surface. A Roof is architecturally always above a Floor in this project's
+        // single-storey buildings, so the LOWEST hit in the column is always the true
+        // ground regardless of what's above it.
         Vector3 origin = transform.position + Vector3.up * 2f;
         float floorY;
-        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 10f, ~0,
-                            QueryTriggerInteraction.Ignore))
+        var floorHits = Physics.RaycastAll(origin, Vector3.down, 10f, ~0,
+                                           QueryTriggerInteraction.Ignore);
+        if (floorHits.Length > 0)
         {
-            floorY = hit.point.y;
+            floorY = float.MaxValue;
+            foreach (var h in floorHits)
+                if (h.point.y < floorY) floorY = h.point.y;
         }
         else
         {
@@ -2488,17 +2509,9 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Calculate how far the mesh extends BELOW the transform origin so we can put
         // the mesh's lowest point on the floor (rather than the transform itself).
         float belowTransform = 0f;
-        if (autoCalculateDeathOffset)
+        if (autoCalculateDeathOffset && TryGetRendererBoundsY(out float minY, out _))
         {
-            var renderers = GetComponentsInChildren<Renderer>();
-            float minY = float.MaxValue;
-            foreach (var r in renderers)
-            {
-                if (r == null || !r.enabled) continue;
-                if (r.bounds.min.y < minY) minY = r.bounds.min.y;
-            }
-            if (minY < float.MaxValue)
-                belowTransform = transform.position.y - minY; // positive when mesh extends below transform
+            belowTransform = transform.position.y - minY; // positive when mesh extends below transform
         }
 
         // Guard against the auto-calculated offset going negative (mesh appears to be
@@ -2519,6 +2532,22 @@ public class TerroristController : MonoBehaviour, INPCResponder
         // Restore collider states (hitboxes/non-triggers are disabled separately in EnterDownState).
         for (int i = 0; i < ownColliders.Length; i++)
             ownColliders[i].enabled = savedStates[i];
+    }
+
+    /// <summary>World-space min/max Y across every enabled Renderer on this NPC. Returns false
+    /// (leaving out params at their defaults) if there are no enabled renderers to measure —
+    /// callers should treat that as "can't tell, don't act on it."</summary>
+    bool TryGetRendererBoundsY(out float minY, out float maxY)
+    {
+        minY = float.MaxValue;
+        maxY = float.MinValue;
+        foreach (var r in GetComponentsInChildren<Renderer>())
+        {
+            if (r == null || !r.enabled) continue;
+            if (r.bounds.min.y < minY) minY = r.bounds.min.y;
+            if (r.bounds.max.y > maxY) maxY = r.bounds.max.y;
+        }
+        return minY < float.MaxValue;
     }
 
     IEnumerator FreezeAfterDeath()
@@ -2560,6 +2589,27 @@ public class TerroristController : MonoBehaviour, INPCResponder
         yield return null; // wait one frame for the disable to fully take effect
 
         SnapToFloor();
+
+        // Fallback for a Death clip that completed but never actually retargeted into a
+        // collapsed pose on this rig (see standingPoseFallbackHeight tooltip) — SnapToFloor
+        // has already done everything it can with the ROOT; it can't reach into the animator's
+        // own bone poses. Detect the failure by the frozen pose's own height and, if it's
+        // still standing-tall, physically tip the corpse onto its back so it ends up on the
+        // floor either way instead of hovering/standing in place.
+        if (TryGetRendererBoundsY(out float minY, out float maxY) &&
+            maxY - minY > standingPoseFallbackHeight)
+        {
+            Debug.LogWarning($"[TerroristController] {gameObject.name}: Death pose is still " +
+                              $"{(maxY - minY):F2}m tall after the animation finished — this rig's " +
+                              "Death clip isn't collapsing it. Falling back to a forced lie-down.");
+            transform.Rotate(Vector3.right, -90f, Space.Self);
+            // SkinnedMeshRenderer.bounds only refreshes on its next render/cull pass, not
+            // synchronously when the parent transform rotates — snapping in the same frame as
+            // the rotate reads the STALE pre-rotation bounds and mis-places the body. Wait a
+            // frame so the mesh has actually re-skinned into its new orientation first.
+            yield return null;
+            SnapToFloor();
+        }
     }
 
     // ── Cover movement ────────────────────────────────────────────────────────

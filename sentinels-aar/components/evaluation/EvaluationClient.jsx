@@ -341,6 +341,18 @@ export default function EvaluationClient() {
                         <AblationChart />
                       </section>
 
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Ablation study — evaluation-result diagrams</h2>
+                        <p className={styles.note} style={{ marginTop: 0, marginBottom: '.75rem' }}>
+                          Pre-rendered results from the live Unity ablation run (
+                          <code>AblationExperimentRunner</code>, 750 real selection decisions across
+                          GunshotHeard/RoomBreached/AllyDownSeen) — not the weight-sensitivity (0–4×)
+                          sweep, which is a separate study. Full method in
+                          MODULE2_ABLATION_STUDY_REPORT.md.
+                        </p>
+                        <DiagramGallery items={MODULE2_ABLATION_DIAGRAMS} />
+                      </section>
+
                       <p className={styles.note}>
                         Survey scores are participant ratings after each play (higher = better for the AI).
                         Enemy hit-rate is an objective telemetry measure of the same thing (how competently
@@ -476,6 +488,17 @@ export default function EvaluationClient() {
                           as-is, not scored against a source that doesn&apos;t exist.
                         </p>
                         <BenchmarkPanel players={data.players} playerId={playerId} />
+                      </section>
+
+                      <section className={styles.section}>
+                        <h2 className={styles.h2}>Expert-benchmark diagrams (poster / presentation)</h2>
+                        <p className={styles.note} style={{ marginTop: 0, marginBottom: '.75rem' }}>
+                          The same "trainee value vs. published expert" figures shown on the
+                          Team Sentinels poster and presentation deck, reproduced here alongside
+                          the live per-player benchmark panel above. Full method in
+                          Module4_Documents/MODULE4_EVALUATION.md.
+                        </p>
+                        <DiagramGallery items={MODULE4_EXPERT_DIAGRAMS} />
                       </section>
 
                       {/* ── Distribution across all sessions (pooled) — same pattern as Module 2's ── */}
@@ -824,6 +847,79 @@ function HistogramGrid({ items }) {
               <Bar dataKey="count" radius={[3, 3, 0, 0]} fill={chartTheme.accent} />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Static evaluation-result diagrams (pre-rendered PNGs, not live charts) ──
+// These come from Report_Figures/ (copied into public/report-figures/) — the same
+// print-quality figures used in MODULE2_ABLATION_STUDY_REPORT.md, MODULE2_COMPLETE_
+// EXPLAINER, MODULE4_EVALUATION.md, the poster, and the presentation deck. They are
+// NOT recomputed from live session data (unlike the Recharts panels elsewhere on this
+// page) — they're evidence snapshots from a specific dated experiment run, so the
+// module/date is always shown in the caption to make that explicit.
+const MODULE2_ABLATION_DIAGRAMS = [
+  { src: 'fig_ablation_1_role_distribution.png',
+    caption: 'Figure 1. Which role gets picked, by ablation mode, for GunshotHeard events. ' +
+      'Roamers win almost every event under Full/NoDistance/NoState/NoLOS; only removing Role ' +
+      'itself changes the picture.' },
+  { src: 'fig_ablation_2_agreement_with_full.png',
+    caption: 'Figure 2. % of GunshotHeard events where each ablated mode picked the same NPC ' +
+      'as the full formula — Role (22%) > State (44%) > LOS (80%) > Distance (94%). Lower % = ' +
+      'that term matters more.' },
+  { src: 'fig_ablation_3_mean_distance.png',
+    caption: 'Figure 3. Mean distance of the selected NPC, by mode. Full (11.4m) vs. ' +
+      'NoDistance (12.3m) — removing distance sends a responder about 0.9m farther away on average.' },
+  { src: 'fig_ablation_4_mean_state_score.png',
+    caption: 'Figure 4. Mean state-readiness of the selected NPC. Full (0.71) vs NoState (0.40): ' +
+      'removing the state term nearly halves the average readiness of who gets sent.' },
+  { src: 'fig_ablation_5_los_hit_rate.png',
+    caption: 'Figure 5. % of selections with clear line-of-sight to the event. Full (88%) vs ' +
+      'NoLOS (68%): without the perception term, the selector sends a "blind" responder almost 3x more often.' },
+  { src: 'fig_ablation_roombreached_1_role_distribution.png',
+    caption: 'Figure 5a. Who gets picked for RoomBreached (favours Guard). Guard wins 49/50 ' +
+      'events under Full — same dominance pattern as Roamer under GunshotHeard, now confirmed ' +
+      'for a second role-bonus entry.' },
+  { src: 'fig_ablation_roombreached_2_agreement.png',
+    caption: 'Selection agreement vs. Full — RoomBreached. NoRole drops agreement to 42%, the ' +
+      'largest swing of the three event types, consistent with Guard carrying the largest bonus (3.0).' },
+  { src: 'fig_ablation_allydownseen_1_role_distribution.png',
+    caption: 'Figure 5b. Who gets picked for AllyDownSeen (favours Leader). Leader wins 46/50 ' +
+      'events under Full.' },
+  { src: 'fig_ablation_allydownseen_2_agreement.png',
+    caption: 'Selection agreement vs. Full — AllyDownSeen. NoRole drops agreement only to 50%, ' +
+      'the smallest swing of the three event types, consistent with Leader carrying the smallest bonus (1.5).' },
+  { src: 'fig_ablation_6_bonus_vs_dominance.png',
+    caption: 'Does bonus magnitude track measured dominance? Guard (3.0) 98%, Roamer (2.0) 96%, ' +
+      'Leader (1.5) 92% — monotonic, real evidence the RELATIVE ordering of the three bonus ' +
+      'magnitudes produces the intended relative behaviour (the absolute values themselves are ' +
+      'still not literature-derived — see MODULE2_SELECTION_LITERATURE_JUSTIFICATION.md).' },
+]
+
+const MODULE4_EXPERT_DIAGRAMS = [
+  { src: 'fig_7_14_reaction_time_per_participant.png',
+    caption: "Mean reaction time per participant (11 total, sorted fastest→slowest) vs the " +
+      "Hick's Law expert/novice reference lines Module 4's FAST_RT/SLOW_RT anchors are " +
+      'calibrated to. Same chart used in the poster and presentation deck.' },
+  { src: 'fig_7_17_scores_vs_benchmarks.png',
+    caption: 'Hostage Safety & Accuracy — all 11 participants plotted individually against the ' +
+      'novice/expert benchmark bands from the Expert Value Table. Same chart used in the poster ' +
+      'and presentation deck.' },
+]
+
+function DiagramGallery({ items }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem' }}>
+      {items.map(it => (
+        <div key={it.src} className={styles.statBlock}>
+          <img
+            src={`/report-figures/${it.src}`}
+            alt={it.caption}
+            style={{ width: '100%', height: 'auto', borderRadius: 6, display: 'block', background: '#fff' }}
+          />
+          <div className={styles.note} style={{ marginTop: '.5rem', marginBottom: 0 }}>{it.caption}</div>
         </div>
       ))}
     </div>
