@@ -2852,7 +2852,7 @@ MonoBehaviour:
   shotsPerBurst: 3
   burstPause: 1.2
   muzzleFlash: {fileID: 0}
-  fireAudioSource: {fileID: 0}
+  fireAudioSource: {fileID: 8586773018163232195}
   fireClip: {fileID: 8300000, guid: cabbd3fd5ecd9f34189a90e120a55259, type: 3}
   hostage: {fileID: 0}
   controlHostageScare: 1

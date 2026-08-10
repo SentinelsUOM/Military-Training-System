@@ -439,6 +439,48 @@ Leader -> Alert issues Converge; Leader -> Engage issues Flank (each member comp
 
 Three things the literature review states are not documented elsewhere: (1) fully autonomous event-driven NPCs — both hostile and civilian — with no instructor scripting; (2) a single shared event model driving both populations plus coordination; (3) context-aware multi-factor responder selection with ablation evidence quantifying each factor's contribution.
 
+## 11. Evaluation Results — Ablation Study Diagrams
+
+The diagrams below are the actual evaluation-results evidence for Section 6 (does each NPCSelector factor genuinely matter, and does role-bonus magnitude track measured dominance). These are the ablation-study RESULT charts only — the weight-SENSITIVITY charts (each weight swept 0-4x the default; MODULE2_WEIGHT_SENSITIVITY_REPORT.md) are a separate study and are intentionally not included here. Full method for every chart below is in MODULE2_ABLATION_STUDY_REPORT.md (Sections 1-6 for GunshotHeard, Section 7 for RoomBreached/AllyDownSeen).
+
+### 11.1 GunshotHeard (favours Roamer, bonus 2.0) — the original study
+
+![Figure 1. Which role gets picked, by ablation mode, for GunshotHeard events. Roamers win almost every event under Full/NoDistance/NoState/NoLOS; only removing Role itself changes the picture.](Report_Figures/fig_ablation_1_role_distribution.png)
+*Figure 1. Which role gets picked, by ablation mode, for GunshotHeard events. Roamers win almost every event under Full/NoDistance/NoState/NoLOS; only removing Role itself changes the picture.*
+
+![Figure 2. % of GunshotHeard events where each ablated mode picked the same NPC as the full formula — the headline ranking of how much each term matters: Role (22%) > State (44%) > LOS (80%) > Distance (94%). Lower % = that term matters more.](Report_Figures/fig_ablation_2_agreement_with_full.png)
+*Figure 2. % of GunshotHeard events where each ablated mode picked the same NPC as the full formula — the headline ranking of how much each term matters: Role (22%) > State (44%) > LOS (80%) > Distance (94%). Lower % = that term matters more.*
+
+![Figure 3. Mean distance of the selected NPC, by mode. The only valid pairwise comparison is Full (11.4m) vs. NoDistance (12.3m) — removing distance sends a responder about 0.9m farther away on average.](Report_Figures/fig_ablation_3_mean_distance.png)
+*Figure 3. Mean distance of the selected NPC, by mode. The only valid pairwise comparison is Full (11.4m) vs. NoDistance (12.3m) — removing distance sends a responder about 0.9m farther away on average.*
+
+![Figure 4. Mean state-readiness of the selected NPC. Full (0.71) vs NoState (0.40): removing the state term nearly halves the average readiness of who gets sent.](Report_Figures/fig_ablation_4_mean_state_score.png)
+*Figure 4. Mean state-readiness of the selected NPC. Full (0.71) vs NoState (0.40): removing the state term nearly halves the average readiness of who gets sent.*
+
+![Figure 5. % of selections with clear line-of-sight to the event. Full (88%) vs NoLOS (68%): without the perception term, the selector sends a "blind" responder almost 3x more often.](Report_Figures/fig_ablation_5_los_hit_rate.png)
+*Figure 5. % of selections with clear line-of-sight to the event. Full (88%) vs NoLOS (68%): without the perception term, the selector sends a "blind" responder almost 3x more often.*
+
+### 11.2 RoomBreached (favours Guard, bonus 3.0)
+
+![Figure 5a. Who gets picked for RoomBreached (favours Guard). Guard wins 49/50 events under Full — the same dominance pattern the original study found for Roamer under GunshotHeard, now confirmed for a second role-bonus entry.](Report_Figures/fig_ablation_roombreached_1_role_distribution.png)
+*Figure 5a. Who gets picked for RoomBreached (favours Guard). Guard wins 49/50 events under Full — the same dominance pattern the original study found for Roamer under GunshotHeard, now confirmed for a second role-bonus entry.*
+
+![Selection agreement vs. Full — RoomBreached. NoRole drops agreement to 42%, the largest swing of the three event types, consistent with Guard carrying the largest bonus (3.0) of the three role entries.](Report_Figures/fig_ablation_roombreached_2_agreement.png)
+*Selection agreement vs. Full — RoomBreached. NoRole drops agreement to 42%, the largest swing of the three event types, consistent with Guard carrying the largest bonus (3.0) of the three role entries.*
+
+### 11.3 AllyDownSeen (favours Leader, bonus 1.5)
+
+![Figure 5b. Who gets picked for AllyDownSeen (favours Leader). Leader wins 46/50 events under Full.](Report_Figures/fig_ablation_allydownseen_1_role_distribution.png)
+*Figure 5b. Who gets picked for AllyDownSeen (favours Leader). Leader wins 46/50 events under Full.*
+
+![Selection agreement vs. Full — AllyDownSeen. NoRole drops agreement only to 50%, the smallest swing of the three event types, consistent with Leader carrying the smallest bonus (1.5) of the three role entries.](Report_Figures/fig_ablation_allydownseen_2_agreement.png)
+*Selection agreement vs. Full — AllyDownSeen. NoRole drops agreement only to 50%, the smallest swing of the three event types, consistent with Leader carrying the smallest bonus (1.5) of the three role entries.*
+
+### 11.4 Does bonus magnitude track measured dominance?
+
+![For each event type, the % of Full-mode events won by that event's favoured role, plotted against that role's bonus value. The relationship is monotonic — Guard (3.0) 98%, Roamer (2.0) 96%, Leader (1.5) 92% — real evidence the RELATIVE ordering of the three bonus magnitudes produces the intended relative behaviour (Section 6.5), even though the absolute values are still not literature-derived (Section 6.6).](Report_Figures/fig_ablation_6_bonus_vs_dominance.png)
+*For each event type, the % of Full-mode events won by that event's favoured role, plotted against that role's bonus value. The relationship is monotonic — Guard (3.0) 98%, Roamer (2.0) 96%, Leader (1.5) 92% — real evidence the RELATIVE ordering of the three bonus magnitudes produces the intended relative behaviour (Section 6.5), even though the absolute values are still not literature-derived (Section 6.6).*
+
 ---
 
-This document intentionally excludes the ablation-chart-generation work (the live Unity-MCP run extending the ablation study to RoomBreached and AllyDownSeen events, and the resulting figures) — that material is documented separately in MODULE2_ABLATION_STUDY_REPORT.md (Section 7) and MODULE2_EVALUATION_BRIEFING.
+This document intentionally excludes the ablation-chart-GENERATION process (the live Unity-MCP run extending the ablation study to RoomBreached and AllyDownSeen events, and how each figure above was produced) — that method and full commentary is documented separately in MODULE2_ABLATION_STUDY_REPORT.md (Section 7) and MODULE2_EVALUATION_BRIEFING. Section 11 above reproduces the RESULT diagrams themselves for a single self-contained reference.

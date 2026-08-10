@@ -39,11 +39,17 @@
 - **Verdict:** ✅ Implemented. A "low" raw hit rate at real engagement range now correctly reads as expert-level rather than "mediocre." The five NYPD bands are used as a lookup (not a fitted curve) — the source data is itself bucketed field statistics, so banding is more faithful than interpolating a smooth curve through five points.
 - **Backward compatibility:** sessions recorded before this change have no per-shot distance; the dashboard falls back to estimating engagement distance from replay-frame positions (`avgEngagementDistance()` in `expertBenchmarks.js`), which is an approximation, not the exact captured value.
 
+![Hostage Safety and Accuracy vs published expert benchmarks](../Report_Figures/fig_7_17_scores_vs_benchmarks.png)
+*Hostage Safety & Accuracy — all 11 participants plotted individually against the novice/expert benchmark bands from the Expert Value Table. Same chart used in the poster and presentation deck (§1 Hostage distress/rescue outcome and this section, §4 Accuracy, together). Hostage Safety ranges 25–100 (median well below the 70–90% real-world tactical-to-professional band from §2's RAND figures); Accuracy ranges 25–100, most participants clustering around or above the NYPD SOP-9 expected-hit-rate line this section's distance-aware scoring anchors to.*
+
 ## 5. Reaction / threat response — ✅ IMPLEMENTED (both anchors)
 
 - **Module 4 (code, current):** `OP_FAST_RT = 0.3s`, `OP_SLOW_RT = 0.7s` (tightened from the original 1.5s).
 - **Expert table (Hick's Law):** 1 choice ~260 ms, 2 ~320–330 ms, 4 ~340–350 ms, 8 ~450–460 ms.
 - **Verdict:** ✅ Both anchors now align with the research — `FAST_RT` matches expert 1–2-choice reaction, `SLOW_RT` is a fair "clearly slow" threshold given even 8-choice ≈ 0.46 s. Module 4 still does not adjust for number of simultaneous choices, fatigue, or arousal (Yerkes–Dodson) — noted as future refinement, not attempted.
+
+![Reaction time per participant vs published benchmarks](../Report_Figures/fig_7_14_reaction_time_per_participant.png)
+*Mean reaction time per participant (11 total, sorted fastest to slowest) plotted against the Hick's Law expert/novice reference lines this section calibrates `FAST_RT`/`SLOW_RT` to. Same chart used in the poster and presentation deck. Most participants land between the 1–2-choice expert anchor and the 8-choice "clearly slow" anchor, consistent with the ✅ verdict above.*
 
 ## 6. Operator (player) safety behaviours — negligent discharge now added
 
