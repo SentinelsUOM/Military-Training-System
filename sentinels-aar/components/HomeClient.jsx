@@ -24,6 +24,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
   const [loading, setLoading] = useState(false)
   const [seeding, setSeeding] = useState(false)
   const [launcherOpen, setLauncherOpen] = useState(false)
+  const [navigatingId, setNavigatingId] = useState(null)
 
   const LIMIT = 20
 
@@ -48,6 +49,14 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
     const timer = setInterval(check, SIMTLX_POLL_MS)
     return () => { cancelled = true; clearInterval(timer) }
   }, [router])
+
+  // Clear a stuck nav overlay if the user lands back on this page via
+  // browser back/forward (bfcache restore) instead of a fresh mount.
+  useEffect(() => {
+    const reset = () => setNavigatingId(null)
+    window.addEventListener('pageshow', reset)
+    return () => window.removeEventListener('pageshow', reset)
+  }, [])
 
   const fetchPage = useCallback(async (p) => {
     setLoading(true)
@@ -88,8 +97,18 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
 
   const totalPages = Math.ceil(total / LIMIT)
 
+  const handleRowClick = (sessionId) => {
+    setNavigatingId(sessionId)
+    router.push(`/session/${sessionId}`)
+  }
+
   return (
     <div className={styles.page}>
+      {navigatingId && (
+        <div className={styles.navOverlay}>
+          <LoadingSpinner label="Loading session…" />
+        </div>
+      )}
       <header className={styles.header}>
         <div>
           <h1 className={styles.title}>SENTINELS AAR</h1>
@@ -213,7 +232,7 @@ export default function HomeClient({ initialSessions, initialStats, total: initi
                   <tr
                     key={s.sessionId}
                     className={styles.row}
-                    onClick={() => router.push(`/session/${s.sessionId}`)}
+                    onClick={() => handleRowClick(s.sessionId)}
                   >
                     <td className={styles.sessionId}>{s.sessionId}</td>
                     <td>{s.playerId || <span style={{ color: 'var(--muted)' }}>—</span>}</td>

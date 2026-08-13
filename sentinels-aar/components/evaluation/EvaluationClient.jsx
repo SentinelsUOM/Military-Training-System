@@ -312,7 +312,6 @@ export default function EvaluationClient() {
                         </div>
                         {player && <CompareTable levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
                         {player && <PlayerTierChart levels={player.levels} surveyRows={surveyRows} metricRows={metricRows} />}
-                        {player && <PlayerReliabilityChart player={player} surveyRows={surveyRows} metricRows={metricRows} />}
                       </section>
 
                       <section className={styles.section}>
@@ -697,81 +696,6 @@ function PlayerTierChart({ levels, surveyRows, metricRows }) {
           ))}
         </LineChart>
       </ResponsiveContainer>
-    </div>
-  )
-}
-
-// ── Per-player reliability — repeated plays at the SAME tier ────────────────
-// Unlike PlayerTierChart above (one point per tier, the newest play), this walks
-// `player.allTrials` — every session this player ever played, oldest→newest — grouped
-// by npcLevel, so a tier the player replayed shows a consistency/learning-curve line
-// across attempts #1, #2, … instead of just the latest value.
-function PlayerReliabilityChart({ player, surveyRows, metricRows }) {
-  const chartTheme = useChartTheme()
-  const rows = [
-    ...surveyRows.map(r => ({ ...r, group: 'survey' })),
-    ...metricRows.map(r => ({ ...r, group: 'metrics' })),
-  ]
-  const byTier = {}
-  for (const lvl of LEVELS) {
-    const trials = (player.allTrials || []).filter(t => t.npcLevel === lvl)
-    if (trials.length > 1) byTier[lvl] = trials
-  }
-  const tiersWithRepeats = LEVELS.filter(lvl => byTier[lvl])
-  if (!rows.length || !tiersWithRepeats.length) return null
-
-  return (
-    <div style={{ marginTop: '1rem' }}>
-      <div className={styles.note} style={{ marginTop: 0, marginBottom: '.5rem' }}>
-        Reliability — how this player&apos;s ratings/hit-rate changed each time they replayed the
-        <strong> same</strong> AI tier. A flat line means consistent scoring; a rising one may mean
-        the player was learning the mission rather than judging the AI.
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: tiersWithRepeats.length > 1 ? '1fr 1fr' : '1fr', gap: '1rem' }}>
-        {tiersWithRepeats.map(lvl => {
-          const chartData = byTier[lvl].map((t, i) => {
-            const entry = { attempt: `#${i + 1}` }
-            for (const r of rows) {
-              const max = measureMax(r.unit)
-              const raw = r.group === 'survey' ? t.aiEval?.[r.key] : t.metrics?.[r.key]
-              entry[r.key] = r.group === 'survey' ? toPct100(raw, max) : (typeof raw === 'number' ? raw : null)
-            }
-            return entry
-          })
-          return (
-            <div key={lvl}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', marginBottom: 4 }}>
-                {LEVEL_LABEL[lvl]} <span className={styles.nBadge}>{byTier[lvl].length} plays</span>
-              </div>
-              <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={chartData} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
-                  <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
-                  <XAxis dataKey="attempt" tick={{ fill: chartTheme.label, fontSize: 10 }} />
-                  <YAxis domain={[0, 100]} tick={{ fill: chartTheme.label, fontSize: 10 }} unit="%" />
-                  <Tooltip
-                    contentStyle={{ background: chartTheme.tooltip, border: `1px solid ${chartTheme.grid}`, borderRadius: 6 }}
-                    labelStyle={{ color: chartTheme.label }}
-                    formatter={(v) => (v == null ? '—' : `${v}%`)}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 10, color: chartTheme.label }} />
-                  {rows.map((r, i) => (
-                    <Line
-                      key={r.key}
-                      type="monotone"
-                      dataKey={r.key}
-                      name={r.label}
-                      stroke={chartTheme.colors[i % chartTheme.colors.length]}
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      connectNulls
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )
-        })}
-      </div>
     </div>
   )
 }
